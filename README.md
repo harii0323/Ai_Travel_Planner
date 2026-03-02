@@ -163,3 +163,6 @@ This project is open source and available for educational purposes.
 **Happy Planning! 🌍 Travel Smart, Travel Far with AI Travel Planner for Students**
 
 Phase 2 Status: ✅ Complete | Next: Phase 3 (Social Features & Advanced AI)
+=======
+# Ai_travel_planner
+>>>>>>> f9aea82c4ce2153de5c84fcaa18278a8911441a9
