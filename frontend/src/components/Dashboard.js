@@ -87,7 +87,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
         <div className="stat-card">
           <div className="stat-icon">💵</div>
           <div className="stat-content">
-            <h3>${statistics.averageBudget}</h3>
+            <h3>₹{statistics.averageBudget.toLocaleString('en-IN')}</h3>
             <p>Avg. Budget</p>
           </div>
         </div>
@@ -125,7 +125,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
                 </div>
 
                 <div className="plan-details">
-                  <p><strong>Budget:</strong> ${plan.budget}</p>
+                  <p><strong>Budget:</strong> ₹{plan.budget.toLocaleString('en-IN')}</p>
                   <p><strong>Duration:</strong> {plan.numberOfDays} days</p>
                   <p><strong>Type:</strong> {plan.travelCompanionType}</p>
                   {plan.plannedTravelDate && (

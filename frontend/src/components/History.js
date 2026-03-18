@@ -155,7 +155,7 @@ function History({ onSelectItinerary }) {
               <div className="card-details">
                 <div className="detail-row">
                   <span className="label">Budget:</span>
-                  <span className="value">${itinerary.budget.toLocaleString()}</span>
+                  <span className="value">₹{itinerary.budget.toLocaleString('en-IN')}</span>
                 </div>
                 <div className="detail-row">
                   <span className="label">Duration:</span>

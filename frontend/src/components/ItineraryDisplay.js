@@ -5,28 +5,41 @@ function ItineraryDisplay({ data }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [expandedDay, setExpandedDay] = useState(null);
 
-  if (!data || !data.success) {
+  const itinerary = data?.itinerary || data;
+
+  if (!itinerary || !itinerary.success) {
     return (
       <div className="error-container">
         <h2>❌ Error Generating Itinerary</h2>
-        <p>{data?.error || data?.message || 'Unknown error occurred'}</p>
+        <p>{itinerary?.error || itinerary?.message || 'Unknown error occurred'}</p>
       </div>
     );
   }
 
   const {
-    summary,
-    estimatedCosts,
-    dayPlans,
-    moneyTips,
-    costBreakdown,
+    summary = {},
+    estimatedCosts = {},
+    dayPlans = [],
+    moneyTips = [],
+    costBreakdown = {},
     accommodationSuggestions,
     foodRecommendations,
     alternatives,
-    warnings
-  } = data;
+    warnings = [],
+    route = {},
+    transportation = {}
+  } = itinerary;
 
-  const budgetStatus = summary.budgetStatus === 'WITHIN_BUDGET' ? '✅' : '⚠️';
+  const budgetStatus = summary?.budgetStatus === 'WITHIN_BUDGET' ? '✅' : '⚠️';
+
+  const formatINR = (value) => {
+    if (value == null || Number.isNaN(Number(value))) return '-';
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 2
+    }).format(value);
+  };
 
   return (
     <div className="itinerary-container">
@@ -43,16 +56,56 @@ function ItineraryDisplay({ data }) {
           </div>
           <div className="summary-item">
             <span className="label">Budget:</span>
-            <span className="value">${summary.originalBudget}</span>
+            <span className="value">{formatINR(summary.originalBudget)}</span>
           </div>
           <div className="summary-item">
             <span className="label">Estimated Cost:</span>
             <span className={`value ${summary.withinBudget ? 'within' : 'over'}`}>
-              {budgetStatus} ${estimatedCosts.total}
+              {budgetStatus} {formatINR(estimatedCosts.total)}
             </span>
           </div>
         </div>
       </div>
+
+      {/* Route Planning Section */}
+      {route.primaryRoute && (
+        <div className="route-section">
+          <h3>🗺️ Route Planning</h3>
+          <div className="route-info">
+            <div className="route-primary">
+              <h4>Primary Route</h4>
+              <div className="route-details">
+                <p><strong>From:</strong> {route.primaryRoute.from}</p>
+                <p><strong>To:</strong> {route.primaryRoute.to}</p>
+                <p><strong>Distance:</strong> {route.primaryRoute.distance} km</p>
+                <p><strong>Estimated Duration:</strong> {route.primaryRoute.estimatedDuration}</p>
+                <p><strong>Transport Mode:</strong> {route.primaryRoute.transportMode}</p>
+              </div>
+            </div>
+
+            {route.intermediateStops && route.intermediateStops.length > 0 && (
+              <div className="route-stops">
+                <h4>Recommended Intermediate Stops</h4>
+                <div className="stops-list">
+                  {route.intermediateStops.map((stop, idx) => (
+                    <div key={idx} className="stop-card">
+                      <h5>{stop.name}</h5>
+                      <div className="stop-details">
+                        <span className="category">{stop.category}</span>
+                        <span className="rating">⭐ {stop.rating}/5</span>
+                      </div>
+                      <div className="stop-meta">
+                        <p><strong>Distance from route:</strong> {stop.distance} km</p>
+                        <p><strong>Visit time:</strong> {stop.visitTime} hours</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {warnings.length > 0 && (
         <div className="warnings-section">
@@ -118,32 +171,32 @@ function ItineraryDisplay({ data }) {
                 <div className="cost-card transport">
                   <span className="icon">✈️</span>
                   <span className="category">Transport</span>
-                  <span className="cost">${estimatedCosts.mainTransport}</span>
+                  <span className="cost">{formatINR(estimatedCosts.mainTransport)}</span>
                 </div>
                 <div className="cost-card accommodation">
                   <span className="icon">🏨</span>
                   <span className="category">Accommodation</span>
-                  <span className="cost">${estimatedCosts.accommodation}</span>
+                  <span className="cost">{formatINR(estimatedCosts.accommodation)}</span>
                 </div>
                 <div className="cost-card food">
                   <span className="icon">🍽️</span>
                   <span className="category">Food</span>
-                  <span className="cost">${estimatedCosts.food}</span>
+                  <span className="cost">{formatINR(estimatedCosts.food)}</span>
                 </div>
                 <div className="cost-card activities">
                   <span className="icon">🎭</span>
                   <span className="category">Activities</span>
-                  <span className="cost">${estimatedCosts.activities}</span>
+                  <span className="cost">{formatINR(estimatedCosts.activities)}</span>
                 </div>
                 <div className="cost-card misc">
                   <span className="icon">🎒</span>
                   <span className="category">Miscellaneous</span>
-                  <span className="cost">${estimatedCosts.miscellaneous}</span>
+                  <span className="cost">{formatINR(estimatedCosts.miscellaneous)}</span>
                 </div>
                 <div className="cost-card total">
                   <span className="icon">💵</span>
                   <span className="category">Total</span>
-                  <span className="cost">${estimatedCosts.total}</span>
+                  <span className="cost">{formatINR(estimatedCosts.total)}</span>
                 </div>
               </div>
             </div>
@@ -152,9 +205,9 @@ function ItineraryDisplay({ data }) {
               <h3>🏨 Accommodation Details</h3>
               <div className="info-card">
                 <p><strong>Type:</strong> {costBreakdown.accommodation.type}</p>
-                <p><strong>Cost per Night:</strong> ${costBreakdown.accommodation.perNight}</p>
+                <p><strong>Cost per Night:</strong> {formatINR(costBreakdown.accommodation.perNight)}</p>
                 <p><strong>Number of Nights:</strong> {costBreakdown.accommodation.nights}</p>
-                <p><strong>Total:</strong> ${costBreakdown.accommodation.total}</p>
+                <p><strong>Total:</strong> {formatINR(costBreakdown.accommodation.total)}</p>
               </div>
 
               {accommodationSuggestions && (
@@ -172,9 +225,9 @@ function ItineraryDisplay({ data }) {
             <div className="food-info">
               <h3>🍽️ Food & Dining Estimates</h3>
               <div className="info-card">
-                <p><strong>Daily Food Budget:</strong> ${costBreakdown.food.dailyTotal}</p>
-                <p><strong>Breakdown:</strong> Breakfast ${costBreakdown.food.breakfast} | Lunch ${costBreakdown.food.lunch} | Dinner ${costBreakdown.food.dinner}</p>
-                <p><strong>Trip Total:</strong> ${costBreakdown.food.tripTotal}</p>
+                <p><strong>Daily Food Budget:</strong> {formatINR(costBreakdown.food.dailyTotal)}</p>
+                <p><strong>Breakdown:</strong> Breakfast {formatINR(costBreakdown.food.breakfast)} | Lunch {formatINR(costBreakdown.food.lunch)} | Dinner {formatINR(costBreakdown.food.dinner)}</p>
+                <p><strong>Trip Total:</strong> {formatINR(costBreakdown.food.tripTotal)}</p>
               </div>
 
               {foodRecommendations && (
@@ -197,77 +250,138 @@ function ItineraryDisplay({ data }) {
             <h3>Detailed Cost Breakdown</h3>
 
             <div className="cost-detail-cards">
+              {/* Transportation Cost Details */}
               <div className="cost-detail-card">
-                <h4>✈️ Transport</h4>
-                <p className="mode">Mode: {costBreakdown.transport.mode}</p>
-                <p><strong>Cost:</strong> ${costBreakdown.transport.estimatedCost}</p>
-                <p className="note">Student discount: Applied (15-25%)</p>
+                <h4>🚗 Transportation</h4>
+                {transportation.mode ? (
+                  <div>
+                    <p className="mode"><strong>Mode:</strong> {transportation.mode}</p>
+                    <p><strong>Base Cost per Person:</strong> {formatINR(transportation.baseCostPerPerson || 0)}</p>
+                    <p><strong>Number of Travelers:</strong> {transportation.numTravelers}</p>
+                    <p><strong>Distance:</strong> {transportation.distance} km</p>
+                    <p className="total-cost"><strong>Total Transport Cost:</strong> {formatINR(transportation.totalCost)}</p>
+                  </div>
+                ) : transportation.vehicleType ? (
+                  <div>
+                    <p className="mode"><strong>Vehicle:</strong> {transportation.vehicleType} ({transportation.fuelType})</p>
+                    <p><strong>Mileage:</strong> {transportation.mileage} km/l</p>
+                    <p><strong>Fuel Required:</strong> {transportation.fuelRequired} litres</p>
+                    <p><strong>Fuel Cost:</strong> {formatINR(transportation.fuelCost)}</p>
+                    {transportation.tollCost > 0 && <p><strong>Toll Charges:</strong> {formatINR(transportation.tollCost)}</p>}
+                    <p className="total-cost"><strong>Total Transport Cost:</strong> {formatINR(transportation.totalCost)}</p>
+                  </div>
+                ) : (
+                  <p>Transport details not available</p>
+                )}
               </div>
 
+              {/* Accommodation Cost Details */}
               <div className="cost-detail-card">
                 <h4>🏨 Accommodation</h4>
                 <table>
                   <tbody>
                     <tr>
                       <td>Type:</td>
-                      <td>{costBreakdown.accommodation.type}</td>
+                      <td>{costBreakdown.accommodation?.type || 'N/A'}</td>
                     </tr>
                     <tr>
-                      <td>Per Night:</td>
-                      <td>${costBreakdown.accommodation.perNight}</td>
+                      <td>Cost per Night:</td>
+                      <td>{formatINR(costBreakdown.accommodation?.costPerNight || 0)}</td>
                     </tr>
                     <tr>
-                      <td>Nights:</td>
-                      <td>{costBreakdown.accommodation.nights}</td>
+                      <td>Number of Nights:</td>
+                      <td>{costBreakdown.accommodation?.numNights || 0}</td>
+                    </tr>
+                    <tr>
+                      <td>Number of Travelers:</td>
+                      <td>{costBreakdown.accommodation?.numTravelers || 1}</td>
                     </tr>
                     <tr className="total-row">
                       <td><strong>Total:</strong></td>
-                      <td><strong>${costBreakdown.accommodation.total}</strong></td>
+                      <td><strong>{formatINR(costBreakdown.accommodation?.totalCost || 0)}</strong></td>
                     </tr>
                   </tbody>
                 </table>
               </div>
 
+              {/* Food Cost Details */}
               <div className="cost-detail-card">
                 <h4>🍽️ Food</h4>
                 <table>
                   <tbody>
                     <tr>
-                      <td>Breakfast:</td>
-                      <td>${costBreakdown.food.breakfast}</td>
+                      <td>Per Person per Day:</td>
+                      <td>{formatINR(costBreakdown.food?.perPersonPerDay || 0)}</td>
                     </tr>
                     <tr>
-                      <td>Lunch:</td>
-                      <td>${costBreakdown.food.lunch}</td>
+                      <td>Number of Travelers:</td>
+                      <td>{costBreakdown.food?.numTravelers || 1}</td>
                     </tr>
                     <tr>
-                      <td>Dinner:</td>
-                      <td>${costBreakdown.food.dinner}</td>
-                    </tr>
-                    <tr>
-                      <td>Daily Total:</td>
-                      <td>${costBreakdown.food.dailyTotal}</td>
+                      <td>Number of Days:</td>
+                      <td>{costBreakdown.food?.numDays || 1}</td>
                     </tr>
                     <tr className="total-row">
-                      <td><strong>Trip Total:</strong></td>
-                      <td><strong>${costBreakdown.food.tripTotal}</strong></td>
+                      <td><strong>Total Food Cost:</strong></td>
+                      <td><strong>{formatINR(costBreakdown.food?.totalCost || 0)}</strong></td>
                     </tr>
                   </tbody>
                 </table>
+                {costBreakdown.food?.breakdown && (
+                  <div className="food-breakdown">
+                    <p><strong>Daily Breakdown:</strong></p>
+                    <p>Breakfast: {formatINR(costBreakdown.food.breakdown.breakfast)} | Lunch: {formatINR(costBreakdown.food.breakdown.lunch)} | Dinner: {formatINR(costBreakdown.food.breakdown.dinner)}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Activities Cost Details */}
+              {costBreakdown.activities?.breakdown && costBreakdown.activities.breakdown.length > 0 && (
+                <div className="cost-detail-card">
+                  <h4>🎭 Activities & Entry Fees</h4>
+                  <div className="activities-breakdown">
+                    {costBreakdown.activities.breakdown.map((activity, idx) => (
+                      <div key={idx} className="activity-cost-item">
+                        <p><strong>{activity.name}</strong></p>
+                        <p>Cost per Person: {formatINR(activity.costPerPerson)} × {activity.numTravelers} travelers = {formatINR(activity.totalCost)}</p>
+                      </div>
+                    ))}
+                    <div className="activity-total">
+                      <p><strong>Total Activities Cost:</strong> {formatINR(costBreakdown.activities.totalCost)}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Miscellaneous Costs */}
+              <div className="cost-detail-card">
+                <h4>🎒 Miscellaneous</h4>
+                <p><strong>Amount:</strong> {formatINR(costBreakdown.miscellaneous?.amount || estimatedCosts.miscellaneous)}</p>
+                <p className="misc-description">{costBreakdown.miscellaneous?.description || 'Emergency funds, local transport, tips, and miscellaneous expenses'}</p>
               </div>
             </div>
 
+            {/* Budget Comparison */}
             <div className="budget-comparison">
-              <h4>Budget Comparison</h4>
+              <h4>Budget vs Estimated Cost</h4>
               <div className="comparison-chart">
                 <div className="budget-bar">
-                  <div className="budget-allocated" style={{
-                    width: `${(estimatedCosts.total / summary.originalBudget) * 100}%`
-                  }}>
-                    ${estimatedCosts.total}
+                  <div
+                    className={`budget-allocated ${summary.withinBudget ? 'within' : 'over'}`}
+                    style={{
+                      width: `${Math.min((estimatedCosts.total / summary.originalBudget) * 100, 100)}%`
+                    }}
+                  >
+                    {formatINR(estimatedCosts.total)}
                   </div>
                 </div>
-                <p>Budget: ${summary.originalBudget}</p>
+                <div className="budget-info">
+                  <p><strong>Your Budget:</strong> {formatINR(summary.originalBudget)}</p>
+                  <p><strong>Estimated Cost:</strong> {formatINR(estimatedCosts.total)}</p>
+                  <p className={`budget-status ${summary.withinBudget ? 'within' : 'over'}`}>
+                    {summary.withinBudget ? '✅ Within Budget' : `⚠️ Over Budget by ${formatINR(estimatedCosts.total - summary.originalBudget)}`}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -297,7 +411,7 @@ function ItineraryDisplay({ data }) {
                           <ul>
                             {day.activities.map((activity, idx) => (
                               <li key={idx}>
-                                {activity.name} {activity.cost > 0 && `- $${activity.cost}`}
+                                {activity.name} {activity.cost > 0 && `- ${formatINR(activity.cost)}`}
                               </li>
                             ))}
                           </ul>
@@ -387,8 +501,8 @@ function ItineraryDisplay({ data }) {
                   {alt.days && (
                     <p><strong>Duration:</strong> {alt.days} days</p>
                   )}
-                  <p className="cost"><strong>Estimated Cost:</strong> ${alt.estimatedCost}</p>
-                  <p className="savings"><strong>Savings:</strong> ${alt.savings}</p>
+                  <p className="cost"><strong>Estimated Cost:</strong> {formatINR(alt.estimatedCost)}</p>
+                  <p className="savings"><strong>Savings:</strong> {formatINR(alt.savings)}</p>
                   {alt.pros && (
                     <div className="pros-cons">
                       <p><strong>Pros:</strong> {alt.pros}</p>

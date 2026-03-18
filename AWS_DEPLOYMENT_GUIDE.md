@@ -1,5 +1,8 @@
 # AWS Deployment Guide for AI Travel Planner
 
+> ⚠️ **Deprecated:** this guide targets AWS EC2. New deployments should use Render (see `RENDER_QUICKSTART.md`).
+
+
 **Version**: 1.0  
 **Platform**: AWS EC2  
 **Operating System**: Ubuntu 20.04 LTS  

@@ -50,7 +50,7 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              placeholder="your@email.com"
+              placeholder="enter your email address"
             />
           </div>
 

@@ -176,91 +176,52 @@ heroku logs --tail
 heroku ps:scale web=2
 ```
 
-### Option B: AWS (EC2)
+### Option B: Render (Recommended for simplicity)
 
-```bash
-# 1. Launch EC2 instance (Ubuntu 20.04)
-# - Instance type: t3.medium (minimum)
-# - Storage: 20GB SSD
-# - Security group: Allow ports 80, 443, 5000
+Render is a modern PaaS that can host both the backend API and the frontend as two separate services. It integrates with GitHub/ GitLab and manages build, deploy, and scaling automatically.
 
-# 2. SSH into instance
-ssh -i key.pem ubuntu@instance-ip
+1. **Backend Web Service**
+   - Go to the [Render dashboard](https://dashboard.render.com) and click **New → Web Service**.
+   - Connect your repository and select the branch (e.g. `main`).
+   - **Environment**: Node.js
+   - **Build Command**: `cd backend && npm install`
+   - **Start Command**: `node src/index.js` (or `npm run start`)
+   - **Instance Type**: Standard (e.g. `Starter`) or above.
+   - Add the following environment variables under **Environment**:
+     ```
+     MONGODB_URI=your_mongo_connection_string
+     JWT_SECRET=your_strong_jwt_secret
+     FRONTEND_URL=https://your-render-domain.or-custom-domain
+     API_BASE_URL=https://your-render-domain
+     # any other settings from your `.env.production` file
+     ```
+   - Save and click **Create Web Service**. Render will build and deploy automatically.
+   - (Optional) Add a custom domain in the service settings and configure DNS records as instructed.
 
-# 3. Install dependencies
-curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-sudo apt-get install -y nodejs git nginx certbot python3-certbot-nginx
+2. **Frontend Static Site**
+   - In the Render dashboard click **New → Static Site**.
+   - Link the same repository and branch.
+   - **Build Command**: `cd frontend && npm install && npm run build`
+   - **Publish Directory**: `frontend/build`
+   - **Environment Variables**:
+     ```
+     REACT_APP_API_URL=https://your-render-domain-or-custom-domain
+     REACT_APP_ENV=production
+     REACT_APP_VERSION=1.0.0
+     ```
+   - Create the static site and once deployed, attach a custom domain if you have one.
 
-# 4. Clone repository
-git clone https://github.com/your-repo/ai-travel-planner.git
-cd ai-travel-planner
+3. **Database & Backups**
+   - Use MongoDB Atlas or a self‑hosted cluster as described in the [Database Setup](#database-setup) section.
+   - If you need scheduled backups, use a Render [cron job](https://render.com/docs/cron-jobs) pointing at `backup-database.sh` or an external storage service. AWS S3 is optional; you can also push archives to any cloud storage provider.
 
-# 5. Install app dependencies
-cd backend && npm install --production
-cd ../frontend && npm install --production && npm run build
+4. **Monitoring & Logs**
+   - Render provides realtime logs and health checks in the dashboard. Configure alerts as needed.
 
-# 6. Create systemd service
-sudo tee /etc/systemd/system/travel-planner.service > /dev/null <<EOF
-[Unit]
-Description=AI Travel Planner
-After=network.target
+5. **Scaling**
+   - Adjust instance size or add additional services through the Render UI. Deployments occur on every git push.
 
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/ai-travel-planner/backend
-ExecStart=/usr/bin/node src/index.js
-Restart=always
-RestartSec=10
-Environment="NODE_ENV=production"
-EnvironmentFile=/home/ubuntu/ai-travel-planner/backend/.env.production
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 7. Enable and start service
-sudo systemctl enable travel-planner
-sudo systemctl start travel-planner
-
-# 8. Configure Nginx
-sudo tee /etc/nginx/sites-available/travel-planner > /dev/null <<'EOF'
-upstream travel_planner_backend {
-    server 127.0.0.1:5000;
-}
-
-server {
-    listen 80;
-    server_name yourdomain.com www.yourdomain.com;
-    
-    client_max_body_size 10M;
-    
-    location /api {
-        proxy_pass http://travel_planner_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    
-    location / {
-        root /home/ubuntu/ai-travel-planner/frontend/build;
-        try_files $uri $uri/ /index.html;
-    }
-}
-EOF
-
-# 9. Enable site
-sudo ln -s /etc/nginx/sites-available/travel-planner /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-
-# 10. Setup SSL with Let's Encrypt
-sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com
-```
+*(Any references to AWS EC2 in earlier versions of this document are now superseded by Render instructions. AWS content may still exist for historical purposes.)*
 
 ### Option C: DigitalOcean
 
@@ -285,7 +246,7 @@ pm2 start src/index.js --name "travel-planner"
 pm2 startup
 pm2 save
 
-# 6. Follow AWS Nginx setup (steps 8-10 above)
+# 6. Configure Nginx using the examples earlier in this document (see Option B: Render or other web server guidance)
 ```
 
 ### Option D: Docker + Kubernetes

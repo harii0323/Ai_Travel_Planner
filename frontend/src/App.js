@@ -98,7 +98,8 @@ function App() {
         travelCompanionType: user?.travelPreferences?.companionType || 'solo',
         numberOfTravelers: formData.numberOfTravelers || 1
       });
-      setItinerary(res.data);
+      // The backend wraps the itinerary in an "itinerary" field for /generate
+      setItinerary(res.data.itinerary || res.data);
     } catch (err) {
       console.error(err);
       setError(err.response?.data?.error || 'Failed to fetch itinerary. Please try again.');

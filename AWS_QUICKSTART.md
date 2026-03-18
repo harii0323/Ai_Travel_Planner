@@ -1,4 +1,7 @@
-# AWS Deployment Quick Start
+# AWS Deployment Quick Start (Deprecated)
+
+> ⚠️ **Note:** AWS instructions are now deprecated. Use **Render Deployment Quickstart** instead. See `RENDER_QUICKSTART.md`.
+
 
 **Estimated Time**: 35 minutes | **Cost**: ~$40/month | **Status**: Ready to Deploy
 

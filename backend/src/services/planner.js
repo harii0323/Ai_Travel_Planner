@@ -1,12 +1,12 @@
-// AI Travel Planner Service - Generates optimized, budget-friendly itineraries for students
+// AI Travel Planner Service - Comprehensive Route Planning with Cost Estimation
 
-// Database of budget-friendly accommodations
+// Database of budget-friendly accommodations by destination type
 const accommodationDb = {
-  hostel: { avgPrice: 15, maxPrice: 25, description: 'Youth hostels with shared or private rooms' },
-  budgetHotel: { avgPrice: 35, maxPrice: 60, description: 'Budget hotels with basic amenities' },
-  homestay: { avgPrice: 20, maxPrice: 40, description: 'Local homestays for cultural experience' },
-  airbnb: { avgPrice: 30, maxPrice: 50, description: 'Budget Airbnb listings' },
-  guesthouse: { avgPrice: 25, maxPrice: 45, description: 'Local guest houses' }
+  hostel: { avgPrice: 300, maxPrice: 600, description: 'Youth hostels with shared or private rooms' },
+  budgetHotel: { avgPrice: 500, maxPrice: 1000, description: 'Budget hotels with basic amenities' },
+  homestay: { avgPrice: 600, maxPrice: 1500, description: 'Local homestays for cultural experience' },
+  airbnb: { avgPrice: 800, maxPrice: 2000, description: 'Budget Airbnb listings' },
+  guesthouse: { avgPrice: 2500, maxPrice: 4500, description: 'Local guest houses' }
 };
 
 // Activity database with costs and categories
@@ -14,14 +14,14 @@ const activityDb = {
   adventure: [
     { name: 'Hiking', cost: 0, category: 'adventure', days: 8 },
     { name: 'Rock climbing', cost: 30, category: 'adventure', days: 4 },
-    { name: 'Paragliding', cost: 80, category: 'adventure', days: 2 },
+    { name: 'Paragliding', cost: 2000, category: 'adventure', days: 2 },
     { name: 'Kayaking', cost: 35, category: 'adventure', days: 3 },
-    { name: 'Mountain biking', cost: 40, category: 'adventure', days: 5 }
+    { name: 'Mountain biking', cost: 400, category: 'adventure', days: 5 }
   ],
   cultural: [
-    { name: 'Museum visits', cost: 5, category: 'cultural', days: 7 },
+    { name: 'Museum visits', cost: 50, category: 'cultural', days: 7 },
     { name: 'Temple tours', cost: 0, category: 'cultural', days: 8 },
-    { name: 'Historical site visits', cost: 10, category: 'cultural', days: 6 },
+    { name: 'Historical site visits', cost: 50, category: 'cultural', days: 6 },
     { name: 'Local market exploration', cost: 0, category: 'cultural', days: 7 },
     { name: 'Street art tours', cost: 0, category: 'cultural', days: 5 }
   ],
@@ -29,30 +29,99 @@ const activityDb = {
     { name: 'Street food tour', cost: 5, category: 'food', days: 7 },
     { name: 'Cooking class', cost: 25, category: 'food', days: 3 },
     { name: 'Food market visit', cost: 0, category: 'food', days: 7 },
-    { name: 'Local restaurant dinner', cost: 12, category: 'food', days: 6 }
+    { name: 'Local restaurant dinner', cost: 150, category: 'food', days: 6 }
   ],
   nature: [
     { name: 'Beach time', cost: 0, category: 'nature', days: 8 },
-    { name: 'National park visits', cost: 20, category: 'nature', days: 5 },
-    { name: 'Wildlife watching', cost: 45, category: 'nature', days: 2 },
-    { name: 'Forest walks', cost: 0, category: 'nature', days: 7 },
-    { name: 'Waterfall visits', cost: 5, category: 'nature', days: 4 }
+    { name: 'National park visits', cost: 50, category: 'nature', days: 5 },
+    { name: 'Wildlife watching', cost: 100, category: 'nature', days: 2 },
+    { name: 'Forest walks', cost: 20, category: 'nature', days: 7 },
+    { name: 'Waterfall visits', cost: 100, category: 'nature', days: 4 }
   ]
 };
 
 // Transportation costs (estimated per trip)
 const transportCosts = {
-  flight: { base: 150, perKm: 0.1, student_discount: 0.15 },
-  train: { base: 50, perKm: 0.08, student_discount: 0.25 },
-  bus: { base: 30, perKm: 0.05, student_discount: 0.20 },
-  localTransport: { daily: 5, monthly: 30, student_discount: 0.25 }
+  flight: { base: 4000, perKm: 0.1 },
+  train: { base: 400, perKm: 0.08 },
+  bus: { base: 100, perKm: 0.05 },
+  localTransport: { daily: 5, monthly: 30 }
 };
 
-// Daily meal costs
+// Fuel prices by type (INR per litre)
+const fuelPrices = {
+  petrol: 105,
+  diesel: 95,
+  electric: 8 // per kWh
+};
+
+// Vehicle efficiency database
+const vehicleEfficiency = {
+  car: {
+    petrol: { avgMileage: 15, tollMultiplier: 1 },
+    diesel: { avgMileage: 18, tollMultiplier: 1 },
+    electric: { avgMileage: 5, tollMultiplier: 1 } // km per kWh
+  },
+  bike: {
+    petrol: { avgMileage: 40, tollMultiplier: 0 }, // No toll for bikes
+    diesel: { avgMileage: 35, tollMultiplier: 0 },
+    electric: { avgMileage: 50, tollMultiplier: 0 }
+  }
+};
+
+// Daily meal costs per person
 const foodCosts = {
-  budget: { breakfast: 3, lunch: 5, dinner: 8 },
-  moderate: { breakfast: 5, lunch: 8, dinner: 12 },
-  splurge: { breakfast: 8, lunch: 12, dinner: 18 }
+  budget: { breakfast: 80, lunch: 150, dinner: 200 },
+  moderate: { breakfast: 100, lunch: 200, dinner: 250 },
+  splurge: { breakfast: 150, lunch: 300, dinner: 400 }
+};
+
+// Route database with intermediate stops (simplified for major routes)
+const routeDatabase = {
+  'Delhi-Mumbai': {
+    distance: 1400,
+    duration: '24-28 hours',
+    intermediateStops: [
+      { name: 'Jaipur', distance: 280, category: 'cultural', visitTime: 4, rating: 4.5 },
+      { name: 'Udaipur', distance: 660, category: 'cultural', visitTime: 6, rating: 4.7 },
+      { name: 'Ahmedabad', distance: 950, category: 'cultural', visitTime: 4, rating: 4.3 }
+    ]
+  },
+  'Mumbai-Bangalore': {
+    distance: 980,
+    duration: '18-22 hours',
+    intermediateStops: [
+      { name: 'Pune', distance: 150, category: 'cultural', visitTime: 3, rating: 4.2 },
+      { name: 'Goa', distance: 580, category: 'nature', visitTime: 8, rating: 4.8 },
+      { name: 'Mangalore', distance: 850, category: 'food', visitTime: 2, rating: 4.1 }
+    ]
+  },
+  'Delhi-Kolkata': {
+    distance: 1500,
+    duration: '28-32 hours',
+    intermediateStops: [
+      { name: 'Varanasi', distance: 780, category: 'cultural', visitTime: 6, rating: 4.6 },
+      { name: 'Patna', distance: 1000, category: 'cultural', visitTime: 3, rating: 3.8 },
+      { name: 'Bhubaneswar', distance: 1300, category: 'cultural', visitTime: 4, rating: 4.4 }
+    ]
+  },
+  'Chennai-Bangalore': {
+    distance: 350,
+    duration: '6-8 hours',
+    intermediateStops: [
+      { name: 'Vellore', distance: 140, category: 'cultural', visitTime: 2, rating: 4.0 },
+      { name: 'Tiruvannamalai', distance: 200, category: 'cultural', visitTime: 3, rating: 4.2 }
+    ]
+  }
+};
+
+// Toll charges database (simplified)
+const tollCharges = {
+  'Delhi-Mumbai': 2500,
+  'Mumbai-Bangalore': 1800,
+  'Delhi-Kolkata': 2200,
+  'Chennai-Bangalore': 400,
+  'default': 1500
 };
 
 // Calculate number of days from date range
@@ -63,37 +132,276 @@ function calculateDays(startDate, endDate) {
   return Math.max(days, 1);
 }
 
-// Get transportation cost estimate
-function estimateTransportCost(mode, distance, isStudent = true) {
-  const config = transportCosts[mode] || transportCosts.bus;
-  let cost = config.base + (distance * config.perKm || 0);
-  
-  if (isStudent) {
-    cost = cost * (1 - config.student_discount);
-  }
-  
-  return Math.round(cost * 100) / 100;
-}
+// Generate route with intermediate stops
+function generateRouteWithStops(startLocation, destination, transportMode, numDays) {
+  const routeKey = `${startLocation}-${destination}`;
+  const reverseRouteKey = `${destination}-${startLocation}`;
 
-// Allocate budget across categories
-function allocateBudget(totalBudget, numDays) {
-  // Recommended budget allocation for students (in percentages)
-  const allocation = {
-    mainTransport: 0.25, // Inter-city transport
-    accommodation: 0.35, // Lodging
-    food: 0.25, // Food and dining
-    activities: 0.10, // Activities and attractions
-    miscellaneous: 0.05 // Emergencies and misc
-  };
+  // Try to find route in database
+  let routeData = routeDatabase[routeKey] || routeDatabase[reverseRouteKey];
+
+  if (!routeData) {
+    // Generate basic route if not in database
+    routeData = {
+      distance: Math.floor(Math.random() * 1000) + 500, // Random distance 500-1500 km
+      duration: '12-24 hours',
+      intermediateStops: []
+    };
+  }
+
+  // Select appropriate stops based on available time
+  const maxStops = Math.min(3, Math.floor(numDays / 2)); // Max 3 stops, spread across days
+  const selectedStops = routeData.intermediateStops
+    .sort((a, b) => b.rating - a.rating) // Sort by rating
+    .slice(0, maxStops);
 
   return {
-    mainTransport: Math.round(totalBudget * allocation.mainTransport),
-    accommodation: Math.round(totalBudget * allocation.accommodation),
-    food: Math.round(totalBudget * allocation.food),
-    activities: Math.round(totalBudget * allocation.activities),
-    miscellaneous: Math.round(totalBudget * allocation.miscellaneous),
-    perDayBudget: Math.round(totalBudget / numDays)
+    primaryRoute: {
+      from: startLocation,
+      to: destination,
+      distance: routeData.distance,
+      estimatedDuration: routeData.duration,
+      transportMode: transportMode
+    },
+    intermediateStops: selectedStops,
+    totalDistance: routeData.distance + selectedStops.reduce((sum, stop) => sum + (stop.distance || 50), 0)
   };
+}
+
+// Calculate transportation cost for public transport
+function calculatePublicTransportCost(transportMode, distance, numTravelers) {
+  const config = transportCosts[transportMode] || transportCosts.bus;
+  const baseCost = config.base + (distance * config.perKm || 0);
+  const totalCost = baseCost * numTravelers; // Multiply by number of travelers
+
+  return {
+    mode: transportMode,
+    baseCostPerPerson: Math.round(baseCost * 100) / 100,
+    totalCost: Math.round(totalCost * 100) / 100,
+    numTravelers: numTravelers,
+    distance: distance
+  };
+}
+
+// Calculate transportation cost for own vehicle
+function calculateOwnVehicleCost(vehicleType, fuelType, mileage, totalDistance, numTravelers) {
+  const efficiency = vehicleEfficiency[vehicleType]?.[fuelType];
+  if (!efficiency) {
+    throw new Error(`Invalid vehicle type or fuel type: ${vehicleType}, ${fuelType}`);
+  }
+
+  const actualMileage = mileage || efficiency.avgMileage;
+  const fuelRequired = totalDistance / actualMileage;
+  const fuelPrice = fuelPrices[fuelType];
+  const fuelCost = fuelRequired * fuelPrice;
+
+  // Toll charges (only for cars)
+  const tollCost = vehicleType === 'car' ? getTollCharges(totalDistance) : 0;
+
+  const totalTransportCost = fuelCost + tollCost;
+
+  return {
+    vehicleType,
+    fuelType,
+    mileage: actualMileage,
+    fuelRequired: Math.round(fuelRequired * 100) / 100,
+    fuelCost: Math.round(fuelCost * 100) / 100,
+    tollCost: Math.round(tollCost * 100) / 100,
+    totalCost: Math.round(totalTransportCost * 100) / 100,
+    numTravelers: numTravelers,
+    distance: totalDistance
+  };
+}
+
+// Get toll charges based on route
+function getTollCharges(distance) {
+  // Simplified toll calculation based on distance
+  const tollPerKm = 1.5; // Average toll per km for cars
+  return Math.round(distance * tollPerKm * 100) / 100;
+}
+
+// Calculate food cost
+function calculateFoodCost(numTravelers, numDays, budgetCategory = 'moderate') {
+  const dailyCosts = foodCosts[budgetCategory] || foodCosts.moderate;
+  const dailyTotal = dailyCosts.breakfast + dailyCosts.lunch + dailyCosts.dinner;
+  const tripTotal = dailyTotal * numTravelers * numDays;
+
+  return {
+    perPersonPerDay: dailyTotal,
+    totalCost: Math.round(tripTotal * 100) / 100,
+    numTravelers: numTravelers,
+    numDays: numDays,
+    breakdown: dailyCosts
+  };
+}
+
+// Calculate accommodation cost
+function calculateAccommodationCost(destination, accommodationType, numNights, numTravelers) {
+  const accommodation = accommodationDb[accommodationType] || accommodationDb.hostel;
+  const costPerNight = accommodation.avgPrice;
+  const totalCost = costPerNight * numNights;
+
+  return {
+    type: accommodationType,
+    costPerNight: costPerNight,
+    numNights: numNights,
+    totalCost: Math.round(totalCost * 100) / 100,
+    description: accommodation.description,
+    numTravelers: numTravelers
+  };
+}
+
+// Calculate activity and entry costs
+function calculateActivityCosts(activities, numTravelers) {
+  let totalCost = 0;
+  const activityBreakdown = [];
+
+  for (const activity of activities) {
+    const costPerPerson = activity.cost || 0;
+    const totalActivityCost = costPerPerson * numTravelers;
+    totalCost += totalActivityCost;
+
+    activityBreakdown.push({
+      name: activity.name,
+      category: activity.category,
+      costPerPerson: costPerPerson,
+      totalCost: Math.round(totalActivityCost * 100) / 100,
+      numTravelers: numTravelers
+    });
+  }
+
+  return {
+    totalCost: Math.round(totalCost * 100) / 100,
+    breakdown: activityBreakdown,
+    numTravelers: numTravelers
+  };
+}
+
+// Main itinerary generation function
+function generateItinerary(data) {
+  try {
+    const {
+      budget,
+      travelDates,
+      startLocation,
+      destination,
+      activities: activitiesPreference,
+      accommodation,
+      transport,
+      travelCompanionType,
+      numberOfTravelers = 1,
+      vehicleType,
+      fuelType,
+      vehicleMileage
+    } = data;
+
+    // Parse inputs
+    const parsedBudget = parseFloat(budget) || 0;
+    const numTravelers = parseInt(numberOfTravelers) || 1;
+    const numDays = calculateDays(travelDates.split(' to ')[0], travelDates.split(' to ')[1] || travelDates);
+
+    // Generate route with intermediate stops
+    const routePlan = generateRouteWithStops(startLocation, destination, transport, numDays);
+
+    // Calculate transportation costs
+    let transportDetails;
+    if (transport === 'ownTransport') {
+      transportDetails = calculateOwnVehicleCost(
+        vehicleType,
+        fuelType,
+        parseFloat(vehicleMileage),
+        routePlan.totalDistance,
+        numTravelers
+      );
+    } else {
+      transportDetails = calculatePublicTransportCost(transport, routePlan.primaryRoute.distance, numTravelers);
+    }
+
+    // Calculate food costs
+    const foodDetails = calculateFoodCost(numTravelers, numDays);
+
+    // Calculate accommodation costs
+    const accommodationDetails = calculateAccommodationCost(destination, accommodation, numDays, numTravelers);
+
+    // Get recommended activities
+    const { activities: recommendedActivities } = getRecommendedActivities(activitiesPreference, parsedBudget * 0.1, numDays);
+
+    // Calculate activity costs
+    const activityDetails = calculateActivityCosts(recommendedActivities, numTravelers);
+
+    // Calculate total estimated costs
+    const estimatedCosts = {
+      transport: transportDetails.totalCost,
+      food: foodDetails.totalCost,
+      accommodation: accommodationDetails.totalCost,
+      activities: activityDetails.totalCost,
+      miscellaneous: Math.round(parsedBudget * 0.05 * 100) / 100, // 5% for miscellaneous
+      total: 0
+    };
+
+    estimatedCosts.total = Math.round((
+      estimatedCosts.transport +
+      estimatedCosts.food +
+      estimatedCosts.accommodation +
+      estimatedCosts.activities +
+      estimatedCosts.miscellaneous
+    ) * 100) / 100;
+
+    // Check if over budget
+    const isOverBudget = parsedBudget > 0 && estimatedCosts.total > parsedBudget;
+
+    // Generate day-wise itinerary with stops
+    const dayPlans = generateDayWiseItineraryWithStops(numDays, routePlan, recommendedActivities, accommodationDetails);
+
+    // Generate money-saving tips
+    const tips = generateMoneyTips(destination, numDays, transport, accommodation);
+
+    // Final itinerary object
+    const itinerary = {
+      success: true,
+      summary: {
+        startLocation,
+        destination,
+        totalDays: numDays,
+        totalDistance: routePlan.totalDistance,
+        originalBudget: parsedBudget,
+        estimatedCost: estimatedCosts.total,
+        withinBudget: !isOverBudget,
+        budgetStatus: isOverBudget ? 'OVER_BUDGET' : 'WITHIN_BUDGET',
+        numTravelers: numTravelers,
+        travelCompanionType: travelCompanionType || 'solo'
+      },
+      route: routePlan,
+      transportation: transportDetails,
+      estimatedCosts,
+      costBreakdown: {
+        transport: transportDetails,
+        food: foodDetails,
+        accommodation: accommodationDetails,
+        activities: activityDetails,
+        miscellaneous: {
+          amount: estimatedCosts.miscellaneous,
+          description: 'Emergency funds, local transport, tips, and miscellaneous expenses'
+        }
+      },
+      dayPlans,
+      moneyTips: tips,
+      warnings: isOverBudget ? [
+        `Your estimated cost (₹${estimatedCosts.total}) exceeds your budget (₹${parsedBudget}).`,
+        'Consider the alternative options or adjust your preferences.',
+        'You can reduce trip duration, choose cheaper accommodation, or skip some activities.'
+      ] : []
+    };
+
+    return itinerary;
+  } catch (err) {
+    console.error('Error generating itinerary:', err);
+    return {
+      success: false,
+      error: err.message,
+      message: 'Failed to generate itinerary. Please check your inputs.'
+    };
+  }
 }
 
 // Get recommended activities based on preferences
@@ -134,7 +442,7 @@ function getRecommendedActivities(preferences, budget, numDays) {
       { name: 'Local market exploration', cost: 0, category: 'cultural' },
       { name: 'Beach time', cost: 0, category: 'nature' },
       { name: 'Hiking', cost: 0, category: 'adventure' },
-      { name: 'Street food tour', cost: 5, category: 'food' }
+      { name: 'Street food tour', cost: 200, category: 'food' }
     ];
 
     for (const activity of freeActivities) {
@@ -174,11 +482,11 @@ function getAccommodationRecommendations(type, numDays, budget) {
   };
 }
 
-// Generate day-wise itinerary
-function generateDayWiseItinerary(numDays, destination, activities, accommodation) {
+// Generate day-wise itinerary with intermediate stops
+function generateDayWiseItineraryWithStops(numDays, routePlan, activities, accommodation) {
   const dayPlans = [];
   const activityIndex = {};
-  
+
   // Initialize activity counter
   for (const activity of activities) {
     if (!activityIndex[activity.estimatedDay]) {
@@ -187,42 +495,79 @@ function generateDayWiseItinerary(numDays, destination, activities, accommodatio
     activityIndex[activity.estimatedDay].push(activity);
   }
 
+  // Distribute intermediate stops across days
+  const stopsPerDay = Math.ceil(routePlan.intermediateStops.length / numDays);
+  let stopIndex = 0;
+
   for (let day = 1; day <= numDays; day++) {
-    let plan = '';
-    
+    let plan = `**Day ${day}**\n\n`;
+
+    // Add intermediate stops for this day
+    const dayStops = routePlan.intermediateStops.slice(stopIndex, stopIndex + stopsPerDay);
+    stopIndex += stopsPerDay;
+
     if (day === 1) {
-      plan = `Day ${day} - Arrival:\n`;
-      plan += `- Arrive at ${destination}\n`;
-      plan += `- Check into ${accommodation.type}\n`;
-      plan += `- Explore nearby area/grab dinner locally\n`;
-      plan += `- Rest and acclimatize`;
-    } else if (day === numDays) {
-      plan = `Day ${day} - Departure:\n`;
-      plan += `- Final shopping/souvenir hunting\n`;
-      plan += `- Last meal at favorite local spot\n`;
-      plan += `- Check out and depart`;
-    } else {
-      plan = `Day ${day}:\n`;
-      
-      if (activityIndex[day] && activityIndex[day].length > 0) {
-        plan += `- Activities:\n`;
-        for (const activity of activityIndex[day]) {
-          plan += `  * ${activity.name} (Cost: $${activity.cost})\n`;
+      plan += `**Morning:** Departure from ${routePlan.primaryRoute.from}\n`;
+      plan += `**Travel:** ${routePlan.primaryRoute.estimatedDuration} journey to ${routePlan.primaryRoute.to}\n\n`;
+
+      if (dayStops.length > 0) {
+        plan += `**Intermediate Stops:**\n`;
+        for (const stop of dayStops) {
+          plan += `- **${stop.name}** (${stop.category}) - ${stop.visitTime} hours\n`;
+          plan += `  * Distance from route: ${stop.distance}km\n`;
+          plan += `  * Rating: ${stop.rating}/5\n\n`;
         }
-      } else {
-        plan += `- Free exploration time\n`;
-        plan += `- Visit local attractions\n`;
       }
-      
-      plan += `- Morning: Local breakfast and exploration\n`;
-      plan += `- Afternoon: Main activity\n`;
-      plan += `- Evening: Local dinner and street food`;
+
+      plan += `**Evening:** Arrival at ${routePlan.primaryRoute.to}\n`;
+      plan += `**Accommodation:** Check into ${accommodation.type}\n`;
+      plan += `**Dinner:** Local restaurant or street food\n`;
+      plan += `**Rest:** Acclimatize and rest\n`;
+
+    } else if (day === numDays) {
+      plan += `**Morning:** Final breakfast at accommodation\n`;
+      plan += `**Activities:** Last-minute shopping and souvenir hunting\n`;
+
+      if (activityIndex[day] && activityIndex[day].length > 0) {
+        plan += `\n**Activities:**\n`;
+        for (const activity of activityIndex[day]) {
+          plan += `- ${activity.name} (₹${activity.cost} per person)\n`;
+        }
+      }
+
+      plan += `\n**Afternoon:** Last meal and departure preparations\n`;
+      plan += `**Evening:** Departure from ${routePlan.primaryRoute.to}\n`;
+
+    } else {
+      plan += `**Morning:** Breakfast and local exploration\n`;
+
+      if (dayStops.length > 0) {
+        plan += `\n**Day Trip/Activities:**\n`;
+        for (const stop of dayStops) {
+          plan += `- Visit **${stop.name}** (${stop.category})\n`;
+          plan += `  * ${stop.visitTime} hours exploration\n`;
+          plan += `  * ${stop.distance}km from main destination\n\n`;
+        }
+      }
+
+      if (activityIndex[day] && activityIndex[day].length > 0) {
+        plan += `**Activities:**\n`;
+        for (const activity of activityIndex[day]) {
+          plan += `- ${activity.name} (₹${activity.cost} per person)\n`;
+        }
+        plan += `\n`;
+      }
+
+      plan += `**Afternoon:** Lunch and continued exploration\n`;
+      plan += `**Evening:** Dinner at local restaurant\n`;
+      plan += `**Night:** Rest at ${accommodation.type}\n`;
     }
 
     dayPlans.push({
       day,
       plan,
-      activities: activityIndex[day] || []
+      activities: activityIndex[day] || [],
+      stops: dayStops
     });
   }
 
@@ -233,9 +578,9 @@ function generateDayWiseItinerary(numDays, destination, activities, accommodatio
 function estimateFoodCosts(numDays, budget) {
   const dailyFoodBudget = Math.round(budget / numDays);
   const meals = {
-    breakfast: 3,
-    lunch: 5,
-    dinner: 8
+    breakfast: 80,
+    lunch: 150,
+    dinner: 200
   };
 
   return {
@@ -299,11 +644,11 @@ function generateAlternativePlan(originalBudget, estimatedCost, details, numDays
     name: 'Budget Accommodation Focus',
     description: 'Skip paid activities, focus on free attractions',
     estimatedCost: Math.round(
-      originalBudget * 0.30 + // accommodation (hostels only)
-      originalBudget * 0.20 + // transport
+      originalBudget * 0.25 + // accommodation (hostels only)
+      originalBudget * 0.35 + // transport
       originalBudget * 0.30   // food (budget meals)
     ),
-    savings: estimatedCost - (originalBudget * 0.80),
+    savings: estimatedCost - (originalBudget * 0.90),
     pros: 'Maximum savings, authentic local experience',
     cons: 'Miss out on paid activities and attractions'
   });
@@ -312,13 +657,30 @@ function generateAlternativePlan(originalBudget, estimatedCost, details, numDays
   alternatives.push({
     name: 'Nearby Alternative Destination',
     description: 'Visit a closer destination with lower costs',
-    estimatedCost: Math.round(originalBudget * 0.85),
-    savings: Math.round(originalBudget * 0.15),
+    estimatedCost: Math.round(originalBudget * 0.95),
+    savings: Math.round(originalBudget * 0.05),
     pros: 'Lower transport costs, same experience quality',
     cons: 'Different destination'
   });
 
   return alternatives;
+}
+
+// Allocate budget across different categories
+function allocateBudget(totalBudget, numDays) {
+  // Allocate budget percentages (excluding transport which is estimated separately)
+  // Accommodation: 35%, Food: 25%, Activities: 25%, Miscellaneous: 15%
+  const accommodationPercent = 0.35;
+  const foodPercent = 0.25;
+  const activitiesPercent = 0.25;
+  const miscellaneousPercent = 0.15;
+
+  return {
+    accommodation: Math.round(totalBudget * accommodationPercent),
+    food: Math.round(totalBudget * foodPercent),
+    activities: Math.round(totalBudget * activitiesPercent),
+    miscellaneous: Math.round(totalBudget * miscellaneousPercent)
+  };
 }
 
 // Main itinerary generation function

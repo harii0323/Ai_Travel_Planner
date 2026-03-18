@@ -207,10 +207,10 @@ function Profile({ user, onProfileUpdate }) {
                   value={formData.budget}
                   onChange={handleChange}
                 >
-                  <option value="budget-friendly">Budget-Friendly (Under $50/day)</option>
-                  <option value="moderate">Moderate ($50-150/day)</option>
-                  <option value="comfortable">Comfortable ($150-300/day)</option>
-                  <option value="luxury">Luxury ($300+/day)</option>
+                  <option value="budget-friendly">Budget-Friendly (Under ₹500/day)</option>
+                  <option value="moderate">Moderate (₹500-1500/day)</option>
+                  <option value="comfortable">Comfortable (₹1500-3000/day)</option>
+                  <option value="luxury">Luxury (₹3000+/day)</option>
                 </select>
               </div>
 

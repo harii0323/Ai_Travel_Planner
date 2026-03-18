@@ -11,9 +11,14 @@ function ItineraryForm({ onSubmit }) {
     accommodation: 'hostel',
     transport: 'bus',
     travelCompanionType: 'solo',
-    numberOfTravelers: 1
+    numberOfTravelers: 1,
+    // New fields for own transportation
+    vehicleType: 'car',
+    fuelType: 'petrol',
+    vehicleMileage: ''
   });
 
+  const [showVehicleDetails, setShowVehicleDetails] = useState(false);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
 
@@ -25,18 +30,29 @@ function ItineraryForm({ onSubmit }) {
   ];
 
   const accommodationOptions = [
-    { label: 'Hostel ($15-25/night)', value: 'hostel' },
-    { label: 'Budget Hotel ($35-60/night)', value: 'budgetHotel' },
-    { label: 'Homestay ($20-40/night)', value: 'homestay' },
-    { label: 'Airbnb ($30-50/night)', value: 'airbnb' },
-    { label: 'Guest House ($25-45/night)', value: 'guesthouse' }
+    { label: 'Hostel (₹150-250/night)', value: 'hostel' },
+    { label: 'Budget Hotel (₹350-600/night)', value: 'budgetHotel' },
+    { label: 'Homestay (₹200-400/night)', value: 'homestay' },
+    { label: 'Airbnb (₹300-500/night)', value: 'airbnb' },
+    { label: 'Guest House (₹2500-4000/night)', value: 'guesthouse' }
   ];
 
   const transportOptions = [
-    { label: 'Flight (Fastest, 15% student discount)', value: 'flight' },
-    { label: 'Train (Comfortable, 25% student discount)', value: 'train' },
-    { label: 'Bus (Budget-friendly, 20% student discount)', value: 'bus' },
-    { label: 'Local Transport', value: 'localTransport' }
+    { label: 'Flight (Fastest)', value: 'flight' },
+    { label: 'Train (Comfortable)', value: 'train' },
+    { label: 'Bus (Budget-friendly)', value: 'bus' },
+    { label: 'Own Transportation', value: 'ownTransport' }
+  ];
+
+  const vehicleOptions = [
+    { label: 'Car', value: 'car' },
+    { label: 'Bike', value: 'bike' }
+  ];
+
+  const fuelOptions = [
+    { label: 'Petrol', value: 'petrol' },
+    { label: 'Diesel', value: 'diesel' },
+    { label: 'Electric', value: 'electric' }
   ];
 
   const validateForm = () => {
@@ -66,6 +82,19 @@ function ItineraryForm({ onSubmit }) {
       newErrors.transport = 'Please select transport mode';
     }
 
+    // Validate vehicle details if own transport is selected
+    if (form.transport === 'ownTransport') {
+      if (!form.vehicleType) {
+        newErrors.vehicleType = 'Please select vehicle type';
+      }
+      if (!form.fuelType) {
+        newErrors.fuelType = 'Please select fuel type';
+      }
+      if (!form.vehicleMileage || parseFloat(form.vehicleMileage) <= 0) {
+        newErrors.vehicleMileage = 'Please enter valid vehicle mileage/efficiency';
+      }
+    }
+
     if (!form.travelCompanionType) {
       newErrors.travelCompanionType = 'Please select travel companion type';
     }
@@ -84,6 +113,12 @@ function ItineraryForm({ onSubmit }) {
       ...prev,
       [name]: value
     }));
+
+    // Show/hide vehicle details based on transport selection
+    if (name === 'transport') {
+      setShowVehicleDetails(value === 'ownTransport');
+    }
+
     // Clear error for this field
     if (errors[name]) {
       setErrors(prev => ({
@@ -137,7 +172,7 @@ function ItineraryForm({ onSubmit }) {
 
           <div className="form-group">
             <label htmlFor="budget">
-              Total Budget (USD) *
+              Total Budget (INR) *
               <span className="tooltip">💡 This is your total budget for the entire trip</span>
             </label>
             <input
@@ -185,7 +220,7 @@ function ItineraryForm({ onSubmit }) {
               id="startLocation"
               type="text"
               name="startLocation"
-              placeholder="e.g., New York"
+              placeholder="e.g., Hyderabad"
               value={form.startLocation}
               onChange={handleChange}
               className={errors.startLocation ? 'input-error' : ''}
@@ -202,7 +237,7 @@ function ItineraryForm({ onSubmit }) {
               id="destination"
               type="text"
               name="destination"
-              placeholder="e.g., Barcelona"
+              placeholder="e.g., kerala"
               value={form.destination}
               onChange={handleChange}
               className={errors.destination ? 'input-error' : ''}
@@ -282,6 +317,85 @@ function ItineraryForm({ onSubmit }) {
             </select>
             {errors.transport && <span className="error-message">{errors.transport}</span>}
           </div>
+
+          {/* Vehicle Details Section - Only show if Own Transportation is selected */}
+          {showVehicleDetails && (
+            <div className="vehicle-details-section">
+              <h4>🚗 Vehicle Details</h4>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="vehicleType">
+                    Vehicle Type *
+                    <span className="tooltip">💡 Car or Bike</span>
+                  </label>
+                  <select
+                    id="vehicleType"
+                    name="vehicleType"
+                    value={form.vehicleType}
+                    onChange={handleChange}
+                    className={errors.vehicleType ? 'input-error' : ''}
+                  >
+                    <option value="">Select vehicle type...</option>
+                    {vehicleOptions.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.vehicleType && <span className="error-message">{errors.vehicleType}</span>}
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="fuelType">
+                    Fuel Type *
+                    <span className="tooltip">💡 Type of fuel your vehicle uses</span>
+                  </label>
+                  <select
+                    id="fuelType"
+                    name="fuelType"
+                    value={form.fuelType}
+                    onChange={handleChange}
+                    className={errors.fuelType ? 'input-error' : ''}
+                  >
+                    <option value="">Select fuel type...</option>
+                    {fuelOptions.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.fuelType && <span className="error-message">{errors.fuelType}</span>}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="vehicleMileage">
+                  Vehicle Mileage/Efficiency *
+                  <span className="tooltip">
+                    💡 {form.fuelType === 'electric' ? 'km per kWh charge' : 'km per litre'}
+                  </span>
+                </label>
+                <input
+                  id="vehicleMileage"
+                  type="number"
+                  name="vehicleMileage"
+                  placeholder={form.fuelType === 'electric' ? 'e.g., 5' : 'e.g., 15'}
+                  value={form.vehicleMileage}
+                  onChange={handleChange}
+                  className={errors.vehicleMileage ? 'input-error' : ''}
+                  min="1"
+                  step="0.1"
+                />
+                {errors.vehicleMileage && <span className="error-message">{errors.vehicleMileage}</span>}
+                <small className="help-text">
+                  {form.fuelType === 'electric'
+                    ? 'Kilometers per kWh (e.g., Tesla Model 3: ~5 km/kWh)'
+                    : 'Kilometers per litre (e.g., Swift: 18-22 km/l)'}
+                </small>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Travel Companion Section */}

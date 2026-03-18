@@ -44,13 +44,8 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
         name: formData.name,
         email: formData.email,
         password: formData.password,
-        age: parseInt(formData.age),
-        studentId: formData.studentId || null,
-        travelPreferences: {
-          companionType: formData.companionType,
-          budget: 'budget-friendly',
-          interests: []
-        }
+        passwordConfirm: formData.confirmPassword,
+        travelCompanionType: formData.companionType
       });
 
       if (response.data.success) {
@@ -84,7 +79,7 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
               value={formData.name}
               onChange={handleChange}
               required
-              placeholder="John Doe"
+              placeholder="Please enter your full name"
             />
           </div>
 
@@ -96,7 +91,7 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
               value={formData.email}
               onChange={handleChange}
               required
-              placeholder="your@email.com"
+              placeholder="Enter your email address"
             />
           </div>
 
@@ -120,7 +115,7 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
               name="studentId"
               value={formData.studentId}
               onChange={handleChange}
-              placeholder="For student discounts"
+              placeholder="Enter your student ID for discounts"
             />
           </div>
 

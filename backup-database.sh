@@ -153,6 +153,7 @@ backup_collections_to_json() {
 upload_to_s3() {
   local backup_file="$1"
   
+  # optional: if you use AWS S3 for offsite backups
   if ! command -v aws &> /dev/null; then
     log_warning "AWS CLI not found, skipping S3 upload"
     return 1

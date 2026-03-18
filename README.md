@@ -112,6 +112,7 @@ An intelligent, budget-optimized travel itinerary generator designed specificall
 ## 📖 Documentation
 
 - **[Phase 2 Quick Start](PHASE_2_QUICKSTART.md)** - Get running in 5 minutes
+- **[Render Deployment Quickstart](RENDER_QUICKSTART.md)** - Deploy to Render.com with automated build
 - **[Phase 2 Complete Guide](PHASE_2_GUIDE.md)** - Full feature documentation
 - **[Getting Started](GETTING_STARTED.md)** - Original setup guide
 - **[Architecture](ARCHITECTURE.md)** - System design details

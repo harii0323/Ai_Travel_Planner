@@ -22,7 +22,7 @@
 - [ ] Rollback plan documented
 
 ### Infrastructure Planning
-- [ ] Hosting provider selected (AWS/Heroku/DigitalOcean/GCP)
+- [ ] Hosting provider selected (Render/AWS/Heroku/DigitalOcean/GCP)
 - [ ] Domain name registered and configured
 - [ ] SSL certificate procured (Let's Encrypt)
 - [ ] Database (MongoDB) provisioned or MongoDB Atlas setup
