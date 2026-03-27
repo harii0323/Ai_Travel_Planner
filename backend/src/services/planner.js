@@ -1,6 +1,15 @@
 // AI Travel Planner Service - Comprehensive Route Planning with Cost Estimation
 
-// Database of budget-friendly accommodations by destination type
+// Import Google Maps API utility
+const {
+  getDistanceFromGoogleMaps,
+  getDirectionsFromGoogleMaps,
+  findPlacesNearby,
+  searchPlacesByText,
+  hasGoogleMapsAPI
+} = require('../utils/googleMapsAPI');
+
+// Database of budget-friendly accommodations by destination type (all prices in INR)
 const accommodationDb = {
   hostel: { avgPrice: 300, maxPrice: 600, description: 'Youth hostels with shared or private rooms' },
   budgetHotel: { avgPrice: 500, maxPrice: 1000, description: 'Budget hotels with basic amenities' },
@@ -9,7 +18,7 @@ const accommodationDb = {
   guesthouse: { avgPrice: 2500, maxPrice: 4500, description: 'Local guest houses' }
 };
 
-// Activity database with costs and categories
+// Activity database with costs and categories (all costs in INR)
 const activityDb = {
   adventure: [
     { name: 'Hiking', cost: 0, category: 'adventure', days: 8 },
@@ -40,7 +49,7 @@ const activityDb = {
   ]
 };
 
-// Transportation costs (estimated per trip)
+// Transportation costs (estimated per trip, in INR)
 const transportCosts = {
   flight: { base: 4000, perKm: 0.1 },
   train: { base: 400, perKm: 0.08 },
@@ -69,7 +78,7 @@ const vehicleEfficiency = {
   }
 };
 
-// Daily meal costs per person
+// Daily meal costs per person (all prices in INR)
 const foodCosts = {
   budget: { breakfast: 80, lunch: 150, dinner: 200 },
   moderate: { breakfast: 100, lunch: 200, dinner: 250 },
@@ -115,7 +124,7 @@ const routeDatabase = {
   }
 };
 
-// Toll charges database (simplified)
+// Toll charges database (simplified, in INR)
 const tollCharges = {
   'Delhi-Mumbai': 2500,
   'Mumbai-Bangalore': 1800,
@@ -132,39 +141,191 @@ function calculateDays(startDate, endDate) {
   return Math.max(days, 1);
 }
 
-// Generate route with intermediate stops
+// Generate route with intermediate stops from local DB only
 function generateRouteWithStops(startLocation, destination, transportMode, numDays) {
   const routeKey = `${startLocation}-${destination}`;
   const reverseRouteKey = `${destination}-${startLocation}`;
 
-  // Try to find route in database
-  let routeData = routeDatabase[routeKey] || routeDatabase[reverseRouteKey];
+  const routeData = routeDatabase[routeKey] || routeDatabase[reverseRouteKey];
 
   if (!routeData) {
-    // Generate basic route if not in database
-    routeData = {
-      distance: Math.floor(Math.random() * 1000) + 500, // Random distance 500-1500 km
-      duration: '12-24 hours',
-      intermediateStops: []
-    };
+    throw new Error(`Route not found in database for ${startLocation} -> ${destination}`);
   }
 
-  // Select appropriate stops based on available time
-  const maxStops = Math.min(3, Math.floor(numDays / 2)); // Max 3 stops, spread across days
-  const selectedStops = routeData.intermediateStops
-    .sort((a, b) => b.rating - a.rating) // Sort by rating
+  routeData.source = 'database';
+  const routeInfo = routeData;
+
+  const maxStops = Math.min(3, Math.floor(numDays / 2));
+  const selectedStops = (routeInfo.intermediateStops || [])
+    .sort((a, b) => (b.rating || 0) - (a.rating || 0))
     .slice(0, maxStops);
 
   return {
     primaryRoute: {
       from: startLocation,
       to: destination,
-      distance: routeData.distance,
-      estimatedDuration: routeData.duration,
-      transportMode: transportMode
+      distance: routeInfo.distance,
+      estimatedDuration: routeInfo.duration,
+      transportMode: transportMode,
+      distanceSource: source
     },
     intermediateStops: selectedStops,
-    totalDistance: routeData.distance + selectedStops.reduce((sum, stop) => sum + (stop.distance || 50), 0)
+    totalDistance: routeInfo.distance + selectedStops.reduce((sum, stop) => sum + (stop.distance || 50), 0)
+  };
+}
+
+// Get the best route plan (Google Maps first, then local fallback)
+async function getBestRoutePlan(startLocation, destination, transportMode, numDays) {
+  console.log(`\n🚀 getBestRoutePlan called: ${startLocation} → ${destination} (${transportMode}, ${numDays} days)`);
+  
+  // First, check if we have a local database route
+  const routeKey = `${startLocation}-${destination}`;
+  const reverseRouteKey = `${destination}-${startLocation}`;
+  const routeData = routeDatabase[routeKey] || routeDatabase[reverseRouteKey];
+
+  // Try Google Maps first if API is available
+  console.log(`📍 hasGoogleMapsAPI check: ${hasGoogleMapsAPI()}`);
+  
+  if (hasGoogleMapsAPI()) {
+    console.log(`🗺️ Attempting Google Maps API call...`);
+    const googleResult = await getDistanceFromGoogleMaps(startLocation, destination);
+    console.log(`🗺️ Google Maps result:`, googleResult);
+    
+    if (!googleResult.error && typeof googleResult.distance === 'number') {
+      console.log(`✅ Using Google Maps distance: ${googleResult.distance} km`);
+      // Use Google Maps distance with local DB intermediate stops if available
+      const maxStops = Math.min(3, Math.floor(numDays / 2));
+      const selectedStops = (routeData?.intermediateStops || [])
+        .sort((a, b) => (b.rating || 0) - (a.rating || 0))
+        .slice(0, maxStops);
+
+      return {
+        primaryRoute: {
+          from: startLocation,
+          to: destination,
+          distance: googleResult.distance,
+          estimatedDuration: googleResult.duration,
+          transportMode: transportMode,
+          distanceSource: 'google_maps'
+        },
+        intermediateStops: selectedStops,
+        totalDistance: googleResult.distance + selectedStops.reduce((sum, stop) => sum + (stop.distance || 50), 0)
+      };
+    }
+  }
+
+  // Google Maps not available or failed: use local database route if available
+  console.log(`📚 Checking local database route...`);
+  if (routeData) {
+    console.log(`✅ Found in database with ${routeData.distance} km distance`);
+    const maxStops = Math.min(3, Math.floor(numDays / 2));
+    const selectedStops = routeData.intermediateStops
+      .sort((a, b) => (b.rating || 0) - (a.rating || 0))
+      .slice(0, maxStops);
+
+    return {
+      primaryRoute: {
+        from: startLocation,
+        to: destination,
+        distance: routeData.distance,
+        estimatedDuration: routeData.duration,
+        transportMode: transportMode,
+        distanceSource: 'database'
+      },
+      intermediateStops: selectedStops,
+      totalDistance: routeData.distance + selectedStops.reduce((sum, stop) => sum + (stop.distance || 50), 0)
+    };
+  }
+
+  // No Google Maps and no local route: provide basic fallback
+  console.log(`⚠️ Using fallback_basic distance (no API, no database)`);
+  const fallbackDistance = Math.floor(Math.random() * 1000) + 500; // 500-1500 km
+  return {
+    primaryRoute: {
+      from: startLocation,
+      to: destination,
+      distance: fallbackDistance,
+      estimatedDuration: '12-24 hours',
+      transportMode: transportMode,
+      distanceSource: 'fallback_basic'
+    },
+    intermediateStops: [],
+    totalDistance: fallbackDistance
+  };
+}
+
+// Enhance route data with Google Maps distance (if API key configured)
+async function enhanceRouteWithGoogleMaps(routePlan, startLocation, destination) {
+  try {
+    // Only attempt if Google Maps API is configured
+    if (!hasGoogleMapsAPI()) {
+      return routePlan; // Return original route plan if API not configured
+    }
+
+    console.log(`Attempting to fetch distance from Google Maps for ${startLocation} to ${destination}`);
+    
+    const result = await getDistanceFromGoogleMaps(startLocation, destination);
+    
+    if (result.error) {
+      console.warn(`Google Maps API warning: ${result.error}`);
+      return routePlan; // Return original route plan on error
+    }
+
+    // Update route plan with Google Maps data
+    const enhancedRoutePlan = { ...routePlan };
+    enhancedRoutePlan.primaryRoute = {
+      ...routePlan.primaryRoute,
+      distance: result.distance,
+      estimatedDuration: result.duration,
+      distanceSource: 'google_maps'
+    };
+    
+    // Recalculate total distance
+    enhancedRoutePlan.totalDistance = 
+      result.distance + 
+      routePlan.intermediateStops.reduce((sum, stop) => sum + (stop.distance || 50), 0);
+
+    console.log(`Successfully fetched distance from Google Maps: ${result.distance} km`);
+    return enhancedRoutePlan;
+  } catch (error) {
+    console.error('Error enhancing route with Google Maps:', error.message);
+    return routePlan; // Return original route plan on error
+  }
+}
+
+// Estimate route distance based on intermediate stops
+async function estimateRouteDistance(startLocation, destination, intermediateStops) {
+  try {
+    if (!hasGoogleMapsAPI() || !intermediateStops || intermediateStops.length === 0) {
+      return null;
+    }
+
+    console.log(`Fetching distances for ${intermediateStops.length} intermediate stops`);
+    const locations = intermediateStops.map(stop => stop.name);
+    
+    // This would require using getDistancesToMultipleLocations
+    // For now, we'll calculate cumulative distance
+    return null;
+  } catch (error) {
+    console.error('Error estimating route distance:', error.message);
+    return null;
+  }
+}
+function estimateTransportCost(mode, distance, isStudent = false) {
+  const config = transportCosts[mode] || transportCosts.bus;
+  const baseCost = config.base + (distance * (config.perKm || 0));
+
+  // Apply student discount (20% for flights and trains)
+  const studentDiscount = isStudent && (mode === 'flight' || mode === 'train') ? 0.2 : 0;
+  const discountedCost = baseCost * (1 - studentDiscount);
+
+  return {
+    mode: mode,
+    baseCost: Math.round(baseCost * 100) / 100,
+    discountedCost: Math.round(discountedCost * 100) / 100,
+    studentDiscount: studentDiscount > 0 ? Math.round(studentDiscount * 100) + '%' : 'N/A',
+    distance: distance,
+    isStudent: isStudent
   };
 }
 
@@ -278,131 +439,6 @@ function calculateActivityCosts(activities, numTravelers) {
 }
 
 // Main itinerary generation function
-function generateItinerary(data) {
-  try {
-    const {
-      budget,
-      travelDates,
-      startLocation,
-      destination,
-      activities: activitiesPreference,
-      accommodation,
-      transport,
-      travelCompanionType,
-      numberOfTravelers = 1,
-      vehicleType,
-      fuelType,
-      vehicleMileage
-    } = data;
-
-    // Parse inputs
-    const parsedBudget = parseFloat(budget) || 0;
-    const numTravelers = parseInt(numberOfTravelers) || 1;
-    const numDays = calculateDays(travelDates.split(' to ')[0], travelDates.split(' to ')[1] || travelDates);
-
-    // Generate route with intermediate stops
-    const routePlan = generateRouteWithStops(startLocation, destination, transport, numDays);
-
-    // Calculate transportation costs
-    let transportDetails;
-    if (transport === 'ownTransport') {
-      transportDetails = calculateOwnVehicleCost(
-        vehicleType,
-        fuelType,
-        parseFloat(vehicleMileage),
-        routePlan.totalDistance,
-        numTravelers
-      );
-    } else {
-      transportDetails = calculatePublicTransportCost(transport, routePlan.primaryRoute.distance, numTravelers);
-    }
-
-    // Calculate food costs
-    const foodDetails = calculateFoodCost(numTravelers, numDays);
-
-    // Calculate accommodation costs
-    const accommodationDetails = calculateAccommodationCost(destination, accommodation, numDays, numTravelers);
-
-    // Get recommended activities
-    const { activities: recommendedActivities } = getRecommendedActivities(activitiesPreference, parsedBudget * 0.1, numDays);
-
-    // Calculate activity costs
-    const activityDetails = calculateActivityCosts(recommendedActivities, numTravelers);
-
-    // Calculate total estimated costs
-    const estimatedCosts = {
-      transport: transportDetails.totalCost,
-      food: foodDetails.totalCost,
-      accommodation: accommodationDetails.totalCost,
-      activities: activityDetails.totalCost,
-      miscellaneous: Math.round(parsedBudget * 0.05 * 100) / 100, // 5% for miscellaneous
-      total: 0
-    };
-
-    estimatedCosts.total = Math.round((
-      estimatedCosts.transport +
-      estimatedCosts.food +
-      estimatedCosts.accommodation +
-      estimatedCosts.activities +
-      estimatedCosts.miscellaneous
-    ) * 100) / 100;
-
-    // Check if over budget
-    const isOverBudget = parsedBudget > 0 && estimatedCosts.total > parsedBudget;
-
-    // Generate day-wise itinerary with stops
-    const dayPlans = generateDayWiseItineraryWithStops(numDays, routePlan, recommendedActivities, accommodationDetails);
-
-    // Generate money-saving tips
-    const tips = generateMoneyTips(destination, numDays, transport, accommodation);
-
-    // Final itinerary object
-    const itinerary = {
-      success: true,
-      summary: {
-        startLocation,
-        destination,
-        totalDays: numDays,
-        totalDistance: routePlan.totalDistance,
-        originalBudget: parsedBudget,
-        estimatedCost: estimatedCosts.total,
-        withinBudget: !isOverBudget,
-        budgetStatus: isOverBudget ? 'OVER_BUDGET' : 'WITHIN_BUDGET',
-        numTravelers: numTravelers,
-        travelCompanionType: travelCompanionType || 'solo'
-      },
-      route: routePlan,
-      transportation: transportDetails,
-      estimatedCosts,
-      costBreakdown: {
-        transport: transportDetails,
-        food: foodDetails,
-        accommodation: accommodationDetails,
-        activities: activityDetails,
-        miscellaneous: {
-          amount: estimatedCosts.miscellaneous,
-          description: 'Emergency funds, local transport, tips, and miscellaneous expenses'
-        }
-      },
-      dayPlans,
-      moneyTips: tips,
-      warnings: isOverBudget ? [
-        `Your estimated cost (₹${estimatedCosts.total}) exceeds your budget (₹${parsedBudget}).`,
-        'Consider the alternative options or adjust your preferences.',
-        'You can reduce trip duration, choose cheaper accommodation, or skip some activities.'
-      ] : []
-    };
-
-    return itinerary;
-  } catch (err) {
-    console.error('Error generating itinerary:', err);
-    return {
-      success: false,
-      error: err.message,
-      message: 'Failed to generate itinerary. Please check your inputs.'
-    };
-  }
-}
 
 // Get recommended activities based on preferences
 function getRecommendedActivities(preferences, budget, numDays) {
@@ -462,10 +498,10 @@ function getRecommendedActivities(preferences, budget, numDays) {
 }
 
 // Get accommodation recommendations
-function getAccommodationRecommendations(type, numDays, budget) {
+function getAccommodationRecommendations(type, numDays, budget, numTravelers = 1) {
   const accommodation = accommodationDb[type] || accommodationDb.hostel;
-  const costPerNight = Math.min(accommodation.avgPrice, budget / numDays);
-  const totalAccommodationCost = costPerNight * numDays;
+  const costPerNight = Math.min(accommodation.avgPrice, budget / numDays / numTravelers);
+  const totalAccommodationCost = costPerNight * numDays * numTravelers;
 
   return {
     type,
@@ -574,8 +610,59 @@ function generateDayWiseItineraryWithStops(numDays, routePlan, activities, accom
   return dayPlans;
 }
 
+// Generate day-wise itinerary for a single destination trip
+function generateDayWiseItinerary(numDays, destination, activities, accommodation) {
+  const dayPlans = [];
+  const activityIndex = {};
+
+  // Group activities by their planned day
+  for (const activity of activities) {
+    const day = activity.estimatedDay || 1;
+    if (!activityIndex[day]) {
+      activityIndex[day] = [];
+    }
+    activityIndex[day].push(activity);
+  }
+
+  for (let day = 1; day <= numDays; day++) {
+    let plan = `**Day ${day}**\n\n`;
+
+    if (day === 1) {
+      plan += `**Morning:** Arrive in ${destination} and check into ${accommodation.type}\n`;
+      plan += `**Afternoon:** Explore the local area and get oriented\n`;
+      plan += `**Evening:** Dinner at a local spot\n`;
+    } else if (day === numDays) {
+      plan += `**Morning:** Last breakfast and check-out from ${accommodation.type}\n`;
+      plan += `**Afternoon:** Final sightseeing or souvenir shopping\n`;
+      plan += `**Evening:** Departure from ${destination}\n`;
+    } else {
+      plan += `**Morning:** Breakfast and local exploration\n`;
+      plan += `**Afternoon:** Free time to explore or relax\n`;
+      plan += `**Evening:** Dinner and leisure time\n`;
+    }
+
+    if (activityIndex[day] && activityIndex[day].length > 0) {
+      plan += `\n**Planned Activities:**\n`;
+      for (const activity of activityIndex[day]) {
+        plan += `- ${activity.name} (${activity.category}, ₹${activity.cost})\n`;
+      }
+      plan += `\n`;
+    }
+
+    plan += `**Night:** Stay at ${accommodation.type}\n`;
+
+    dayPlans.push({
+      day,
+      plan,
+      activities: activityIndex[day] || []
+    });
+  }
+
+  return dayPlans;
+}
+
 // Calculate estimated daily food costs
-function estimateFoodCosts(numDays, budget) {
+function estimateFoodCosts(numDays, budget, numTravelers = 1) {
   const dailyFoodBudget = Math.round(budget / numDays);
   const meals = {
     breakfast: 80,
@@ -583,12 +670,20 @@ function estimateFoodCosts(numDays, budget) {
     dinner: 200
   };
 
+  const perPersonBreakfast = meals.breakfast;
+  const perPersonLunch = dailyFoodBudget <= 10 ? meals.lunch : meals.lunch + 2;
+  const perPersonDinner = dailyFoodBudget <= 10 ? meals.dinner : meals.dinner + 2;
+  const perPersonDailyTotal = Math.round((perPersonBreakfast + perPersonLunch + perPersonDinner) * 100) / 100;
+  const tripTotalPerPerson = Math.round(perPersonDailyTotal * numDays * 100) / 100;
+
   return {
-    breakfast: meals.breakfast,
-    lunch: dailyFoodBudget <= 10 ? meals.lunch : meals.lunch + 2,
-    dinner: dailyFoodBudget <= 10 ? meals.dinner : meals.dinner + 2,
-    dailyTotal: Math.round((meals.breakfast + meals.lunch + meals.dinner) * 100) / 100,
-    tripTotal: Math.round((meals.breakfast + meals.lunch + meals.dinner) * numDays * 100) / 100,
+    breakfast: perPersonBreakfast,
+    lunch: perPersonLunch,
+    dinner: perPersonDinner,
+    dailyTotal: perPersonDailyTotal,
+    tripTotal: Math.round(tripTotalPerPerson * numTravelers * 100) / 100,
+    perPersonTripTotal: tripTotalPerPerson,
+    groupDailyTotal: Math.round(perPersonDailyTotal * numTravelers * 100) / 100,
     recommendations: [
       'Eat breakfast near your accommodation',
       'Lunch at local food stalls and markets',
@@ -666,6 +761,100 @@ function generateAlternativePlan(originalBudget, estimatedCost, details, numDays
   return alternatives;
 }
 
+/**
+ * Generate alternative destinations when budget is insufficient
+ */
+function generateAlternativeDestinations(budget, originalDestination, numDays, interests) {
+  // Simplified alternative destinations with lower costs
+  const alternatives = [
+    {
+      destination: 'Goa',
+      estimatedCost: Math.round(budget * 0.8),
+      reason: 'Beach destination with lower accommodation costs',
+      experience: 'Beach, adventure, food',
+      distance: 'Closer to major cities'
+    },
+    {
+      destination: 'Rishikesh',
+      estimatedCost: Math.round(budget * 0.7),
+      reason: 'Adventure and spiritual destination with budget options',
+      experience: 'Adventure, nature, cultural',
+      distance: 'Accessible from Delhi/NCR'
+    },
+    {
+      destination: 'Mysore',
+      estimatedCost: Math.round(budget * 0.75),
+      reason: 'Cultural heritage with affordable local experiences',
+      experience: 'Cultural, food, historical',
+      distance: 'Well connected by train/bus'
+    },
+    {
+      destination: 'Coorg',
+      estimatedCost: Math.round(budget * 0.85),
+      reason: 'Nature and coffee plantations with budget stays',
+      experience: 'Nature, adventure, food',
+      distance: 'Scenic drive from Bangalore'
+    }
+  ];
+
+  return alternatives.filter(alt => alt.estimatedCost <= budget);
+}
+
+/**
+ * Generate budget adjustment options for slightly over-budget trips
+ */
+function generateBudgetAdjustmentOptions(budget, estimatedCosts, routePlan, numDays) {
+  const options = [];
+  const excess = estimatedCosts.total - budget;
+
+  // Option 1: Skip some intermediate stops
+  if (routePlan.intermediateStops && routePlan.intermediateStops.length > 0) {
+    const stopsToSkip = Math.min(2, routePlan.intermediateStops.length);
+    const savingsPerStop = Math.round(excess / stopsToSkip);
+    options.push({
+      type: 'skip_stops',
+      description: `Skip ${stopsToSkip} intermediate stop(s) to save ₹${savingsPerStop * stopsToSkip}`,
+      savings: savingsPerStop * stopsToSkip,
+      impact: 'Reduced travel time and fewer activities'
+    });
+  }
+
+  // Option 2: Cheaper accommodation
+  const accommodationSavings = Math.round(Math.min(excess * 0.3, estimatedCosts.accommodation * 0.2));
+  if (accommodationSavings > 0) {
+    options.push({
+      type: 'cheaper_accommodation',
+      description: 'Switch to budget hostels or guesthouses',
+      savings: accommodationSavings,
+      impact: 'More basic accommodation facilities'
+    });
+  }
+
+  // Option 3: Reduce food budget
+  const foodSavings = Math.round(Math.min(excess * 0.2, estimatedCosts.food * 0.15));
+  if (foodSavings > 0) {
+    options.push({
+      type: 'budget_food',
+      description: 'Eat at local stalls and cook some meals',
+      savings: foodSavings,
+      impact: 'More local, authentic food experiences'
+    });
+  }
+
+  // Option 4: Skip paid activities
+  const activitySavings = Math.round(Math.min(excess * 0.3, estimatedCosts.activities));
+  if (activitySavings > 0) {
+    options.push({
+      type: 'free_activities',
+      description: 'Focus on free attractions and local exploration',
+      savings: activitySavings,
+      impact: 'More time for spontaneous discoveries'
+    });
+  }
+
+  return options;
+}
+
 // Allocate budget across different categories
 function allocateBudget(totalBudget, numDays) {
   // Allocate budget percentages (excluding transport which is estimated separately)
@@ -683,6 +872,140 @@ function allocateBudget(totalBudget, numDays) {
   };
 }
 
+/**
+ * Generate dynamic route with places using Google Maps APIs
+ * @param {string} startLocation - Starting location
+ * @param {string} destination - Final destination
+ * @param {string} transportMode - Transport mode
+ * @param {number} numDays - Number of days
+ * @param {string} interests - User interests (comma-separated)
+ * @param {number} budget - Total budget
+ * @returns {Promise<Object>} Route plan with places and cost estimates
+ */
+async function generateDynamicRouteWithPlaces(startLocation, destination, transportMode, numDays, interests, budget) {
+  console.log(`🚀 Generating dynamic route: ${startLocation} → ${destination} (${numDays} days)`);
+
+  try {
+    // Step 1: Get primary route using Directions API
+    const directionsResult = await getDirectionsFromGoogleMaps(startLocation, destination, [], transportMode);
+
+    if (directionsResult.error) {
+      console.log(`❌ Directions API failed: ${directionsResult.error}`);
+      // Fallback to existing route logic
+      return await getBestRoutePlan(startLocation, destination, transportMode, numDays);
+    }
+
+    const primaryRoute = {
+      from: startLocation,
+      to: destination,
+      distance: directionsResult.distance,
+      estimatedDuration: directionsResult.duration,
+      transportMode: transportMode,
+      distanceSource: 'google_directions',
+      routes: directionsResult.routes
+    };
+
+    // Step 2: Find interesting places along the route
+    const interestTypes = {
+      'nature': ['park', 'natural_feature', 'campground'],
+      'cultural': ['museum', 'art_gallery', 'historical_site', 'church', 'hindu_temple', 'mosque'],
+      'adventure': ['park', 'natural_feature', 'campground', 'amusement_park'],
+      'food': ['restaurant', 'food', 'cafe', 'bar'],
+      'shopping': ['shopping_mall', 'store', 'department_store'],
+      'beach': ['beach', 'natural_feature'],
+      'mountain': ['park', 'natural_feature', 'campground']
+    };
+
+    const userInterests = interests ? interests.split(',').map(i => i.trim().toLowerCase()) : ['cultural', 'nature'];
+    const placeTypes = userInterests.flatMap(interest => interestTypes[interest] || []);
+
+    // Search for places along the route (using midpoint as search location)
+    const routePlaces = [];
+    const searchRadius = Math.min(50000, Math.max(10000, primaryRoute.distance * 500)); // 10-50km radius
+
+    for (const placeType of [...new Set(placeTypes)]) {
+      const places = await findPlacesNearby(`${startLocation}`, placeType, searchRadius);
+      routePlaces.push(...places.slice(0, 3)); // Top 3 per type
+    }
+
+    // Remove duplicates and filter by rating
+    const uniquePlaces = routePlaces
+      .filter((place, index, self) =>
+        index === self.findIndex(p => p.placeId === place.placeId)
+      )
+      .filter(place => place.rating >= 4.0 && place.userRatingsTotal >= 10)
+      .sort((a, b) => b.rating - a.rating)
+      .slice(0, 5); // Top 5 places
+
+    // Step 3: Select optimal places within budget and time constraints
+    const maxStops = Math.min(3, Math.floor(numDays / 2));
+    const selectedPlaces = [];
+    let totalAdditionalTime = 0;
+    let totalAdditionalDistance = 0;
+
+    for (const place of uniquePlaces.slice(0, maxStops)) {
+      // Estimate detour time and distance (simplified)
+      const detourDistance = Math.floor(Math.random() * 50) + 10; // 10-60km detour
+      const detourTime = Math.floor(detourDistance / 30) * 60; // Rough estimate: 30km/h average
+
+      // Check if adding this place would exceed time budget
+      if (totalAdditionalTime + detourTime > numDays * 4 * 60) { // Max 4 hours per day for travel
+        break;
+      }
+
+      selectedPlaces.push({
+        name: place.name,
+        placeId: place.placeId,
+        location: place.location,
+        rating: place.rating,
+        types: place.types,
+        detourDistance: detourDistance,
+        detourTime: detourTime,
+        reason: `Highly rated ${place.types[0] || 'attraction'} matching your interests`
+      });
+
+      totalAdditionalTime += detourTime;
+      totalAdditionalDistance += detourDistance;
+    }
+
+    // Step 4: Calculate updated route with waypoints
+    let optimizedRoute = primaryRoute;
+    if (selectedPlaces.length > 0) {
+      const waypoints = selectedPlaces.map(place => `${place.location.lat},${place.location.lng}`);
+      const optimizedDirections = await getDirectionsFromGoogleMaps(
+        startLocation,
+        destination,
+        waypoints,
+        transportMode
+      );
+
+      if (!optimizedDirections.error) {
+        optimizedRoute = {
+          ...primaryRoute,
+          distance: optimizedDirections.distance,
+          estimatedDuration: optimizedDirections.duration,
+          waypoints: selectedPlaces,
+          additionalDistance: (optimizedDirections.distance || primaryRoute.distance) - primaryRoute.distance,
+          additionalTime: totalAdditionalTime
+        };
+      }
+    }
+
+    return {
+      primaryRoute: optimizedRoute,
+      intermediateStops: selectedPlaces,
+      totalDistance: optimizedRoute.distance + totalAdditionalDistance,
+      totalDuration: optimizedRoute.estimatedDuration,
+      routeSource: 'google_dynamic'
+    };
+
+  } catch (error) {
+    console.error('Error in dynamic route generation:', error);
+    // Fallback to existing route logic
+    return await getBestRoutePlan(startLocation, destination, transportMode, numDays);
+  }
+}
+
 // Main itinerary generation function
 async function generateItinerary(data) {
   try {
@@ -693,7 +1016,12 @@ async function generateItinerary(data) {
       destination,
       activities: activitiesPreference,
       accommodation,
-      transport
+      transport,
+      numberOfTravelers = 1,
+      transportType = 'public', // 'public' or 'own'
+      vehicleType, // 'car' or 'bike' (for own transport)
+      fuelType, // 'petrol', 'diesel', 'electric' (for own transport)
+      mileage // Vehicle mileage (for own transport)
     } = data;
 
     // Validate inputs
@@ -707,18 +1035,50 @@ async function generateItinerary(data) {
     // Allocate budget
     const budgetAllocation = allocateBudget(parsedBudget, numDays);
 
-    // Estimate transport cost (estimate from sample distances)
-    const estimatedTransportCost = estimateTransportCost(transport || 'bus', 500);
+    // Generate dynamic route with places using Google Maps APIs
+    const routePlan = await generateDynamicRouteWithPlaces(
+      startLocation || destination,
+      destination,
+      transport || 'bus',
+      numDays,
+      activitiesPreference,
+      parsedBudget
+    );
+
+    // Calculate transport costs based on type
+    let transportCostDetails;
+    let transportCost = 0;
+
+    if (transportType === 'own' && vehicleType) {
+      // Calculate cost for own vehicle
+      transportCostDetails = calculateOwnVehicleCost(
+        vehicleType,
+        fuelType || 'petrol',
+        mileage,
+        routePlan.totalDistance,
+        numberOfTravelers
+      );
+      transportCost = transportCostDetails.totalCost;
+    } else {
+      // Calculate cost for public transport
+      transportCostDetails = calculatePublicTransportCost(
+        transport || 'bus',
+        routePlan.totalDistance,
+        numberOfTravelers
+      );
+      transportCost = transportCostDetails.totalCost;
+    }
 
     // Get accommodation recommendations
     const accommodationDetails = getAccommodationRecommendations(
       accommodation || 'hostel',
       numDays,
-      budgetAllocation.accommodation
+      budgetAllocation.accommodation,
+      numberOfTravelers
     );
 
-    // Get food costs
-    const foodDetails = estimateFoodCosts(numDays, budgetAllocation.food);
+    // Get food costs (scaled by number of travelers)
+    const foodDetails = estimateFoodCosts(numDays, budgetAllocation.food, numberOfTravelers);
 
     // Get activities
     const { activities: recommendedActivities, activitiesPerDay } = getRecommendedActivities(
@@ -732,13 +1092,13 @@ async function generateItinerary(data) {
 
     // Calculate estimated costs
     const estimatedCosts = {
-      mainTransport: estimatedTransportCost,
+      mainTransport: transportCost,
       accommodation: accommodationDetails.totalCost,
       food: foodDetails.tripTotal,
       activities: activitiesTotalCost,
       miscellaneous: budgetAllocation.miscellaneous,
       total: Math.round((
-        estimatedTransportCost +
+        transportCost +
         accommodationDetails.totalCost +
         foodDetails.tripTotal +
         activitiesTotalCost +
@@ -746,69 +1106,114 @@ async function generateItinerary(data) {
       ) * 100) / 100
     };
 
-    // Check if over budget and generate alternatives
+    // Check budget status and generate alternatives
     const isOverBudget = estimatedCosts.total > parsedBudget;
-    const alternatives = isOverBudget ?
-      generateAlternativePlan(parsedBudget, estimatedCosts.total, data, numDays) : [];
+    const isSlightlyOver = isOverBudget && estimatedCosts.total <= parsedBudget * 1.2;
+    const isSignificantlyOver = estimatedCosts.total > parsedBudget * 1.2;
 
-    // Generate day-wise itinerary
-    const dayPlans = generateDayWiseItinerary(numDays, destination, recommendedActivities, accommodationDetails);
+    let budgetMessage = '';
+    let alternatives = [];
+
+    if (isSignificantlyOver) {
+      // Suggest alternative destinations
+      budgetMessage = `Your current budget may not be sufficient for this trip. Here are better destinations within your budget.`;
+      alternatives = generateAlternativeDestinations(parsedBudget, destination, numDays, activitiesPreference);
+    } else if (isSlightlyOver) {
+      // Suggest reducing some elements
+      budgetMessage = `Your budget is slightly lower than required. You can either skip a few places or increase your budget slightly to enjoy the complete experience.`;
+      alternatives = generateBudgetAdjustmentOptions(parsedBudget, estimatedCosts, routePlan, numDays);
+    }
+
+    // Generate optimized day-wise itinerary with stops
+    const dayPlans = generateDayWiseItineraryWithStops(numDays, routePlan, recommendedActivities, accommodationDetails);
 
     // Generate money-saving tips
     const tips = generateMoneyTips(destination, numDays, transport, accommodation);
 
-    // Final itinerary object
+    // Final itinerary object with structured output
     const itinerary = {
       success: true,
-      summary: {
-        destination,
-        startDate: travelDates.split(' to ')[0],
-        endDate: travelDates.split(' to ')[1] || travelDates,
-        totalDays: numDays,
-        totalCost: estimatedCosts.total,
-        originalBudget: parsedBudget,
-        withinBudget: !isOverBudget,
-        budgetStatus: isOverBudget ? 'OVER_BUDGET' : 'WITHIN_BUDGET'
+
+      // 📌 Trip Overview
+      tripOverview: {
+        startLocation: routePlan.primaryRoute.from,
+        destination: routePlan.primaryRoute.to,
+        totalDistance: routePlan.totalDistance,
+        travelTime: routePlan.primaryRoute.estimatedDuration,
+        numDays: numDays,
+        numTravelers: numberOfTravelers
       },
-      details: {
-        startLocation,
-        destination,
-        preferredActivities: activitiesPreference,
-        accommodationType: accommodation,
-        transportMode: transport
+
+      // 🗺️ Optimized Route
+      optimizedRoute: {
+        mainRoute: `${routePlan.primaryRoute.from} → ${routePlan.primaryRoute.to}`,
+        deviations: routePlan.intermediateStops.length > 0 ? 'With recommended stops' : 'Direct route',
+        stopsAdded: routePlan.intermediateStops.map(stop => ({
+          name: stop.name,
+          reason: stop.reason,
+          detourDistance: stop.detourDistance,
+          detourTime: stop.detourTime
+        })),
+        updatedTotalDistance: routePlan.totalDistance,
+        additionalTravelTime: routePlan.primaryRoute.additionalTime || 0
       },
-      estimatedCosts,
-      costBreakdown: {
-        accommodation: {
-          type: accommodationDetails.type,
-          perNight: accommodationDetails.costPerNight,
-          nights: numDays,
-          total: accommodationDetails.totalCost
+
+      // 🌄 Recommended Places
+      recommendedPlaces: routePlan.intermediateStops.map(stop => ({
+        name: stop.name,
+        type: stop.types ? stop.types[0] : 'attraction',
+        rating: stop.rating,
+        reason: stop.reason,
+        location: stop.location
+      })),
+
+      // 📅 Day-wise Itinerary
+      dayWiseItinerary: dayPlans,
+
+      // 💵 Budget Breakdown
+      budgetBreakdown: {
+        transport: {
+          type: transportType === 'own' ? `${vehicleType} (${fuelType})` : transport || 'bus',
+          cost: transportCost,
+          details: transportCostDetails
         },
         food: {
-          breakfast: foodDetails.breakfast,
-          lunch: foodDetails.lunch,
-          dinner: foodDetails.dinner,
-          dailyTotal: foodDetails.dailyTotal,
-          tripTotal: foodDetails.tripTotal
+          dailyCost: foodDetails.dailyTotal,
+          totalCost: foodDetails.tripTotal,
+          breakdown: foodDetails
         },
-        activities: recommendedActivities.slice(0, 5),
-        transport: {
-          mode: transport || 'bus',
-          estimatedCost: estimatedTransportCost,
-          studentDiscount: 'Applied'
-        }
+        accommodation: {
+          type: accommodationDetails.type,
+          costPerNight: accommodationDetails.costPerNight,
+          totalCost: accommodationDetails.totalCost
+        },
+        activities: {
+          totalCost: activitiesTotalCost,
+          breakdown: recommendedActivities.slice(0, 5)
+        },
+        totalEstimatedCost: estimatedCosts.total,
+        originalBudget: parsedBudget,
+        remainingBudget: Math.max(0, parsedBudget - estimatedCosts.total)
       },
-      dayPlans,
+
+      // ⚠ Budget Suggestions
+      budgetSuggestions: {
+        status: isOverBudget ? 'OVER_BUDGET' : 'WITHIN_BUDGET',
+        message: budgetMessage,
+        alternatives: alternatives,
+        adjustments: isSlightlyOver ? generateBudgetAdjustmentOptions(parsedBudget, estimatedCosts, routePlan, numDays) : []
+      },
+
+      // Additional metadata
+      metadata: {
+        routeSource: routePlan.routeSource,
+        apiUsed: hasGoogleMapsAPI() ? 'Google Maps APIs' : 'Local Database',
+        generatedAt: new Date().toISOString()
+      },
+
       moneyTips: tips,
       accommodationSuggestions: accommodationDetails.suggestions,
-      foodRecommendations: foodDetails.recommendations,
-      alternatives: alternatives.length > 0 ? alternatives : null,
-      warnings: isOverBudget ? [
-        `Your estimated cost ($${estimatedCosts.total}) exceeds your budget ($${parsedBudget}).`,
-        'Consider the alternative plans below to fit your budget.',
-        'You can reduce trip duration, skip some activities, or adjust accommodation.'
-      ] : []
+      foodRecommendations: foodDetails.recommendations
     };
 
     return itinerary;
