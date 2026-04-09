@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
+import DatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 import '../styles/ItineraryForm.css';
 
 function ItineraryForm({ onSubmit }) {
   const [form, setForm] = useState({
     budget: '',
-    travelDates: '',
+    startDate: null,
+    endDate: null,
     startLocation: '',
     destination: '',
     activities: '',
@@ -62,8 +65,10 @@ function ItineraryForm({ onSubmit }) {
       newErrors.budget = 'Please enter a valid budget amount';
     }
 
-    if (!form.travelDates || !form.travelDates.includes(' to ')) {
-      newErrors.travelDates = 'Please enter dates in format: YYYY-MM-DD to YYYY-MM-DD';
+    if (!form.startDate || !form.endDate) {
+      newErrors.dates = 'Please select both start and end dates';
+    } else if (form.startDate >= form.endDate) {
+      newErrors.dates = 'End date must be after start date';
     }
 
     if (!form.startLocation.trim()) {
@@ -153,7 +158,12 @@ function ItineraryForm({ onSubmit }) {
 
     setLoading(true);
     try {
-      await onSubmit(form);
+      // Format dates for backend
+      const formattedForm = {
+        ...form,
+        travelDates: `${form.startDate.toISOString().split('T')[0]} to ${form.endDate.toISOString().split('T')[0]}`
+      };
+      await onSubmit(formattedForm);
     } finally {
       setLoading(false);
     }
@@ -190,20 +200,37 @@ function ItineraryForm({ onSubmit }) {
           </div>
 
           <div className="form-group">
-            <label htmlFor="travelDates">
+            <label>
               Travel Dates *
-              <span className="tooltip">💡 Format: YYYY-MM-DD to YYYY-MM-DD</span>
+              <span className="tooltip">💡 Select your travel start and end dates</span>
             </label>
-            <input
-              id="travelDates"
-              type="text"
-              name="travelDates"
-              placeholder="2024-03-15 to 2024-03-22"
-              value={form.travelDates}
-              onChange={handleChange}
-              className={errors.travelDates ? 'input-error' : ''}
-            />
-            {errors.travelDates && <span className="error-message">{errors.travelDates}</span>}
+            <div className="date-picker-container">
+              <div className="date-input-group">
+                <label htmlFor="startDate">Start Date:</label>
+                <DatePicker
+                  id="startDate"
+                  selected={form.startDate}
+                  onChange={(date) => setForm(prev => ({ ...prev, startDate: date }))}
+                  dateFormat="yyyy-MM-dd"
+                  minDate={new Date()}
+                  placeholderText="Select start date"
+                  className={errors.dates ? 'input-error' : ''}
+                />
+              </div>
+              <div className="date-input-group">
+                <label htmlFor="endDate">End Date:</label>
+                <DatePicker
+                  id="endDate"
+                  selected={form.endDate}
+                  onChange={(date) => setForm(prev => ({ ...prev, endDate: date }))}
+                  dateFormat="yyyy-MM-dd"
+                  minDate={form.startDate || new Date()}
+                  placeholderText="Select end date"
+                  className={errors.dates ? 'input-error' : ''}
+                />
+              </div>
+            </div>
+            {errors.dates && <span className="error-message">{errors.dates}</span>}
           </div>
         </div>
 

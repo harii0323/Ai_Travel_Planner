@@ -90,6 +90,53 @@
   background: #fff5f5;
 }
 
+.date-picker-container {
+  display: flex;
+  gap: 20px;
+  align-items: end;
+}
+
+.date-input-group {
+  flex: 1;
+}
+
+.date-input-group label {
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.date-input-group .react-datepicker-wrapper {
+  width: 100%;
+}
+
+.date-input-group .react-datepicker__input-container input {
+  width: 100%;
+  padding: 12px 15px;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+  font-family: inherit;
+}
+
+.date-input-group .react-datepicker__input-container input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  background: #f8f9ff;
+}
+
+.date-input-group .react-datepicker__input-container input:hover {
+  border-color: #667eea;
+}
+
+.date-input-group .react-datepicker__input-container input.input-error {
+  border-color: #ff6b6b;
+  background: #fff5f5;
+}
+
 .error-message {
   color: #ff6b6b;
   font-size: 0.85rem;
@@ -202,6 +249,11 @@
     padding-bottom: 20px;
   }
 
+  .date-picker-container {
+    flex-direction: column;
+    gap: 15px;
+  }
+
   .form-section h3 {
     font-size: 1.15rem;
   }
@@ -231,6 +283,11 @@
 
   .form-group input,
   .form-group select {
+    padding: 10px 12px;
+    font-size: 16px;
+  }
+
+  .date-input-group .react-datepicker__input-container input {
     padding: 10px 12px;
     font-size: 16px;
   }
