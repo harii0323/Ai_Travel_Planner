@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 import '../styles/Auth.css';
 
 function Login({ onLoginSuccess, onSwitchToRegister }) {
@@ -14,7 +14,7 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
     setLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', {
+      const response = await api.post('/api/auth/login', {
         email,
         password
       });
@@ -37,8 +37,12 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h2>✈️ Student Travel Planner</h2>
-        <h3>Login to Your Account</h3>
+        <div className="auth-brand">
+          <img className="auth-logo" src="/assets/vista-logo.png" alt="VISTA travel logo" />
+          <h2>VISTA Travel Planner</h2>
+          <p>Always try to make memories</p>
+        </div>
+        <h3>Log in to your account</h3>
 
         {error && <div className="error-alert">{error}</div>}
 
@@ -66,14 +70,14 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
           </div>
 
           <button type="submit" className="btn-login" disabled={loading}>
-            {loading ? 'Logging in...' : 'Login'}
+            {loading ? 'Logging in...' : 'Log in'}
           </button>
         </form>
 
         <p className="switch-auth">
           Don't have an account?{' '}
           <button type="button" onClick={onSwitchToRegister} className="link-btn">
-            Register here
+            Create one
           </button>
         </p>
       </div>

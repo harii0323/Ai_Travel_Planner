@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 import '../styles/Profile.css';
 
 function Profile({ user, onProfileUpdate }) {
@@ -41,8 +41,8 @@ function Profile({ user, onProfileUpdate }) {
       const token = localStorage.getItem('token');
       const config = { headers: { Authorization: `Bearer ${token}` } };
 
-      const response = await axios.put(
-        'http://localhost:5000/api/auth/profile',
+      const response = await api.put(
+        '/api/auth/profile',
         {
           name: formData.name,
           age: parseInt(formData.age),
@@ -73,20 +73,21 @@ function Profile({ user, onProfileUpdate }) {
   };
 
   const interests = [
-    { id: 'adventure', label: '🏔️ Adventure' },
-    { id: 'culture', label: '🏛️ Culture' },
-    { id: 'beach', label: '🏖️ Beach' },
-    { id: 'food', label: '🍜 Food & Cuisine' },
-    { id: 'nightlife', label: '🌙 Nightlife' },
-    { id: 'nature', label: '🌿 Nature' },
-    { id: 'history', label: '📚 History' },
-    { id: 'shopping', label: '🛍️ Shopping' }
+    { id: 'adventure', label: 'Adventure' },
+    { id: 'culture', label: 'Culture' },
+    { id: 'beach', label: 'Beach' },
+    { id: 'food', label: 'Food & cuisine' },
+    { id: 'nightlife', label: 'Nightlife' },
+    { id: 'nature', label: 'Nature' },
+    { id: 'history', label: 'History' },
+    { id: 'shopping', label: 'Shopping' }
   ];
 
   return (
     <div className="profile-container">
       <header className="profile-header">
-        <h2>👤 Your Profile</h2>
+        <p className="eyebrow">Traveler settings</p>
+        <h2>Your profile</h2>
         <p>Manage your account and travel preferences</p>
       </header>
 
@@ -193,10 +194,10 @@ function Profile({ user, onProfileUpdate }) {
                   value={formData.companionType}
                   onChange={handleChange}
                 >
-                  <option value="solo">Solo Traveler 🚶</option>
-                  <option value="couple">Couple 💑</option>
-                  <option value="friends">Friends Group 👥</option>
-                  <option value="family">Family 👨‍👩‍👧‍👦</option>
+                  <option value="solo">Solo traveler</option>
+                  <option value="couple">Couple</option>
+                  <option value="friends">Friends group</option>
+                  <option value="family">Family</option>
                 </select>
               </div>
 
@@ -261,16 +262,16 @@ function Profile({ user, onProfileUpdate }) {
         </div>
 
         <div className="profile-info-box">
-          <h4>💡 About Your Preferences</h4>
+          <h4>About your preferences</h4>
           <p>
             Your travel preferences help us personalize itineraries with:
           </p>
           <ul>
-            <li>✈️ Activities matched to your travel style</li>
-            <li>💰 Budget allocation optimized for your preferences</li>
-            <li>👥 Group recommendations based on companion type</li>
-            <li>🎯 Destination suggestions matching your interests</li>
-            <li>🎓 Student discounts if you have a valid student ID</li>
+            <li>Activities matched to your travel style</li>
+            <li>Budget allocation optimized for your preferences</li>
+            <li>Group recommendations based on companion type</li>
+            <li>Destination suggestions matching your interests</li>
+            <li>Student discounts if you have a valid student ID</li>
           </ul>
         </div>
       </div>

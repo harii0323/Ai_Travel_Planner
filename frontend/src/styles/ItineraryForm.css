@@ -1,228 +1,202 @@
 .form-container {
   width: 100%;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
   overflow: hidden;
 }
 
 .itinerary-form {
-  padding: 40px;
-  display: flex;
-  flex-direction: column;
-  gap: 30px;
+  padding: 30px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
 }
 
 .form-section {
-  border-bottom: 1px solid #e0e0e0;
-  padding-bottom: 30px;
+  padding: 22px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
-.form-section:last-of-type {
-  border-bottom: none;
-  padding-bottom: 0;
+.form-section:nth-child(3),
+.form-section:last-of-type,
+.form-actions {
+  grid-column: 1 / -1;
 }
 
-.form-section h3 {
-  color: #667eea;
-  margin-bottom: 20px;
-  font-size: 1.3rem;
-  font-weight: 600;
+.form-section h3,
+.vehicle-details-section h4 {
+  margin-bottom: 18px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 900;
 }
 
 .section-info {
-  color: #666;
-  font-size: 0.95rem;
-  margin-bottom: 15px;
-  font-style: italic;
+  margin: -8px 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .form-group {
-  margin-bottom: 20px;
+  margin-bottom: 18px;
   display: flex;
   flex-direction: column;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
 }
 
 .form-group label {
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 8px;
-  font-weight: 600;
-  color: #333;
-  font-size: 0.95rem;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
 }
 
 .tooltip {
-  display: inline-block;
-  cursor: help;
-  opacity: 0.7;
-  font-weight: 400;
-  font-size: 0.85rem;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .form-group input,
-.form-group select {
-  padding: 12px 15px;
-  border: 2px solid #e0e0e0;
-  border-radius: 6px;
-  font-size: 1rem;
-  transition: all 0.3s ease;
-  font-family: inherit;
+.form-group select,
+.date-input-group .react-datepicker__input-container input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.date-input-group .react-datepicker__input-container input:focus {
   outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-  background: #f8f9ff;
-}
-
-.form-group input:hover,
-.form-group select:hover {
-  border-color: #667eea;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
 }
 
 .form-group input.input-error,
-.form-group select.input-error {
-  border-color: #ff6b6b;
-  background: #fff5f5;
+.form-group select.input-error,
+.date-input-group .react-datepicker__input-container input.input-error {
+  border-color: var(--danger);
+  background: var(--danger-soft);
 }
 
-.date-picker-container {
-  display: flex;
-  gap: 20px;
-  align-items: end;
-}
-
-.date-input-group {
-  flex: 1;
+.date-picker-container,
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .date-input-group label {
+  display: block;
   margin-bottom: 8px;
-  font-weight: 600;
-  color: #333;
-  font-size: 0.9rem;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .date-input-group .react-datepicker-wrapper {
   width: 100%;
 }
 
-.date-input-group .react-datepicker__input-container input {
-  width: 100%;
-  padding: 12px 15px;
-  border: 2px solid #e0e0e0;
-  border-radius: 6px;
-  font-size: 1rem;
-  transition: all 0.3s ease;
-  font-family: inherit;
-}
-
-.date-input-group .react-datepicker__input-container input:focus {
-  outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-  background: #f8f9ff;
-}
-
-.date-input-group .react-datepicker__input-container input:hover {
-  border-color: #667eea;
-}
-
-.date-input-group .react-datepicker__input-container input.input-error {
-  border-color: #ff6b6b;
-  background: #fff5f5;
-}
-
 .error-message {
-  color: #ff6b6b;
-  font-size: 0.85rem;
-  margin-top: 4px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
 }
 
-.error-message::before {
-  content: '✕';
-  font-weight: bold;
-}
-
-/* Activity Grid */
 .activity-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
-.activity-checkbox {
+.activity-checkbox,
+.checkbox-label {
+  min-height: 64px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 15px;
-  border: 2px solid #e0e0e0;
-  border-radius: 6px;
+  gap: 10px;
+  padding: 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
   cursor: pointer;
-  transition: all 0.3s ease;
-  background: white;
+  transition: border-color 160ms ease, background 160ms ease;
 }
 
-.activity-checkbox:hover {
-  border-color: #667eea;
-  background: #f8f9ff;
+.activity-checkbox:hover,
+.checkbox-label:hover {
+  border-color: rgba(15, 118, 110, 0.45);
+  background: #f3fbf9;
 }
 
-.activity-checkbox input[type="checkbox"] {
-  width: 20px;
-  height: 20px;
-  cursor: pointer;
-  accent-color: #667eea;
-}
-
-.activity-checkbox input[type="checkbox"]:checked + span {
-  color: #667eea;
-  font-weight: 600;
+.activity-checkbox input[type="checkbox"],
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand);
+  flex: 0 0 auto;
 }
 
 .activity-checkbox span {
-  flex: 1;
-  color: #333;
-  transition: color 0.3s ease;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 700;
 }
 
-/* Form Actions */
+.activity-checkbox input[type="checkbox"]:checked + span {
+  color: var(--brand-dark);
+}
+
+.vehicle-details-section {
+  margin-top: 18px;
+  padding: 18px;
+  background: #f8f5ef;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.help-text {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .form-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 2px solid #e0e0e0;
+  padding: 22px;
+  display: grid;
+  gap: 12px;
+  background: #e5f4f1;
+  border: 1px solid #b8ddd6;
+  border-radius: 8px;
 }
 
 .btn-generate {
-  padding: 15px 30px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-size: 1.1rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-}
-
-.btn-generate:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-}
-
-.btn-generate:active:not(:disabled) {
-  transform: translateY(0);
+  min-height: 48px;
+  padding: 0 24px;
+  color: #fff;
+  background: var(--brand);
 }
 
 .btn-generate:disabled {
@@ -231,64 +205,42 @@
 }
 
 .form-note {
-  color: #666;
-  font-size: 0.85rem;
+  color: var(--brand-dark);
+  font-size: 13px;
+  line-height: 1.45;
   text-align: center;
-  margin: 0;
-  line-height: 1.5;
 }
 
-/* Responsive */
-@media (max-width: 768px) {
+@media (max-width: 960px) {
+  .itinerary-form,
+  .date-picker-container,
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .activity-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .form-section:nth-child(3),
+  .form-section:last-of-type,
+  .form-actions {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
   .itinerary-form {
-    padding: 25px;
-    gap: 20px;
+    padding: 16px;
+    gap: 14px;
   }
 
-  .form-section {
-    padding-bottom: 20px;
-  }
-
-  .date-picker-container {
-    flex-direction: column;
-    gap: 15px;
-  }
-
-  .form-section h3 {
-    font-size: 1.15rem;
+  .form-section,
+  .form-actions {
+    padding: 16px;
   }
 
   .activity-grid {
     grid-template-columns: 1fr;
-  }
-
-  .btn-generate {
-    padding: 12px 20px;
-    font-size: 1rem;
-  }
-}
-
-@media (max-width: 480px) {
-  .itinerary-form {
-    padding: 20px;
-  }
-
-  .form-section h3 {
-    font-size: 1rem;
-  }
-
-  .form-group label {
-    font-size: 0.9rem;
-  }
-
-  .form-group input,
-  .form-group select {
-    padding: 10px 12px;
-    font-size: 16px;
-  }
-
-  .date-input-group .react-datepicker__input-container input {
-    padding: 10px 12px;
-    font-size: 16px;
   }
 }

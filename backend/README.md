@@ -128,6 +128,35 @@ Generate a personalized travel itinerary.
 
 - `npm start` - Production mode
 - `npm run dev` - Development with auto-reload
+- `npm run seed:india-tourism` - Seed India tourist places and pairwise distance data into MongoDB
+
+## Local India Tourism Dataset
+
+The backend includes a seedable local dataset for Indian tourist places.
+
+Seed command:
+```bash
+npm run seed:india-tourism
+```
+
+Seeded collections:
+- `touristplaces`: place name, city, state, region, coordinates, categories, best time to visit, suitable companion types, and recommended transport modes.
+- `placedistances`: directional pairwise distances between every seeded place, with estimated road distance and recommended transport modes.
+
+Useful endpoints:
+```bash
+GET /api/places
+GET /api/places?region=South%20India&limit=10
+GET /api/places?suitableFor=couple
+GET /api/places?transport=train
+GET /api/places/:id/distances
+GET /api/places/distance/search?from=Taj%20Mahal&to=Jaipur%20City%20Palace
+```
+
+Companion tags:
+`solo`, `couple`, `friends`, `family`, `boysOnly`, `girlsOnly`, `large-group`.
+
+Distance values are generated from coordinates as local estimates. Use Google Maps or manually verified route data where exact road distance is required.
 
 ## Dependencies
 

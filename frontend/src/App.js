@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from './api';
 import Login from './components/Login';
 import Register from './components/Register';
 import Dashboard from './components/Dashboard';
@@ -37,7 +37,7 @@ function App() {
         setIsAuthenticated(true);
 
         // Set up Axios interceptor to include token in all requests
-        axios.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
+        api.defaults.headers.common['Authorization'] = `Bearer ${savedToken}`;
       } catch (err) {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
@@ -55,7 +55,7 @@ function App() {
     setCurrentPage('dashboard');
 
     // Set up Axios default header
-    axios.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
+    api.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
   };
 
   const handleRegisterSuccess = (userData, authToken) => {
@@ -66,7 +66,7 @@ function App() {
     setCurrentPage('dashboard');
 
     // Set up Axios default header
-    axios.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
+    api.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
   };
 
   const handleLogout = () => {
@@ -79,7 +79,7 @@ function App() {
     setCurrentPage('dashboard');
 
     // Remove Axios default header
-    delete axios.defaults.headers.common['Authorization'];
+    delete api.defaults.headers.common['Authorization'];
   };
 
   const handleProfileUpdate = (updatedUser) => {
@@ -93,7 +93,7 @@ function App() {
     setItinerary(null);
 
     try {
-      const res = await axios.post('http://localhost:5000/api/itinerary/generate', {
+      const res = await api.post('/api/itinerary/generate', {
         ...formData,
         travelCompanionType: user?.travelPreferences?.companionType || 'solo',
         numberOfTravelers: formData.numberOfTravelers || 1
@@ -134,7 +134,11 @@ function App() {
       <nav className="app-navbar">
         <div className="navbar-content">
           <div className="navbar-brand">
-            <h1 className="brand-title">✈️ Travel Planner</h1>
+            <img className="brand-logo" src="/assets/vista-logo.png" alt="VISTA travel logo" />
+            <div className="brand-copy">
+              <h1 className="brand-title">VISTA Travel Planner</h1>
+              <p className="brand-tagline">Always try to make memories</p>
+            </div>
           </div>
 
           <div className="navbar-menu">
@@ -145,7 +149,7 @@ function App() {
                 setItinerary(null);
               }}
             >
-              📊 Dashboard
+              Dashboard
             </button>
             <button
               className={`nav-item ${currentPage === 'planner' ? 'active' : ''}`}
@@ -154,7 +158,7 @@ function App() {
                 setItinerary(null);
               }}
             >
-              ✏️ Plan Trip
+              Plan Trip
             </button>
             <button
               className={`nav-item ${currentPage === 'history' ? 'active' : ''}`}
@@ -162,7 +166,7 @@ function App() {
                 setCurrentPage('history');
               }}
             >
-              📚 History
+              History
             </button>
             <button
               className={`nav-item ${currentPage === 'profile' ? 'active' : ''}`}
@@ -170,7 +174,7 @@ function App() {
                 setCurrentPage('profile');
               }}
             >
-              👤 Profile
+              Profile
             </button>
           </div>
 
@@ -196,8 +200,9 @@ function App() {
         {currentPage === 'planner' && (
           <div className="planner-container">
             <header className="planner-header">
-              <h2>✏️ Create New Travel Plan</h2>
-              <p>Let our AI create a personalized itinerary for your next adventure!</p>
+              <p className="eyebrow">AI itinerary builder</p>
+              <h2>Create a travel plan that fits your budget</h2>
+              <p>Choose the dates, route, comfort level, and group size. VISTA will shape the itinerary around your constraints.</p>
             </header>
 
             <div className="planner-content">
@@ -206,14 +211,14 @@ function App() {
               {loading && (
                 <div className="loading-container">
                   <div className="spinner"></div>
-                  <p>✨ Generating your personalized itinerary...</p>
+                  <p>Generating your personalized itinerary...</p>
                 </div>
               )}
 
               {error && (
                 <div className="error-alert">
                   <span className="close" onClick={() => setError(null)}>×</span>
-                  <h3>❌ Error</h3>
+                  <h3>Something went wrong</h3>
                   <p>{error}</p>
                 </div>
               )}
@@ -237,7 +242,7 @@ function App() {
 
       {/* Footer */}
       <footer className="app-footer">
-        <p>💰 Plan Smart. Travel Farther. 🌍 Made for Budget-Conscious Students</p>
+        <p>Plan smart. Travel farther. Made for budget-conscious students.</p>
         <p className="disclaimer">Note: All costs are estimates. Actual prices may vary based on season and availability.</p>
       </footer>
     </div>

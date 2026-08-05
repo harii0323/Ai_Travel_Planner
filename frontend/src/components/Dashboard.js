@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import '../styles/Dashboard.css';
 
 function Dashboard({ user, onStartPlanning, onViewHistory }) {
@@ -19,7 +19,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
         const config = { headers: { Authorization: `Bearer ${token}` } };
 
         // Fetch user's itineraries
-        const response = await axios.get('http://localhost:5000/api/history', config);
+        const response = await api.get('/api/history', config);
         const plans = response.data.itineraries || [];
 
         // Calculate statistics
@@ -55,8 +55,9 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
   return (
     <div className="dashboard-container">
       <header className="dashboard-header">
-        <h1>Welcome, {user?.name}! 👋</h1>
-        <p>Ready to plan your next budget-friendly adventure?</p>
+        <p className="eyebrow">Trip command center</p>
+        <h1>Welcome, {user?.name}</h1>
+        <p>Plan affordable routes, review saved ideas, and keep every itinerary within reach.</p>
       </header>
 
       <section className="statistics-grid">
@@ -64,7 +65,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
           <div className="stat-icon">📋</div>
           <div className="stat-content">
             <h3>{statistics.totalPlans}</h3>
-            <p>Total Plans Created</p>
+            <p>Total plans</p>
           </div>
         </div>
 
@@ -72,7 +73,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
           <div className="stat-icon">💾</div>
           <div className="stat-content">
             <h3>{statistics.savedPlans}</h3>
-            <p>Saved Plans</p>
+            <p>Saved plans</p>
           </div>
         </div>
 
@@ -80,7 +81,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
           <div className="stat-icon">✓</div>
           <div className="stat-content">
             <h3>{statistics.completedTrips}</h3>
-            <p>Completed Trips</p>
+            <p>Completed trips</p>
           </div>
         </div>
 
@@ -88,21 +89,21 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
           <div className="stat-icon">💵</div>
           <div className="stat-content">
             <h3>₹{statistics.averageBudget.toLocaleString('en-IN')}</h3>
-            <p>Avg. Budget</p>
+            <p>Average budget</p>
           </div>
         </div>
       </section>
 
       <section className="dashboard-section">
         <div className="section-header">
-          <h2>🎯 Quick Actions</h2>
+          <h2>Quick actions</h2>
         </div>
         <div className="action-buttons">
           <button className="btn-primary" onClick={onStartPlanning}>
-            + Create New Plan
+            Create new plan
           </button>
           <button className="btn-secondary" onClick={onViewHistory}>
-            📚 View All Plans
+            View all plans
           </button>
         </div>
       </section>
@@ -110,8 +111,8 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
       {recentPlans.length > 0 && (
         <section className="dashboard-section">
           <div className="section-header">
-            <h2>📌 Recent Plans</h2>
-            <button className="view-all" onClick={onViewHistory}>View All →</button>
+            <h2>Recent plans</h2>
+            <button className="view-all" onClick={onViewHistory}>View all</button>
           </div>
 
           <div className="recent-plans-list">
@@ -145,22 +146,22 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
       )}
 
       <section className="dashboard-section info-section">
-        <h2>💡 Travel Tips for {user?.travelPreferences?.companionType || 'Solo'} Travelers</h2>
+        <h2>Travel tips for {user?.travelPreferences?.companionType || 'solo'} travelers</h2>
         <div className="tips-grid">
           <div className="tip-card">
-            <h4>🎒 Pack Smart</h4>
+            <h4>Pack smart</h4>
             <p>Bring a lightweight backpack (40-50L) and only pack 5-7 pairs of clothes. Mix and match outfits!</p>
           </div>
           <div className="tip-card">
-            <h4>💰 Budget Hacking</h4>
+            <h4>Budget hacking</h4>
             <p>Use free walking tours, cook your own meals, and travel during shoulder seasons for better prices.</p>
           </div>
           <div className="tip-card">
-            <h4>🗺️ Local Experiences</h4>
+            <h4>Local experiences</h4>
             <p>Stay in local neighborhoods, eat where locals eat, and use public transport instead of taxis.</p>
           </div>
           <div className="tip-card">
-            <h4>🛂 Documentation</h4>
+            <h4>Documentation</h4>
             <p>Keep digital copies of your passport, visas, and insurance. Share with a trusted friend.</p>
           </div>
         </div>

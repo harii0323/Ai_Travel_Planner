@@ -141,6 +141,88 @@ function calculateDays(startDate, endDate) {
   return Math.max(days, 1);
 }
 
+function parseTravelDateRange(travelDates) {
+  const [startDateText, endDateText] = String(travelDates || '').split(' to ');
+  const startDate = new Date(startDateText);
+  const endDate = new Date(endDateText || startDateText);
+
+  return { startDate, endDate };
+}
+
+function addDays(date, days) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function formatDate(date) {
+  return date.toISOString().split('T')[0];
+}
+
+function getDailyTravelLimitKm(transportMode, vehicleType) {
+  const mode = String(transportMode || '').toLowerCase();
+
+  if (mode === 'owntransport' && vehicleType === 'bike') return 220;
+  if (mode === 'owntransport') return 350;
+  if (mode === 'bus') return 320;
+  if (mode === 'train') return 500;
+  if (mode === 'flight') return 700;
+
+  return 350;
+}
+
+function getPreferredArrivalDay(data, tripStartDate, totalDays) {
+  const rawDay = data.destinationArrivalDay || data.targetArrivalDay || data.preferredArrivalDay;
+  const rawDate = data.destinationArrivalDate || data.targetArrivalDate || data.preferredArrivalDate;
+
+  if (rawDay && Number(rawDay) > 1) {
+    return Math.min(totalDays - 1, Math.max(2, Number.parseInt(rawDay, 10)));
+  }
+
+  if (rawDate) {
+    const arrivalDate = new Date(rawDate);
+    if (!Number.isNaN(arrivalDate.getTime())) {
+      const day = calculateDays(formatDate(tripStartDate), formatDate(arrivalDate));
+      return Math.min(totalDays - 1, Math.max(2, day));
+    }
+  }
+
+  return null;
+}
+
+function buildTripPhases(totalDays, preferredArrivalDay, routeDistanceKm, transportMode, vehicleType) {
+  const dailyLimitKm = getDailyTravelLimitKm(transportMode, vehicleType);
+  const naturalTravelDays = Math.max(1, Math.ceil((routeDistanceKm || dailyLimitKm) / dailyLimitKm));
+  const returnDays = Math.min(Math.max(1, naturalTravelDays), Math.max(1, Math.floor(totalDays / 2)));
+  const defaultArrivalDay = Math.min(totalDays - returnDays, Math.max(2, naturalTravelDays));
+  const arrivalDay = Math.min(totalDays - returnDays, preferredArrivalDay || defaultArrivalDay);
+  const onwardDays = Math.max(1, arrivalDay);
+  const destinationStayDays = Math.max(0, totalDays - onwardDays - returnDays);
+
+  return {
+    onwardDays,
+    destinationStayDays,
+    returnDays,
+    arrivalDay: onwardDays,
+    dailyTravelLimitKm: dailyLimitKm
+  };
+}
+
+function buildRouteServices(phase, from, to, days, accommodationType, transportMode) {
+  return Array.from({ length: days }, (_, index) => ({
+    dayOffset: index + 1,
+    restaurantPlan: index === days - 1
+      ? `Try a well-rated local restaurant near ${to}`
+      : `Lunch halt at a highly rated highway restaurant between ${from} and ${to}`,
+    accommodationPlan: index === days - 1
+      ? `Check into ${accommodationType} at ${to}`
+      : `Overnight halt in a safe, well-connected town on the ${phase.toLowerCase()} route`,
+    fuelStopPlan: transportMode === 'ownTransport'
+      ? 'Refuel or recharge before the next long driving stretch'
+      : 'Use the nearest major transit hub for the next leg'
+  }));
+}
+
 // Generate route with intermediate stops from local DB only
 function generateRouteWithStops(startLocation, destination, transportMode, numDays) {
   const routeKey = `${startLocation}-${destination}`;
@@ -872,6 +954,185 @@ function allocateBudget(totalBudget, numDays) {
   };
 }
 
+function calculateStraightLineDistanceKm(pointA, pointB) {
+  if (!pointA || !pointB) {
+    return null;
+  }
+
+  const toRadians = degrees => degrees * (Math.PI / 180);
+  const earthRadiusKm = 6371;
+  const lat1 = toRadians(pointA.lat);
+  const lat2 = toRadians(pointB.lat);
+  const deltaLat = toRadians(pointB.lat - pointA.lat);
+  const deltaLng = toRadians(pointB.lng - pointA.lng);
+  const a = Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLng / 2) ** 2;
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function getRouteSearchAnchors(route, sampleEveryKm = 50) {
+  const steps = route?.routes?.[0]?.steps || [];
+  const anchors = [];
+  let distanceSinceLastSample = 0;
+  let distanceAlongRoute = 0;
+
+  for (const [index, step] of steps.entries()) {
+    const stepDistanceKm = (step.distanceValue || 0) / 1000;
+    distanceSinceLastSample += stepDistanceKm;
+    distanceAlongRoute += stepDistanceKm;
+
+    const location = step.endLocation || step.startLocation;
+    const isInteriorRoutePoint = index > 0 && index < steps.length - 1;
+    if (isInteriorRoutePoint && location && distanceSinceLastSample >= sampleEveryKm) {
+      anchors.push({
+        location,
+        query: `${location.lat},${location.lng}`,
+        distanceAlongRoute: Math.round(distanceAlongRoute)
+      });
+      distanceSinceLastSample = 0;
+    }
+  }
+
+  return anchors;
+}
+
+function getPlaceCategory(place) {
+  const name = (place.name || '').toLowerCase();
+  const types = new Set(place.types || []);
+
+  if (name.includes('waterfall') || name.includes('falls')) return 'Waterfall';
+  if (name.includes('beach')) return 'Beach';
+  if (name.includes('fort')) return 'Fort';
+  if (name.includes('palace')) return 'Palace';
+  if (name.includes('temple') || types.has('hindu_temple')) return 'Famous Temple';
+  if (name.includes('sanctuary') || name.includes('wildlife')) return 'Wildlife Sanctuary';
+  if (name.includes('national park') || name.includes('reserve')) return 'National Park';
+  if (name.includes('viewpoint') || name.includes('point') || name.includes('peak')) return 'Scenic Viewpoint';
+  if (name.includes('lake')) return 'Famous Lake';
+  if (name.includes('dam')) return 'Famous Dam';
+  if (types.has('amusement_park')) return 'Adventure Park';
+  if (types.has('museum')) return 'Museum';
+  if (types.has('art_gallery')) return 'Cultural Attraction';
+  if (types.has('park')) return 'Natural Attraction';
+
+  return 'Popular Tourist Attraction';
+}
+
+function getIconicPlaceSignals(place) {
+  const name = (place.name || '').toLowerCase();
+  const types = new Set(place.types || []);
+  const iconicKeywords = [
+    'national park', 'wildlife', 'sanctuary', 'waterfall', 'falls', 'viewpoint',
+    'peak', 'hill', 'fort', 'palace', 'heritage', 'unesco', 'temple', 'beach',
+    'lake', 'dam', 'cave', 'reserve', 'backwater', 'zoo', 'adventure'
+  ];
+  const ordinaryKeywords = [
+    'playground', 'colony park', 'municipal park', 'children park', 'local park',
+    'garden', 'picnic spot', 'mini park'
+  ];
+
+  return {
+    hasIconicName: iconicKeywords.some(keyword => name.includes(keyword)),
+    hasOrdinaryName: ordinaryKeywords.some(keyword => name.includes(keyword)),
+    hasIconicType: ['tourist_attraction', 'hindu_temple', 'amusement_park', 'zoo', 'aquarium', 'park'].some(type => types.has(type)),
+    hasSmallLocalType: types.has('museum') || types.has('art_gallery')
+  };
+}
+
+function isWorthRouteDetour(place) {
+  const rating = place.rating || 0;
+  const reviews = place.userRatingsTotal || 0;
+  const signals = getIconicPlaceSignals(place);
+
+  if (signals.hasOrdinaryName || rating < 4.3 || reviews < 500) {
+    return false;
+  }
+
+  if (signals.hasSmallLocalType && !signals.hasIconicName && reviews < 2000) {
+    return false;
+  }
+
+  return signals.hasIconicName || signals.hasIconicType || reviews >= 3000;
+}
+
+function getPreferenceMatchScore(place, companionType = 'solo', numberOfTravelers = 1) {
+  const category = getPlaceCategory(place);
+  const name = (place.name || '').toLowerCase();
+  const types = new Set(place.types || []);
+  const normalizedCompanion = String(companionType || '').toLowerCase();
+  const isGroup = Number(numberOfTravelers) >= 3 || normalizedCompanion.includes('friend') || normalizedCompanion.includes('family');
+  const isCouple = normalizedCompanion.includes('couple') || normalizedCompanion.includes('partner');
+  const isFamily = normalizedCompanion.includes('family');
+
+  if (isFamily && ['National Park', 'Wildlife Sanctuary', 'Famous Temple', 'Famous Lake', 'Adventure Park'].includes(category)) return 18;
+  if (isCouple && ['Scenic Viewpoint', 'Waterfall', 'Beach', 'Palace', 'Famous Lake'].includes(category)) return 18;
+  if (isGroup && ['Adventure Park', 'Waterfall', 'Beach', 'Fort', 'Scenic Viewpoint'].includes(category)) return 16;
+  if (types.has('tourist_attraction') || name.includes('heritage')) return 10;
+
+  return 4;
+}
+
+function scoreRoutePlace(place, companionType, numberOfTravelers) {
+  const rating = place.rating || 0;
+  const reviews = place.userRatingsTotal || 0;
+  const signals = getIconicPlaceSignals(place);
+  const popularityScore = Math.min(80, Math.log10(reviews + 1) * 20);
+  const ratingScore = rating * 18;
+  const reviewCountScore = Math.min(50, reviews / 120);
+  const significanceScore = (signals.hasIconicName ? 35 : 0) + (signals.hasIconicType ? 18 : 0);
+  const preferenceScore = getPreferenceMatchScore(place, companionType, numberOfTravelers);
+  const detourScore = Math.max(0, 20 - Math.abs((place.distanceFromRouteKm || 30) - 30));
+
+  return popularityScore + ratingScore + reviewCountScore + significanceScore + detourScore + preferenceScore;
+}
+
+function getTouristPopularityScore(place) {
+  const reviews = place.userRatingsTotal || 0;
+  const signals = getIconicPlaceSignals(place);
+
+  return Math.min(100, Math.log10(reviews + 1) * 25) +
+    (signals.hasIconicName ? 30 : 0) +
+    (signals.hasIconicType ? 15 : 0);
+}
+
+function getBestTimeToVisit(place) {
+  const category = getPlaceCategory(place);
+
+  if (['Waterfall', 'National Park', 'Wildlife Sanctuary'].includes(category)) {
+    return 'Morning, especially after monsoon or in cooler months';
+  }
+  if (['Beach', 'Scenic Viewpoint', 'Famous Lake', 'Famous Dam'].includes(category)) {
+    return 'Early morning or sunset';
+  }
+  if (category === 'Famous Temple') {
+    return 'Early morning or evening aarti time';
+  }
+  if (['Fort', 'Palace', 'Museum', 'Cultural Attraction'].includes(category)) {
+    return 'Morning or late afternoon';
+  }
+
+  return 'Morning or late afternoon';
+}
+
+function getSuggestedVisitDuration(place) {
+  const category = getPlaceCategory(place);
+
+  if (['National Park', 'Wildlife Sanctuary', 'Adventure Park'].includes(category)) return '3-5 hours';
+  if (['Waterfall', 'Beach', 'Fort', 'Palace'].includes(category)) return '2-3 hours';
+  if (['Famous Temple', 'Scenic Viewpoint', 'Famous Lake', 'Famous Dam'].includes(category)) return '1-2 hours';
+  return '1.5-2.5 hours';
+}
+
+function getRoutePlaceReason(place, companionType, numberOfTravelers) {
+  const category = getPlaceCategory(place).toLowerCase();
+  const reviews = place.userRatingsTotal ? `${place.userRatingsTotal} reviews` : 'strong visitor interest';
+  const preferenceScore = getPreferenceMatchScore(place, companionType, numberOfTravelers);
+  const preferenceText = preferenceScore >= 16 ? ' and fits your traveler group' : '';
+
+  return `Worth a short detour as a famous ${category} with ${place.rating}/5 rating, ${reviews}, strong visual appeal${preferenceText}.`;
+}
+
 /**
  * Generate dynamic route with places using Google Maps APIs
  * @param {string} startLocation - Starting location
@@ -882,8 +1143,10 @@ function allocateBudget(totalBudget, numDays) {
  * @param {number} budget - Total budget
  * @returns {Promise<Object>} Route plan with places and cost estimates
  */
-async function generateDynamicRouteWithPlaces(startLocation, destination, transportMode, numDays, interests, budget) {
+async function generateDynamicRouteWithPlaces(startLocation, destination, transportMode, numDays, interests, budget, companionType = 'solo', numberOfTravelers = 1, options = {}) {
   console.log(`🚀 Generating dynamic route: ${startLocation} → ${destination} (${numDays} days)`);
+  const excludedPlaceIds = new Set(options.excludePlaceIds || []);
+  const excludedPlaceNames = new Set((options.excludePlaceNames || []).map(name => String(name).toLowerCase()));
 
   try {
     // Step 1: Get primary route using Directions API
@@ -907,46 +1170,111 @@ async function generateDynamicRouteWithPlaces(startLocation, destination, transp
 
     // Step 2: Find interesting places along the route
     const interestTypes = {
-      'nature': ['park', 'natural_feature', 'campground'],
-      'cultural': ['museum', 'art_gallery', 'historical_site', 'church', 'hindu_temple', 'mosque'],
-      'adventure': ['park', 'natural_feature', 'campground', 'amusement_park'],
+      'nature': ['park', 'natural_feature', 'waterfall', 'national_park', 'scenic_viewpoint'],
+      'cultural': ['tourist_attraction', 'museum', 'art_gallery', 'historical_site', 'church', 'hindu_temple', 'mosque', 'landmark'],
+      'adventure': ['park', 'natural_feature', 'campground', 'amusement_park', 'waterfall', 'scenic_viewpoint'],
       'food': ['restaurant', 'food', 'cafe', 'bar'],
       'shopping': ['shopping_mall', 'store', 'department_store'],
-      'beach': ['beach', 'natural_feature'],
-      'mountain': ['park', 'natural_feature', 'campground']
+      'beach': ['beach', 'natural_feature', 'tourist_attraction'],
+      'mountain': ['park', 'natural_feature', 'campground', 'scenic_viewpoint']
     };
 
     const userInterests = interests ? interests.split(',').map(i => i.trim().toLowerCase()) : ['cultural', 'nature'];
-    const placeTypes = userInterests.flatMap(interest => interestTypes[interest] || []);
+    const routeDiscoveryTypes = [
+      'tourist_attraction',
+      'landmark',
+      'scenic_viewpoint',
+      'historical_site',
+      'waterfall',
+      'hindu_temple',
+      'beach',
+      'national_park',
+      'wildlife_sanctuary',
+      'fort',
+      'palace'
+    ];
+    const placeTypes = [
+      ...userInterests.flatMap(interest => interestTypes[interest] || []),
+      ...routeDiscoveryTypes
+    ];
 
-    // Search for places along the route (using midpoint as search location)
+    // Search around sampled points along the route. This favors worthwhile detours
+    // within about 20-40km of the journey instead of places near the source city.
     const routePlaces = [];
-    const searchRadius = Math.min(50000, Math.max(10000, primaryRoute.distance * 500)); // 10-50km radius
+    const searchRadius = 40000;
+    const searchAnchors = getRouteSearchAnchors(primaryRoute);
+    const routeSearchLocations = searchAnchors.length > 0
+      ? searchAnchors
+      : [{ query: destination, location: null, distanceAlongRoute: primaryRoute.distance }];
+    const uniquePlaceTypes = [...new Set(placeTypes)].slice(0, 10);
 
-    for (const placeType of [...new Set(placeTypes)]) {
-      const places = await findPlacesNearby(`${startLocation}`, placeType, searchRadius);
-      routePlaces.push(...places.slice(0, 3)); // Top 3 per type
+    for (const searchSection of routeSearchLocations) {
+      const sectionPlaces = [];
+
+      for (const placeType of uniquePlaceTypes) {
+        const places = await findPlacesNearby(searchSection.query, placeType, searchRadius);
+        sectionPlaces.push(...places.slice(0, 5).map(place => {
+          const distanceFromRouteKm = searchSection.location
+            ? calculateStraightLineDistanceKm(searchSection.location, place.location)
+            : null;
+
+          return {
+            ...place,
+            searchAnchor: searchSection.query,
+            routeSectionKm: searchSection.distanceAlongRoute,
+            distanceFromRouteKm: distanceFromRouteKm === null ? 30 : Math.round(distanceFromRouteKm * 10) / 10
+          };
+        }));
+      }
+
+      const bestSectionPlaces = sectionPlaces
+        .filter(place => place.distanceFromRouteKm >= 20 && place.distanceFromRouteKm <= 40)
+        .filter(isWorthRouteDetour)
+        .map(place => ({
+          ...place,
+          category: getPlaceCategory(place),
+          touristPopularityScore: getTouristPopularityScore(place),
+          routeScore: scoreRoutePlace(place, companionType, numberOfTravelers),
+          preferenceMatchScore: getPreferenceMatchScore(place, companionType, numberOfTravelers)
+        }))
+        .sort((a, b) =>
+          b.touristPopularityScore - a.touristPopularityScore ||
+          (b.rating || 0) - (a.rating || 0) ||
+          (b.userRatingsTotal || 0) - (a.userRatingsTotal || 0) ||
+          (a.distanceFromRouteKm || 99) - (b.distanceFromRouteKm || 99) ||
+          (b.preferenceMatchScore || 0) - (a.preferenceMatchScore || 0)
+        )
+        .slice(0, 2);
+
+      routePlaces.push(...bestSectionPlaces);
     }
 
-    // Remove duplicates and filter by rating
+    // Remove duplicates and rank by popularity, rating, reviews, route detour, and preference match.
     const uniquePlaces = routePlaces
       .filter((place, index, self) =>
         index === self.findIndex(p => p.placeId === place.placeId)
       )
-      .filter(place => place.rating >= 4.0 && place.userRatingsTotal >= 10)
-      .sort((a, b) => b.rating - a.rating)
-      .slice(0, 5); // Top 5 places
+      .filter(place => !excludedPlaceIds.has(place.placeId))
+      .filter(place => !excludedPlaceNames.has(String(place.name || '').toLowerCase()))
+      .sort((a, b) =>
+        b.touristPopularityScore - a.touristPopularityScore ||
+        (b.rating || 0) - (a.rating || 0) ||
+        (b.userRatingsTotal || 0) - (a.userRatingsTotal || 0) ||
+        (a.distanceFromRouteKm || 99) - (b.distanceFromRouteKm || 99) ||
+        (b.preferenceMatchScore || 0) - (a.preferenceMatchScore || 0)
+      )
+      .slice(0, 8);
 
     // Step 3: Select optimal places within budget and time constraints
-    const maxStops = Math.min(3, Math.floor(numDays / 2));
+    const maxStops = Math.min(6, Math.max(2, Math.floor(numDays * 0.75)));
     const selectedPlaces = [];
     let totalAdditionalTime = 0;
     let totalAdditionalDistance = 0;
 
     for (const place of uniquePlaces.slice(0, maxStops)) {
-      // Estimate detour time and distance (simplified)
-      const detourDistance = Math.floor(Math.random() * 50) + 10; // 10-60km detour
-      const detourTime = Math.floor(detourDistance / 30) * 60; // Rough estimate: 30km/h average
+      // Estimate detour time and distance within the target 20-40km route-deviation band.
+      const detourDistance = Math.round(place.distanceFromRouteKm || 30);
+      const detourTime = Math.max(45, Math.round((detourDistance * 2 / 35) * 60)); // Round trip at scenic-road pace
 
       // Check if adding this place would exceed time budget
       if (totalAdditionalTime + detourTime > numDays * 4 * 60) { // Max 4 hours per day for travel
@@ -957,11 +1285,21 @@ async function generateDynamicRouteWithPlaces(startLocation, destination, transp
         name: place.name,
         placeId: place.placeId,
         location: place.location,
+        category: place.category,
         rating: place.rating,
+        userRatingsTotal: place.userRatingsTotal,
         types: place.types,
+        distance: detourDistance,
+        distanceFromRouteKm: detourDistance,
         detourDistance: detourDistance,
         detourTime: detourTime,
-        reason: `Highly rated ${place.types[0] || 'attraction'} matching your interests`
+        routeScore: place.routeScore,
+        touristPopularityScore: place.touristPopularityScore,
+        preferenceMatchScore: place.preferenceMatchScore,
+        bestTimeToVisit: getBestTimeToVisit(place),
+        suggestedVisitDuration: getSuggestedVisitDuration(place),
+        visitTime: Number.parseFloat(getSuggestedVisitDuration(place)) || 2,
+        reason: getRoutePlaceReason(place, companionType, numberOfTravelers)
       });
 
       totalAdditionalTime += detourTime;
@@ -996,7 +1334,8 @@ async function generateDynamicRouteWithPlaces(startLocation, destination, transp
       intermediateStops: selectedPlaces,
       totalDistance: optimizedRoute.distance + totalAdditionalDistance,
       totalDuration: optimizedRoute.estimatedDuration,
-      routeSource: 'google_dynamic'
+      routeSource: 'google_dynamic',
+      segmentType: options.segmentType || 'route'
     };
 
   } catch (error) {
@@ -1004,6 +1343,218 @@ async function generateDynamicRouteWithPlaces(startLocation, destination, transp
     // Fallback to existing route logic
     return await getBestRoutePlan(startLocation, destination, transportMode, numDays);
   }
+}
+
+function getStopDetails(stop) {
+  return {
+    name: stop.name,
+    category: stop.category || (stop.types ? stop.types[0] : 'attraction'),
+    googleRating: stop.rating,
+    numberOfReviews: stop.userRatingsTotal || 0,
+    distanceFromRouteKm: stop.distanceFromRouteKm || stop.detourDistance,
+    estimatedDetourTime: `${stop.detourTime} minutes`,
+    whyRecommended: stop.reason,
+    bestTimeToVisit: stop.bestTimeToVisit,
+    suggestedVisitDuration: stop.suggestedVisitDuration,
+    phase: stop.phase,
+    location: stop.location
+  };
+}
+
+function buildDestinationStayPlan(destination, stayDays, activities, accommodationDetails) {
+  return Array.from({ length: stayDays }, (_, index) => {
+    const dayActivities = activities.filter(activity => (activity.estimatedDay || 1) % Math.max(stayDays, 1) === index % Math.max(stayDays, 1));
+    const focus = dayActivities.length > 0
+      ? dayActivities.map(activity => activity.name).join(', ')
+      : `local sightseeing, food walks, markets, and relaxed exploration in ${destination}`;
+
+    return {
+      dayOffset: index + 1,
+      title: `Destination stay in ${destination}`,
+      focus,
+      accommodationPlan: `Stay at ${accommodationDetails.type}`,
+      mealPlan: `Breakfast near accommodation, lunch near sightseeing area, dinner at a well-rated local restaurant`
+    };
+  });
+}
+
+function generateRoundTripDayPlans({
+  startLocation,
+  destination,
+  startDate,
+  phases,
+  onwardRoute,
+  returnRoute,
+  destinationStayPlan,
+  activities,
+  accommodationDetails
+}) {
+  const dayPlans = [];
+  let dayNumber = 1;
+
+  const pushJourneyDays = (phaseName, routePlan, from, to, days) => {
+    const stops = routePlan.intermediateStops || [];
+    const services = routePlan.routeServices || [];
+    const stopsPerDay = Math.max(1, Math.ceil(stops.length / Math.max(days, 1)));
+
+    for (let index = 0; index < days; index += 1) {
+      const dayStops = stops.slice(index * stopsPerDay, (index + 1) * stopsPerDay);
+      const service = services[index] || {};
+      const isFinalPhaseDay = index === days - 1;
+      let plan = `**${phaseName} - Day ${index + 1}**\n\n`;
+
+      plan += `**Route:** ${from} to ${to}\n`;
+      plan += `**Date:** ${formatDate(addDays(startDate, dayNumber - 1))}\n`;
+      plan += `**Travel Target:** ${isFinalPhaseDay ? `Reach ${to}` : 'Cover a comfortable route section with planned halts'}\n`;
+      plan += `**Daily Travel Limit:** About ${phases.dailyTravelLimitKm} km before major rest\n\n`;
+
+      if (dayStops.length > 0) {
+        plan += `**Worthwhile Detours:**\n`;
+        for (const stop of dayStops) {
+          plan += `- **${stop.name}** (${stop.category})\n`;
+          plan += `  * Rating: ${stop.rating}/5 from ${stop.userRatingsTotal || 0} reviews\n`;
+          plan += `  * Distance from route: ${stop.distanceFromRouteKm || stop.detourDistance} km\n`;
+          plan += `  * Detour time: ${stop.detourTime} minutes\n`;
+          plan += `  * Visit duration: ${stop.suggestedVisitDuration}\n`;
+          plan += `  * Best time: ${stop.bestTimeToVisit}\n`;
+          plan += `  * Why: ${stop.reason}\n\n`;
+        }
+      } else {
+        plan += `**Worthwhile Detours:** Keep this section efficient; no high-confidence iconic detour was selected.\n\n`;
+      }
+
+      plan += `**Food:** ${service.restaurantPlan || `Eat at a well-rated restaurant on the ${from}-${to} corridor`}\n`;
+      plan += `**Fuel/Transit:** ${service.fuelStopPlan || 'Use a major fuel stop or transit hub before continuing'}\n`;
+      plan += `**Accommodation:** ${service.accommodationPlan || `Stay at ${accommodationDetails.type}`}\n`;
+
+      dayPlans.push({
+        day: dayNumber,
+        date: formatDate(addDays(startDate, dayNumber - 1)),
+        phase: phaseName,
+        plan,
+        activities: [],
+        stops: dayStops,
+        restaurants: [service.restaurantPlan].filter(Boolean),
+        fuelStops: [service.fuelStopPlan].filter(Boolean),
+        accommodation: service.accommodationPlan
+      });
+      dayNumber += 1;
+    }
+  };
+
+  pushJourneyDays('Onward Journey', onwardRoute, startLocation, destination, phases.onwardDays);
+
+  for (const stayDay of destinationStayPlan) {
+    const activityList = activities.slice(0, 3);
+    let plan = `**Destination Stay - Day ${stayDay.dayOffset}**\n\n`;
+    plan += `**Location:** ${destination}\n`;
+    plan += `**Date:** ${formatDate(addDays(startDate, dayNumber - 1))}\n`;
+    plan += `**Focus:** ${stayDay.focus}\n`;
+    plan += `**Morning:** Start with a top-rated local breakfast and your highest-priority activity\n`;
+    plan += `**Afternoon:** Sightseeing, cultural stops, nature time, or rest based on pace\n`;
+    plan += `**Evening:** Local food, markets, viewpoint, or relaxed waterfront/city walk\n`;
+    plan += `**Meals:** ${stayDay.mealPlan}\n`;
+    plan += `**Accommodation:** ${stayDay.accommodationPlan}\n`;
+
+    dayPlans.push({
+      day: dayNumber,
+      date: formatDate(addDays(startDate, dayNumber - 1)),
+      phase: 'Destination Stay',
+      plan,
+      activities: activityList,
+      stops: [],
+      restaurants: [stayDay.mealPlan],
+      accommodation: stayDay.accommodationPlan
+    });
+    dayNumber += 1;
+  }
+
+  pushJourneyDays('Return Journey', returnRoute, destination, startLocation, phases.returnDays);
+
+  return dayPlans;
+}
+
+async function generateRoundTripRoutePlan({
+  startLocation,
+  destination,
+  transportMode,
+  numDays,
+  interests,
+  budget,
+  companionType,
+  numberOfTravelers,
+  preferredArrivalDay,
+  accommodationType,
+  vehicleType
+}) {
+  const estimateRoute = await getDirectionsFromGoogleMaps(startLocation, destination, [], transportMode);
+  const estimatedDistance = estimateRoute.distance || 350;
+  const phases = buildTripPhases(numDays, preferredArrivalDay, estimatedDistance, transportMode, vehicleType);
+
+  const onwardRoute = await generateDynamicRouteWithPlaces(
+    startLocation,
+    destination,
+    transportMode,
+    phases.onwardDays,
+    interests,
+    budget,
+    companionType,
+    numberOfTravelers,
+    { segmentType: 'onward' }
+  );
+  onwardRoute.segmentType = 'onward';
+  onwardRoute.intermediateStops = (onwardRoute.intermediateStops || []).map(stop => ({ ...stop, phase: 'Onward Journey' }));
+  onwardRoute.routeServices = buildRouteServices('Onward Journey', startLocation, destination, phases.onwardDays, accommodationType, transportMode);
+
+  const usedPlaceIds = onwardRoute.intermediateStops.map(stop => stop.placeId).filter(Boolean);
+  const usedPlaceNames = onwardRoute.intermediateStops.map(stop => stop.name).filter(Boolean);
+
+  const returnRoute = await generateDynamicRouteWithPlaces(
+    destination,
+    startLocation,
+    transportMode,
+    phases.returnDays,
+    interests,
+    budget,
+    companionType,
+    numberOfTravelers,
+    {
+      segmentType: 'return',
+      excludePlaceIds: usedPlaceIds,
+      excludePlaceNames: usedPlaceNames
+    }
+  );
+  returnRoute.segmentType = 'return';
+  returnRoute.intermediateStops = (returnRoute.intermediateStops || []).map(stop => ({ ...stop, phase: 'Return Journey' }));
+  returnRoute.routeServices = buildRouteServices('Return Journey', destination, startLocation, phases.returnDays, accommodationType, transportMode);
+
+  const allStops = [
+    ...(onwardRoute.intermediateStops || []),
+    ...(returnRoute.intermediateStops || [])
+  ];
+  const totalDistance = (onwardRoute.totalDistance || 0) + (returnRoute.totalDistance || 0);
+
+  return {
+    phases,
+    onwardRoute,
+    returnRoute,
+    primaryRoute: {
+      from: startLocation,
+      to: destination,
+      distance: totalDistance,
+      estimatedDuration: `${onwardRoute.totalDuration || onwardRoute.primaryRoute?.estimatedDuration || 'TBD'} onward + ${returnRoute.totalDuration || returnRoute.primaryRoute?.estimatedDuration || 'TBD'} return`,
+      transportMode,
+      distanceSource: 'round_trip_google_directions'
+    },
+    intermediateStops: allStops,
+    totalDistance,
+    totalDuration: `${onwardRoute.totalDuration || 'TBD'} onward, ${returnRoute.totalDuration || 'TBD'} return`,
+    routeSource: 'google_dynamic_round_trip',
+    routeSegments: [
+      { phase: 'Onward Journey', ...onwardRoute },
+      { phase: 'Return Journey', ...returnRoute }
+    ]
+  };
 }
 
 // Main itinerary generation function
@@ -1017,11 +1568,13 @@ async function generateItinerary(data) {
       activities: activitiesPreference,
       accommodation,
       transport,
+      travelCompanionType = 'solo',
       numberOfTravelers = 1,
       transportType = 'public', // 'public' or 'own'
       vehicleType, // 'car' or 'bike' (for own transport)
       fuelType, // 'petrol', 'diesel', 'electric' (for own transport)
-      mileage // Vehicle mileage (for own transport)
+      mileage, // Vehicle mileage (for own transport)
+      vehicleMileage
     } = data;
 
     // Validate inputs
@@ -1029,21 +1582,28 @@ async function generateItinerary(data) {
       throw new Error('Missing required fields');
     }
 
-    const numDays = calculateDays(travelDates.split(' to ')[0], travelDates.split(' to ')[1] || travelDates);
+    const { startDate, endDate } = parseTravelDateRange(travelDates);
+    const numDays = calculateDays(formatDate(startDate), formatDate(endDate));
     const parsedBudget = parseFloat(budget);
+    const preferredArrivalDay = getPreferredArrivalDay(data, startDate, numDays);
 
     // Allocate budget
     const budgetAllocation = allocateBudget(parsedBudget, numDays);
 
-    // Generate dynamic route with places using Google Maps APIs
-    const routePlan = await generateDynamicRouteWithPlaces(
-      startLocation || destination,
+    // Generate complete round-trip route with onward, destination-stay, and return phases
+    const routePlan = await generateRoundTripRoutePlan({
+      startLocation: startLocation || destination,
       destination,
-      transport || 'bus',
+      transportMode: transport || 'bus',
       numDays,
-      activitiesPreference,
-      parsedBudget
-    );
+      interests: activitiesPreference,
+      budget: parsedBudget,
+      companionType: travelCompanionType,
+      numberOfTravelers,
+      preferredArrivalDay,
+      accommodationType: accommodation || 'hostel',
+      vehicleType
+    });
 
     // Calculate transport costs based on type
     let transportCostDetails;
@@ -1054,7 +1614,7 @@ async function generateItinerary(data) {
       transportCostDetails = calculateOwnVehicleCost(
         vehicleType,
         fuelType || 'petrol',
-        mileage,
+        mileage || vehicleMileage,
         routePlan.totalDistance,
         numberOfTravelers
       );
@@ -1124,8 +1684,25 @@ async function generateItinerary(data) {
       alternatives = generateBudgetAdjustmentOptions(parsedBudget, estimatedCosts, routePlan, numDays);
     }
 
-    // Generate optimized day-wise itinerary with stops
-    const dayPlans = generateDayWiseItineraryWithStops(numDays, routePlan, recommendedActivities, accommodationDetails);
+    const destinationStayPlan = buildDestinationStayPlan(
+      destination,
+      routePlan.phases.destinationStayDays,
+      recommendedActivities,
+      accommodationDetails
+    );
+
+    // Generate optimized day-wise itinerary with onward, stay, and return phases
+    const dayPlans = generateRoundTripDayPlans({
+      startLocation: startLocation || destination,
+      destination,
+      startDate,
+      phases: routePlan.phases,
+      onwardRoute: routePlan.onwardRoute,
+      returnRoute: routePlan.returnRoute,
+      destinationStayPlan,
+      activities: recommendedActivities,
+      accommodationDetails
+    });
 
     // Generate money-saving tips
     const tips = generateMoneyTips(destination, numDays, transport, accommodation);
@@ -1141,15 +1718,37 @@ async function generateItinerary(data) {
         totalDistance: routePlan.totalDistance,
         travelTime: routePlan.primaryRoute.estimatedDuration,
         numDays: numDays,
-        numTravelers: numberOfTravelers
+        numTravelers: numberOfTravelers,
+        arrivalDay: routePlan.phases.arrivalDay,
+        arrivalDate: formatDate(addDays(startDate, routePlan.phases.arrivalDay - 1))
+      },
+
+      summary: {
+        startLocation: routePlan.primaryRoute.from,
+        destination,
+        startDate: formatDate(startDate),
+        endDate: formatDate(endDate),
+        totalDays: numDays,
+        originalBudget: parsedBudget,
+        withinBudget: estimatedCosts.total <= parsedBudget,
+        arrivalDay: routePlan.phases.arrivalDay,
+        arrivalDate: formatDate(addDays(startDate, routePlan.phases.arrivalDay - 1))
+      },
+
+      details: {
+        startLocation: startLocation || destination,
+        preferredActivities: activitiesPreference || '',
+        accommodationType: accommodation || 'hostel',
+        transportMode: transport || 'bus'
       },
 
       // 🗺️ Optimized Route
       optimizedRoute: {
         mainRoute: `${routePlan.primaryRoute.from} → ${routePlan.primaryRoute.to}`,
-        deviations: routePlan.intermediateStops.length > 0 ? 'With recommended stops' : 'Direct route',
+        deviations: routePlan.intermediateStops.length > 0 ? 'Round trip with recommended onward and return stops' : 'Round trip direct route',
         stopsAdded: routePlan.intermediateStops.map(stop => ({
           name: stop.name,
+          phase: stop.phase,
           reason: stop.reason,
           detourDistance: stop.detourDistance,
           detourTime: stop.detourTime
@@ -1158,17 +1757,54 @@ async function generateItinerary(data) {
         additionalTravelTime: routePlan.primaryRoute.additionalTime || 0
       },
 
+      route: {
+        primaryRoute: routePlan.primaryRoute,
+        intermediateStops: routePlan.intermediateStops,
+        routeSegments: routePlan.routeSegments
+      },
+
+      tripPhases: {
+        onwardJourney: {
+          days: routePlan.phases.onwardDays,
+          route: routePlan.onwardRoute.primaryRoute,
+          attractions: routePlan.onwardRoute.intermediateStops.map(getStopDetails),
+          restaurants: routePlan.onwardRoute.routeServices.map(service => service.restaurantPlan),
+          accommodations: routePlan.onwardRoute.routeServices.map(service => service.accommodationPlan),
+          fuelStops: routePlan.onwardRoute.routeServices.map(service => service.fuelStopPlan)
+        },
+        destinationStay: {
+          days: routePlan.phases.destinationStayDays,
+          arrivalDay: routePlan.phases.arrivalDay,
+          arrivalDate: formatDate(addDays(startDate, routePlan.phases.arrivalDay - 1)),
+          activities: destinationStayPlan
+        },
+        returnJourney: {
+          days: routePlan.phases.returnDays,
+          route: routePlan.returnRoute.primaryRoute,
+          attractions: routePlan.returnRoute.intermediateStops.map(getStopDetails),
+          restaurants: routePlan.returnRoute.routeServices.map(service => service.restaurantPlan),
+          accommodations: routePlan.returnRoute.routeServices.map(service => service.accommodationPlan),
+          fuelStops: routePlan.returnRoute.routeServices.map(service => service.fuelStopPlan)
+        }
+      },
+
       // 🌄 Recommended Places
       recommendedPlaces: routePlan.intermediateStops.map(stop => ({
         name: stop.name,
-        type: stop.types ? stop.types[0] : 'attraction',
-        rating: stop.rating,
-        reason: stop.reason,
+        category: stop.category || (stop.types ? stop.types[0] : 'attraction'),
+        googleRating: stop.rating,
+        numberOfReviews: stop.userRatingsTotal || 0,
+        distanceFromRouteKm: stop.distanceFromRouteKm || stop.detourDistance,
+        estimatedDetourTime: `${stop.detourTime} minutes`,
+        whyRecommended: stop.reason,
+        bestTimeToVisit: stop.bestTimeToVisit,
+        suggestedVisitDuration: stop.suggestedVisitDuration,
         location: stop.location
       })),
 
       // 📅 Day-wise Itinerary
       dayWiseItinerary: dayPlans,
+      dayPlans,
 
       // 💵 Budget Breakdown
       budgetBreakdown: {
@@ -1194,6 +1830,19 @@ async function generateItinerary(data) {
         totalEstimatedCost: estimatedCosts.total,
         originalBudget: parsedBudget,
         remainingBudget: Math.max(0, parsedBudget - estimatedCosts.total)
+      },
+
+      estimatedCosts,
+      costBreakdown: {
+        transport: {
+          type: transportType === 'own' ? `${vehicleType} (${fuelType})` : transport || 'bus',
+          cost: transportCost,
+          details: transportCostDetails
+        },
+        accommodation: accommodationDetails,
+        food: foodDetails,
+        activities: recommendedActivities.slice(0, 5),
+        miscellaneous: { amount: budgetAllocation.miscellaneous }
       },
 
       // ⚠ Budget Suggestions

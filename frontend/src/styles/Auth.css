@@ -1,109 +1,113 @@
-/* Authentication Pages Styling */
 .auth-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 20px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  padding: 32px 20px;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(120deg, rgba(15, 118, 110, 0.2), rgba(217, 119, 6, 0.16)),
+    var(--bg, #f4f1ea);
 }
 
 .auth-card {
-  background: white;
-  border-radius: 12px;
-  padding: 40px;
-  width: 100%;
-  max-width: 420px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-  animation: slideIn 0.3s ease-out;
+  width: min(100%, 440px);
+  padding: 30px;
+  background: #fff;
+  border: 1px solid #ded8cc;
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(22, 32, 31, 0.16);
 }
 
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.auth-brand {
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.auth-logo {
+  width: 82px;
+  height: 82px;
+  display: block;
+  margin: 0 auto 14px;
+  object-fit: cover;
+  border: 1px solid #ded8cc;
+  border-radius: 8px;
 }
 
 .auth-card h2 {
-  text-align: center;
-  color: #667eea;
-  margin-bottom: 10px;
-  font-size: 28px;
+  margin-bottom: 5px;
+  color: #16201f;
+  font-size: 26px;
+  line-height: 1.1;
+  font-weight: 900;
+}
+
+.auth-brand p {
+  color: #66716f;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .auth-card h3 {
-  text-align: center;
-  color: #333;
+  margin-bottom: 22px;
+  color: #16201f;
   font-size: 20px;
-  margin-bottom: 30px;
-  font-weight: 600;
+  font-weight: 900;
+  text-align: center;
 }
 
-.error-alert {
-  background: #fee;
-  border: 1px solid #f99;
-  color: #c00;
-  padding: 12px;
-  border-radius: 6px;
-  margin-bottom: 20px;
+.auth-card .error-alert {
+  margin-bottom: 18px;
+  padding: 13px 14px;
+  color: #b42318;
+  background: #fff1f0;
+  border: 1px solid #f3b7b2;
+  border-radius: 8px;
   font-size: 14px;
+  font-weight: 700;
 }
 
-.form-group {
-  margin-bottom: 20px;
+.auth-card .form-group {
+  margin-bottom: 16px;
 }
 
-.form-group label {
+.auth-card .form-group label {
   display: block;
   margin-bottom: 8px;
-  color: #333;
-  font-weight: 500;
-  font-size: 14px;
+  color: #16201f;
+  font-size: 13px;
+  font-weight: 900;
 }
 
-.form-group input,
-.form-group select {
+.auth-card .form-group input,
+.auth-card .form-group select {
   width: 100%;
-  padding: 12px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  font-size: 14px;
-  transition: all 0.3s ease;
-  box-sizing: border-box;
+  min-height: 44px;
+  padding: 0 12px;
+  color: #16201f;
+  background: #fbfaf7;
+  border: 1px solid #ded8cc;
+  border-radius: 8px;
 }
 
-.form-group input:focus,
-.form-group select:focus {
+.auth-card .form-group input:focus,
+.auth-card .form-group select:focus {
   outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  border-color: #0f766e;
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12);
 }
 
 .btn-login,
 .btn-register {
   width: 100%;
-  padding: 12px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  margin-top: 20px;
+  min-height: 46px;
+  margin-top: 6px;
+  color: #fff;
+  background: #0f766e;
 }
 
 .btn-login:hover,
 .btn-register:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+  background: #115e59;
+  box-shadow: 0 10px 22px rgba(15, 118, 110, 0.22);
 }
 
 .btn-login:disabled,
@@ -113,23 +117,26 @@
 }
 
 .switch-auth {
-  text-align: center;
   margin-top: 20px;
-  color: #666;
+  color: #66716f;
   font-size: 14px;
+  text-align: center;
 }
 
 .link-btn {
-  background: none;
-  border: none;
-  color: #667eea;
+  color: #115e59;
+  background: transparent;
   cursor: pointer;
-  font-weight: 600;
-  text-decoration: none;
-  padding: 0;
   font-size: 14px;
+  font-weight: 900;
 }
 
 .link-btn:hover {
   text-decoration: underline;
+}
+
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 22px;
+  }
 }

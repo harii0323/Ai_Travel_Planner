@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 import '../styles/Auth.css';
 
 function Register({ onRegisterSuccess, onSwitchToLogin }) {
@@ -40,7 +40,7 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
     setLoading(true);
 
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/register', {
+      const response = await api.post('/api/auth/register', {
         name: formData.name,
         email: formData.email,
         password: formData.password,
@@ -65,8 +65,12 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h2>✈️ Student Travel Planner</h2>
-        <h3>Create New Account</h3>
+        <div className="auth-brand">
+          <img className="auth-logo" src="/assets/vista-logo.png" alt="VISTA travel logo" />
+          <h2>VISTA Travel Planner</h2>
+          <p>Always try to make memories</p>
+        </div>
+        <h3>Create your account</h3>
 
         {error && <div className="error-alert">{error}</div>}
 
@@ -165,7 +169,7 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
         <p className="switch-auth">
           Already have an account?{' '}
           <button type="button" onClick={onSwitchToLogin} className="link-btn">
-            Login here
+            Log in
           </button>
         </p>
       </div>

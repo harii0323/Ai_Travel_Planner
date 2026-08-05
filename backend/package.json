@@ -5,7 +5,9 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "test": "node --check src/index.js",
+    "seed:india-tourism": "node src/scripts/seedIndiaTourismData.js"
   },
   "dependencies": {
     "axios": "^0.21.1",

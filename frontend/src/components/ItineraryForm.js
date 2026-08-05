@@ -13,6 +13,8 @@ function ItineraryForm({ onSubmit }) {
     activities: '',
     accommodation: 'hostel',
     transport: 'bus',
+    destinationArrivalDay: '',
+    destinationArrivalDate: null,
     travelCompanionType: 'solo',
     numberOfTravelers: 1,
     // New fields for own transportation
@@ -69,6 +71,17 @@ function ItineraryForm({ onSubmit }) {
       newErrors.dates = 'Please select both start and end dates';
     } else if (form.startDate >= form.endDate) {
       newErrors.dates = 'End date must be after start date';
+    }
+
+    if (form.destinationArrivalDay) {
+      const arrivalDay = parseInt(form.destinationArrivalDay, 10);
+      const totalDays = form.startDate && form.endDate
+        ? Math.ceil((form.endDate - form.startDate) / (1000 * 60 * 60 * 24)) + 1
+        : 0;
+
+      if (arrivalDay < 2 || arrivalDay >= totalDays) {
+        newErrors.destinationArrivalDay = 'Arrival day must leave time for onward travel and return';
+      }
     }
 
     if (!form.startLocation.trim()) {
@@ -161,7 +174,10 @@ function ItineraryForm({ onSubmit }) {
       // Format dates for backend
       const formattedForm = {
         ...form,
-        travelDates: `${form.startDate.toISOString().split('T')[0]} to ${form.endDate.toISOString().split('T')[0]}`
+        travelDates: `${form.startDate.toISOString().split('T')[0]} to ${form.endDate.toISOString().split('T')[0]}`,
+        destinationArrivalDate: form.destinationArrivalDate
+          ? form.destinationArrivalDate.toISOString().split('T')[0]
+          : ''
       };
       await onSubmit(formattedForm);
     } finally {
@@ -183,7 +199,7 @@ function ItineraryForm({ onSubmit }) {
           <div className="form-group">
             <label htmlFor="budget">
               Total Budget (INR) *
-              <span className="tooltip">💡 This is your total budget for the entire trip</span>
+              <span className="tooltip">Total budget for the entire trip</span>
             </label>
             <input
               id="budget"
@@ -202,7 +218,7 @@ function ItineraryForm({ onSubmit }) {
           <div className="form-group">
             <label>
               Travel Dates *
-              <span className="tooltip">💡 Select your travel start and end dates</span>
+              <span className="tooltip">Select your travel start and end dates</span>
             </label>
             <div className="date-picker-container">
               <div className="date-input-group">
@@ -232,6 +248,43 @@ function ItineraryForm({ onSubmit }) {
             </div>
             {errors.dates && <span className="error-message">{errors.dates}</span>}
           </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label htmlFor="destinationArrivalDay">
+                Reach destination on day
+                <span className="tooltip">Optional target day for reaching the main destination</span>
+              </label>
+              <input
+                id="destinationArrivalDay"
+                type="number"
+                name="destinationArrivalDay"
+                placeholder="e.g., 3"
+                value={form.destinationArrivalDay}
+                onChange={handleChange}
+                className={errors.destinationArrivalDay ? 'input-error' : ''}
+                min="2"
+              />
+              {errors.destinationArrivalDay && <span className="error-message">{errors.destinationArrivalDay}</span>}
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="destinationArrivalDate">
+                Or arrival date
+                <span className="tooltip">Optional date when you want to reach the main destination</span>
+              </label>
+              <DatePicker
+                id="destinationArrivalDate"
+                selected={form.destinationArrivalDate}
+                onChange={(date) => setForm(prev => ({ ...prev, destinationArrivalDate: date }))}
+                dateFormat="yyyy-MM-dd"
+                minDate={form.startDate || new Date()}
+                maxDate={form.endDate || null}
+                placeholderText="Select arrival date"
+                className="date-picker-input"
+              />
+            </div>
+          </div>
         </div>
 
         {/* Location Section */}
@@ -241,7 +294,7 @@ function ItineraryForm({ onSubmit }) {
           <div className="form-group">
             <label htmlFor="startLocation">
               Starting Location *
-              <span className="tooltip">💡 Where you're traveling from</span>
+              <span className="tooltip">Where you are traveling from</span>
             </label>
             <input
               id="startLocation"
@@ -258,7 +311,7 @@ function ItineraryForm({ onSubmit }) {
           <div className="form-group">
             <label htmlFor="destination">
               Destination *
-              <span className="tooltip">💡 Your main travel destination</span>
+              <span className="tooltip">Your main travel destination</span>
             </label>
             <input
               id="destination"
@@ -299,7 +352,7 @@ function ItineraryForm({ onSubmit }) {
           <div className="form-group">
             <label htmlFor="accommodation">
               Choose Your Accommodation *
-              <span className="tooltip">💡 Select based on comfort level and budget</span>
+              <span className="tooltip">Select based on comfort level and budget</span>
             </label>
             <select
               id="accommodation"
@@ -326,7 +379,7 @@ function ItineraryForm({ onSubmit }) {
           <div className="form-group">
             <label htmlFor="transport">
               Choose Primary Transport *
-              <span className="tooltip">💡 Student discounts apply to all options</span>
+              <span className="tooltip">Student discounts can apply to all options</span>
             </label>
             <select
               id="transport"
@@ -348,13 +401,13 @@ function ItineraryForm({ onSubmit }) {
           {/* Vehicle Details Section - Only show if Own Transportation is selected */}
           {showVehicleDetails && (
             <div className="vehicle-details-section">
-              <h4>🚗 Vehicle Details</h4>
+              <h4>Vehicle details</h4>
 
               <div className="form-row">
                 <div className="form-group">
                   <label htmlFor="vehicleType">
                     Vehicle Type *
-                    <span className="tooltip">💡 Car or Bike</span>
+                    <span className="tooltip">Car or bike</span>
                   </label>
                   <select
                     id="vehicleType"
@@ -376,7 +429,7 @@ function ItineraryForm({ onSubmit }) {
                 <div className="form-group">
                   <label htmlFor="fuelType">
                     Fuel Type *
-                    <span className="tooltip">💡 Type of fuel your vehicle uses</span>
+                    <span className="tooltip">Type of fuel your vehicle uses</span>
                   </label>
                   <select
                     id="fuelType"
@@ -400,7 +453,7 @@ function ItineraryForm({ onSubmit }) {
                 <label htmlFor="vehicleMileage">
                   Vehicle Mileage/Efficiency *
                   <span className="tooltip">
-                    💡 {form.fuelType === 'electric' ? 'km per kWh charge' : 'km per litre'}
+                    {form.fuelType === 'electric' ? 'km per kWh charge' : 'km per litre'}
                   </span>
                 </label>
                 <input
@@ -432,7 +485,7 @@ function ItineraryForm({ onSubmit }) {
           <div className="form-group">
             <label htmlFor="travelCompanionType">
               Who are you traveling with? *
-              <span className="tooltip">💡 Helps us personalize activity recommendations</span>
+              <span className="tooltip">Helps personalize activity recommendations</span>
             </label>
             <select
               id="travelCompanionType"
@@ -442,10 +495,10 @@ function ItineraryForm({ onSubmit }) {
               className={errors.travelCompanionType ? 'input-error' : ''}
             >
               <option value="">Select companion type...</option>
-              <option value="solo">Solo Traveler 🚶</option>
-              <option value="couple">Couple 💑</option>
-              <option value="friends">Friends Group 👥</option>
-              <option value="family">Family 👨‍👩‍👧‍👦</option>
+              <option value="solo">Solo traveler</option>
+              <option value="couple">Couple</option>
+              <option value="friends">Friends group</option>
+              <option value="family">Family</option>
             </select>
             {errors.travelCompanionType && <span className="error-message">{errors.travelCompanionType}</span>}
           </div>
@@ -453,7 +506,7 @@ function ItineraryForm({ onSubmit }) {
           <div className="form-group">
             <label htmlFor="numberOfTravelers">
               Number of Travelers *
-              <span className="tooltip">💡 Used to calculate total costs</span>
+              <span className="tooltip">Used to calculate total costs</span>
             </label>
             <input
               id="numberOfTravelers"
@@ -476,10 +529,10 @@ function ItineraryForm({ onSubmit }) {
             className="btn-generate"
             disabled={loading}
           >
-            {loading ? 'Generating Itinerary...' : '✈️ Generate My Itinerary'}
+            {loading ? 'Generating itinerary...' : 'Generate my itinerary'}
           </button>
           <p className="form-note">
-            💡 All prices are approximate and may vary. Student IDs are eligible for 15-25% discounts.
+            All prices are approximate and may vary. Student IDs may unlock 15-25% discounts.
           </p>
         </div>
       </form>

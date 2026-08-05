@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import '../styles/History.css';
 
 function History({ onSelectItinerary }) {
@@ -17,7 +17,7 @@ function History({ onSelectItinerary }) {
       const token = localStorage.getItem('token');
       const config = { headers: { Authorization: `Bearer ${token}` } };
 
-      const response = await axios.get('http://localhost:5000/api/history', config);
+      const response = await api.get('/api/history', config);
       setItineraries(response.data.itineraries || []);
       setLoading(false);
     } catch (error) {
@@ -32,7 +32,7 @@ function History({ onSelectItinerary }) {
         const token = localStorage.getItem('token');
         const config = { headers: { Authorization: `Bearer ${token}` } };
 
-        await axios.delete(`http://localhost:5000/api/history/${id}`, config);
+        await api.delete(`/api/history/${id}`, config);
         setItineraries(itineraries.filter(it => it._id !== id));
       } catch (error) {
         console.error('Error deleting itinerary:', error);
@@ -45,7 +45,7 @@ function History({ onSelectItinerary }) {
       const token = localStorage.getItem('token');
       const config = { headers: { Authorization: `Bearer ${token}` } };
 
-      const response = await axios.post(`http://localhost:5000/api/history/duplicate/${id}`, {}, config);
+      const response = await api.post(`/api/history/duplicate/${id}`, {}, config);
       setItineraries([response.data.itinerary, ...itineraries]);
     } catch (error) {
       console.error('Error duplicating itinerary:', error);
@@ -57,7 +57,7 @@ function History({ onSelectItinerary }) {
       const token = localStorage.getItem('token');
       const config = { headers: { Authorization: `Bearer ${token}` } };
 
-      const response = await axios.put(`http://localhost:5000/api/history/${id}`, { status }, config);
+      const response = await api.put(`/api/history/${id}`, { status }, config);
       
       setItineraries(itineraries.map(it => it._id === id ? response.data.itinerary : it));
     } catch (error) {
@@ -103,13 +103,14 @@ function History({ onSelectItinerary }) {
   return (
     <div className="history-container">
       <header className="history-header">
-        <h2>📚 Your Travel Plans</h2>
+        <p className="eyebrow">Saved itineraries</p>
+        <h2>Your travel plans</h2>
         <p>Manage and organize all your saved itineraries</p>
       </header>
 
       <div className="history-controls">
         <div className="control-group">
-          <label>Filter by Status:</label>
+          <label>Filter by status</label>
           <select value={filter} onChange={(e) => setFilter(e.target.value)}>
             <option value="all">All Plans</option>
             <option value="draft">Drafts</option>
@@ -120,7 +121,7 @@ function History({ onSelectItinerary }) {
         </div>
 
         <div className="control-group">
-          <label>Sort by:</label>
+          <label>Sort by</label>
           <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
             <option value="recent">Most Recent</option>
             <option value="oldest">Oldest First</option>

@@ -10,7 +10,7 @@ function ItineraryDisplay({ data }) {
   if (!itinerary || !itinerary.success) {
     return (
       <div className="error-container">
-        <h2>❌ Error Generating Itinerary</h2>
+        <h2>Error generating itinerary</h2>
         <p>{itinerary?.error || itinerary?.message || 'Unknown error occurred'}</p>
       </div>
     );
@@ -27,10 +27,9 @@ function ItineraryDisplay({ data }) {
     alternatives,
     warnings = [],
     route = {},
-    transportation = {}
+    transportation = {},
+    tripPhases = {}
   } = itinerary;
-
-  const budgetStatus = summary?.budgetStatus === 'WITHIN_BUDGET' ? '✅' : '⚠️';
 
   const formatINR = (value) => {
     if (value == null || Number.isNaN(Number(value))) return '-';
@@ -44,7 +43,7 @@ function ItineraryDisplay({ data }) {
   return (
     <div className="itinerary-container">
       <div className="itinerary-header">
-        <h2>✈️ Your Personalized Travel Itinerary</h2>
+        <h2>Your personalized travel itinerary</h2>
         <div className="trip-summary">
           <div className="summary-item">
             <span className="label">Destination:</span>
@@ -61,16 +60,54 @@ function ItineraryDisplay({ data }) {
           <div className="summary-item">
             <span className="label">Estimated Cost:</span>
             <span className={`value ${summary.withinBudget ? 'within' : 'over'}`}>
-              {budgetStatus} {formatINR(estimatedCosts.total)}
+              {formatINR(estimatedCosts.total)}
             </span>
           </div>
+          {summary.arrivalDay && (
+            <div className="summary-item">
+              <span className="label">Reach Destination:</span>
+              <span className="value">Day {summary.arrivalDay} {summary.arrivalDate && `(${summary.arrivalDate})`}</span>
+            </div>
+          )}
         </div>
       </div>
+
+      {tripPhases && (tripPhases.onwardJourney || tripPhases.destinationStay || tripPhases.returnJourney) && (
+        <div className="route-section">
+          <h3>Trip phases</h3>
+          <div className="stops-list">
+            {tripPhases.onwardJourney && (
+              <div className="stop-card">
+                <h5>Onward Journey</h5>
+                <p><strong>Days:</strong> {tripPhases.onwardJourney.days}</p>
+                <p><strong>Route:</strong> {tripPhases.onwardJourney.route?.from} to {tripPhases.onwardJourney.route?.to}</p>
+                <p><strong>Attractions:</strong> {tripPhases.onwardJourney.attractions?.length || 0}</p>
+              </div>
+            )}
+            {tripPhases.destinationStay && (
+              <div className="stop-card">
+                <h5>Destination Stay</h5>
+                <p><strong>Days:</strong> {tripPhases.destinationStay.days}</p>
+                <p><strong>Arrival:</strong> Day {tripPhases.destinationStay.arrivalDay} {tripPhases.destinationStay.arrivalDate && `(${tripPhases.destinationStay.arrivalDate})`}</p>
+                <p><strong>Plans:</strong> {tripPhases.destinationStay.activities?.length || 0}</p>
+              </div>
+            )}
+            {tripPhases.returnJourney && (
+              <div className="stop-card">
+                <h5>Return Journey</h5>
+                <p><strong>Days:</strong> {tripPhases.returnJourney.days}</p>
+                <p><strong>Route:</strong> {tripPhases.returnJourney.route?.from} to {tripPhases.returnJourney.route?.to}</p>
+                <p><strong>New Attractions:</strong> {tripPhases.returnJourney.attractions?.length || 0}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Route Planning Section */}
       {route.primaryRoute && (
         <div className="route-section">
-          <h3>🗺️ Route Planning</h3>
+          <h3>Round-trip route planning</h3>
           <div className="route-info">
             <div className="route-primary">
               <h4>Primary Route</h4>
@@ -92,11 +129,13 @@ function ItineraryDisplay({ data }) {
                       <h5>{stop.name}</h5>
                       <div className="stop-details">
                         <span className="category">{stop.category}</span>
-                        <span className="rating">⭐ {stop.rating}/5</span>
+                        <span className="rating">{stop.rating}/5</span>
                       </div>
                       <div className="stop-meta">
-                        <p><strong>Distance from route:</strong> {stop.distance} km</p>
-                        <p><strong>Visit time:</strong> {stop.visitTime} hours</p>
+                        <p><strong>Phase:</strong> {stop.phase || 'Route stop'}</p>
+                        <p><strong>Distance from route:</strong> {stop.distanceFromRouteKm || stop.distance} km</p>
+                        <p><strong>Visit time:</strong> {stop.suggestedVisitDuration || `${stop.visitTime} hours`}</p>
+                        {stop.reason && <p><strong>Why:</strong> {stop.reason}</p>}
                       </div>
                     </div>
                   ))}
@@ -109,7 +148,7 @@ function ItineraryDisplay({ data }) {
 
       {warnings.length > 0 && (
         <div className="warnings-section">
-          <h3>⚠️ Important Notes</h3>
+          <h3>Important notes</h3>
           {warnings.map((warning, idx) => (
             <p key={idx} className="warning-item">{warning}</p>
           ))}
@@ -122,32 +161,32 @@ function ItineraryDisplay({ data }) {
           className={`tab ${activeTab === 'overview' ? 'active' : ''}`}
           onClick={() => setActiveTab('overview')}
         >
-          📊 Overview
+          Overview
         </button>
         <button
           className={`tab ${activeTab === 'costs' ? 'active' : ''}`}
           onClick={() => setActiveTab('costs')}
         >
-          💰 Cost Breakdown
+          Cost breakdown
         </button>
         <button
           className={`tab ${activeTab === 'itinerary' ? 'active' : ''}`}
           onClick={() => setActiveTab('itinerary')}
         >
-          📅 Day-by-Day
+          Day by day
         </button>
         <button
           className={`tab ${activeTab === 'tips' ? 'active' : ''}`}
           onClick={() => setActiveTab('tips')}
         >
-          💡 Money Tips
+          Money tips
         </button>
         {data.recommendations && (Object.keys(data.recommendations).length > 0) && (
           <button
             className={`tab ${activeTab === 'recommendations' ? 'active' : ''}`}
             onClick={() => setActiveTab('recommendations')}
           >
-            ✨ Recommendations
+            Recommendations
           </button>
         )}
         {alternatives && alternatives.length > 0 && (
@@ -155,7 +194,7 @@ function ItineraryDisplay({ data }) {
             className={`tab ${activeTab === 'alternatives' ? 'active' : ''}`}
             onClick={() => setActiveTab('alternatives')}
           >
-            🔄 Alternatives
+            Alternatives
           </button>
         )}
       </div>
@@ -204,10 +243,10 @@ function ItineraryDisplay({ data }) {
             <div className="accommodation-info">
               <h3>🏨 Accommodation Details</h3>
               <div className="info-card">
-                <p><strong>Type:</strong> {costBreakdown.accommodation.type}</p>
-                <p><strong>Cost per Night:</strong> {formatINR(costBreakdown.accommodation.perNight)}</p>
-                <p><strong>Number of Nights:</strong> {costBreakdown.accommodation.nights}</p>
-                <p><strong>Total:</strong> {formatINR(costBreakdown.accommodation.total)}</p>
+                <p><strong>Type:</strong> {costBreakdown.accommodation?.type || costBreakdown.accommodation?.accommodationType || 'N/A'}</p>
+                <p><strong>Cost per Night:</strong> {formatINR(costBreakdown.accommodation?.perNight || costBreakdown.accommodation?.costPerNight)}</p>
+                <p><strong>Number of Nights:</strong> {costBreakdown.accommodation?.nights || costBreakdown.accommodation?.numNights || 0}</p>
+                <p><strong>Total:</strong> {formatINR(costBreakdown.accommodation?.total || costBreakdown.accommodation?.totalCost)}</p>
               </div>
 
               {accommodationSuggestions && (
@@ -225,9 +264,9 @@ function ItineraryDisplay({ data }) {
             <div className="food-info">
               <h3>🍽️ Food & Dining Estimates</h3>
               <div className="info-card">
-                <p><strong>Daily Food Budget:</strong> {formatINR(costBreakdown.food.dailyTotal)}</p>
-                <p><strong>Breakdown:</strong> Breakfast {formatINR(costBreakdown.food.breakfast)} | Lunch {formatINR(costBreakdown.food.lunch)} | Dinner {formatINR(costBreakdown.food.dinner)}</p>
-                <p><strong>Trip Total:</strong> {formatINR(costBreakdown.food.tripTotal)}</p>
+                <p><strong>Daily Food Budget:</strong> {formatINR(costBreakdown.food?.dailyTotal || costBreakdown.food?.perPersonPerDay)}</p>
+                <p><strong>Breakdown:</strong> Breakfast {formatINR(costBreakdown.food?.breakfast || costBreakdown.food?.breakdown?.breakfast)} | Lunch {formatINR(costBreakdown.food?.lunch || costBreakdown.food?.breakdown?.lunch)} | Dinner {formatINR(costBreakdown.food?.dinner || costBreakdown.food?.breakdown?.dinner)}</p>
+                <p><strong>Trip Total:</strong> {formatINR(costBreakdown.food?.tripTotal || costBreakdown.food?.totalCost)}</p>
               </div>
 
               {foodRecommendations && (
@@ -252,7 +291,7 @@ function ItineraryDisplay({ data }) {
             <div className="cost-detail-cards">
               {/* Transportation Cost Details */}
               <div className="cost-detail-card">
-                <h4>🚗 Transportation</h4>
+                <h4>Transportation</h4>
                 {transportation.mode ? (
                   <div>
                     <p className="mode"><strong>Mode:</strong> {transportation.mode}</p>
@@ -277,7 +316,7 @@ function ItineraryDisplay({ data }) {
 
               {/* Accommodation Cost Details */}
               <div className="cost-detail-card">
-                <h4>🏨 Accommodation</h4>
+                <h4>Accommodation</h4>
                 <table>
                   <tbody>
                     <tr>
@@ -306,7 +345,7 @@ function ItineraryDisplay({ data }) {
 
               {/* Food Cost Details */}
               <div className="cost-detail-card">
-                <h4>🍽️ Food</h4>
+                <h4>Food</h4>
                 <table>
                   <tbody>
                     <tr>
@@ -338,7 +377,7 @@ function ItineraryDisplay({ data }) {
               {/* Activities Cost Details */}
               {costBreakdown.activities?.breakdown && costBreakdown.activities.breakdown.length > 0 && (
                 <div className="cost-detail-card">
-                  <h4>🎭 Activities & Entry Fees</h4>
+                  <h4>Activities and entry fees</h4>
                   <div className="activities-breakdown">
                     {costBreakdown.activities.breakdown.map((activity, idx) => (
                       <div key={idx} className="activity-cost-item">
@@ -355,7 +394,7 @@ function ItineraryDisplay({ data }) {
 
               {/* Miscellaneous Costs */}
               <div className="cost-detail-card">
-                <h4>🎒 Miscellaneous</h4>
+                <h4>Miscellaneous</h4>
                 <p><strong>Amount:</strong> {formatINR(costBreakdown.miscellaneous?.amount || estimatedCosts.miscellaneous)}</p>
                 <p className="misc-description">{costBreakdown.miscellaneous?.description || 'Emergency funds, local transport, tips, and miscellaneous expenses'}</p>
               </div>
@@ -379,7 +418,7 @@ function ItineraryDisplay({ data }) {
                   <p><strong>Your Budget:</strong> {formatINR(summary.originalBudget)}</p>
                   <p><strong>Estimated Cost:</strong> {formatINR(estimatedCosts.total)}</p>
                   <p className={`budget-status ${summary.withinBudget ? 'within' : 'over'}`}>
-                    {summary.withinBudget ? '✅ Within Budget' : `⚠️ Over Budget by ${formatINR(estimatedCosts.total - summary.originalBudget)}`}
+                    {summary.withinBudget ? 'Within budget' : `Over budget by ${formatINR(estimatedCosts.total - summary.originalBudget)}`}
                   </p>
                 </div>
               </div>
@@ -390,7 +429,7 @@ function ItineraryDisplay({ data }) {
         {/* Itinerary Tab */}
         {activeTab === 'itinerary' && (
           <div className="itinerary-section">
-            <h3>📅 Day-by-Day Itinerary</h3>
+            <h3>Day-by-day itinerary</h3>
             <div className="day-plans">
               {dayPlans && dayPlans.map((day) => (
                 <div
@@ -399,7 +438,8 @@ function ItineraryDisplay({ data }) {
                   onClick={() => setExpandedDay(expandedDay === day.day ? null : day.day)}
                 >
                   <div className="day-header">
-                    <h4>Day {day.day}</h4>
+                    <h4>Day {day.day}{day.phase ? ` - ${day.phase}` : ''}</h4>
+                    {day.date && <span className="day-date">{day.date}</span>}
                     <span className="expand-icon">{expandedDay === day.day ? '▼' : '▶'}</span>
                   </div>
                   {expandedDay === day.day && (
@@ -428,7 +468,7 @@ function ItineraryDisplay({ data }) {
         {/* Tips Tab */}
         {activeTab === 'tips' && (
           <div className="tips-section">
-            <h3>💡 Money-Saving Tips for Students</h3>
+            <h3>Money-saving tips for students</h3>
             <div className="tips-list">
               {moneyTips && moneyTips.map((tip, idx) => (
                 <div key={idx} className="tip-item">
@@ -442,11 +482,11 @@ function ItineraryDisplay({ data }) {
         {/* Recommendations Tab */}
         {activeTab === 'recommendations' && data.recommendations && (
           <div className="recommendations-section">
-            <h3>✨ Personalized Recommendations</h3>
+            <h3>Personalized recommendations</h3>
             
             {data.recommendations.bestTime && (
               <div className="best-time-card">
-                <h4>🗓️ Best Time to Visit {summary.destination}</h4>
+                <h4>Best time to visit {summary.destination}</h4>
                 <div className="seasons-grid">
                   {Object.entries(data.recommendations.bestTime).map(([season, info]) => (
                     <div key={season} className="season-card">
@@ -463,11 +503,11 @@ function ItineraryDisplay({ data }) {
 
             {data.recommendations.companionSuggestions && (
               <div className="companion-suggestions">
-                <h4>👥 Activities Perfect for Your Group Type</h4>
+                <h4>Activities for your group type</h4>
                 <div className="suggestions-list">
                   {data.recommendations.companionSuggestions.map((suggestion, idx) => (
                     <div key={idx} className="suggestion-item">
-                      <p>✈️ {suggestion}</p>
+                      <p>{suggestion}</p>
                     </div>
                   ))}
                 </div>
@@ -476,11 +516,11 @@ function ItineraryDisplay({ data }) {
 
             {data.recommendations.groupActivities && (
               <div className="group-activities">
-                <h4>🎉 Group-Specific Experiences</h4>
+                <h4>Group-specific experiences</h4>
                 <div className="activities-list">
                   {data.recommendations.groupActivities.map((activity, idx) => (
                     <div key={idx} className="activity-item">
-                      <p>🎯 {activity}</p>
+                      <p>{activity}</p>
                     </div>
                   ))}
                 </div>
@@ -492,7 +532,7 @@ function ItineraryDisplay({ data }) {
         {/* Alternatives Tab */}
         {activeTab === 'alternatives' && alternatives && alternatives.length > 0 && (
           <div className="alternatives-section">
-            <h3>🔄 Alternative Plans to Fit Your Budget</h3>
+            <h3>Alternative plans to fit your budget</h3>
             <div className="alternatives-cards">
               {alternatives.map((alt, idx) => (
                 <div key={idx} className="alternative-card">

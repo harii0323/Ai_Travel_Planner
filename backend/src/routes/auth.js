@@ -2,9 +2,21 @@
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 
 const router = express.Router();
+
+const requireDatabase = (res) => {
+  if (mongoose.connection.readyState === 1) {
+    return true;
+  }
+
+  res.status(503).json({
+    error: 'Database is not connected. Please check MONGODB_URI and restart the backend.'
+  });
+  return false;
+};
 
 // Generate JWT token
 const generateToken = (userId) => {
@@ -18,6 +30,8 @@ const generateToken = (userId) => {
 // POST /api/auth/register - Register a new user
 router.post('/register', async (req, res) => {
   try {
+    if (!requireDatabase(res)) return;
+
     const { name, email, password, passwordConfirm, travelCompanionType } = req.body;
     
     // Validation
@@ -72,6 +86,8 @@ router.post('/register', async (req, res) => {
 // POST /api/auth/login - User login
 router.post('/login', async (req, res) => {
   try {
+    if (!requireDatabase(res)) return;
+
     const { email, password } = req.body;
     
     // Validation

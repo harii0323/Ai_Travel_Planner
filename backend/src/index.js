@@ -7,9 +7,14 @@ dotenv.config();
 
 const app = express();
 
+const getAllowedOrigins = () => {
+  const configuredOrigins = process.env.FRONTEND_URL || 'http://localhost:3000';
+  return configuredOrigins.split(',').map(origin => origin.trim()).filter(Boolean);
+};
+
 // CORS configuration
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: getAllowedOrigins(),
   credentials: true,
   optionsSuccessStatus: 200
 };
@@ -43,15 +48,35 @@ connectDB();
 const authRouter = require('./routes/auth');
 const itineraryRouter = require('./routes/itinerary');
 const historyRouter = require('./routes/history');
+const placesRouter = require('./routes/places');
+const { validateGoogleMapsApiKey } = require('./utils/googleMapsAPI');
 
 app.use('/api/auth', authRouter);
 app.use('/api/itinerary', itineraryRouter);
 app.use('/api/history', historyRouter);
+app.use('/api/places', placesRouter);
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'Server is running', timestamp: new Date() });
+app.get('/api/health', async (req, res) => {
+  const googleMapsHealth = await validateGoogleMapsApiKey();
+
+  res.json({
+    status: 'Server is running',
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    googleMaps: {
+      ok: googleMapsHealth.ok,
+      status: googleMapsHealth.status,
+      error: googleMapsHealth.error,
+      sampleDistanceKm: googleMapsHealth.distance,
+      sampleDuration: googleMapsHealth.duration
+    },
+    timestamp: new Date()
+  });
 });
+
+// Log Google Maps API key state at startup
+const { hasGoogleMapsAPI } = require('./utils/googleMapsAPI');
+hasGoogleMapsAPI();
 
 // Error handling middleware
 app.use((err, req, res, next) => {
