@@ -4,6 +4,7 @@
 const {
   getDistanceFromGoogleMaps,
   getDirectionsFromGoogleMaps,
+  getRouteFromGoogleRoutesAPI,
   findPlacesNearby,
   searchPlacesByText,
   hasGoogleMapsAPI
@@ -190,10 +191,47 @@ function getPreferredArrivalDay(data, tripStartDate, totalDays) {
   return null;
 }
 
-function buildTripPhases(totalDays, preferredArrivalDay, routeDistanceKm, transportMode, vehicleType) {
+function parseDestinationStayDays(data) {
+  const rawStay =
+    data.destinationStayDays ||
+    data.stayDays ||
+    data.stayDuration ||
+    data.destinationStayDuration;
+
+  if (!rawStay) return null;
+
+  const normalized = String(rawStay).trim().toLowerCase();
+  const customStay = data.customStayDays || data.customDestinationStayDays;
+  const parsed = normalized === 'custom'
+    ? Number.parseInt(customStay, 10)
+    : Number.parseInt(normalized, 10);
+
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function buildTripPhases(totalDays, preferredArrivalDay, routeDistanceKm, transportMode, vehicleType, preferredStayDays = null) {
   const dailyLimitKm = getDailyTravelLimitKm(transportMode, vehicleType);
   const naturalTravelDays = Math.max(1, Math.ceil((routeDistanceKm || dailyLimitKm) / dailyLimitKm));
   const returnDays = Math.min(Math.max(1, naturalTravelDays), Math.max(1, Math.floor(totalDays / 2)));
+
+  if (preferredStayDays !== null && totalDays >= 2) {
+    const destinationStayDays = Math.min(
+      Math.max(0, preferredStayDays),
+      Math.max(0, totalDays - 2)
+    );
+    const remainingTravelDays = Math.max(2, totalDays - destinationStayDays);
+    const adjustedReturnDays = Math.min(returnDays, remainingTravelDays - 1);
+    const onwardDays = Math.max(1, remainingTravelDays - adjustedReturnDays);
+
+    return {
+      onwardDays,
+      destinationStayDays,
+      returnDays: adjustedReturnDays,
+      arrivalDay: onwardDays,
+      dailyTravelLimitKm: dailyLimitKm
+    };
+  }
+
   const defaultArrivalDay = Math.min(totalDays - returnDays, Math.max(2, naturalTravelDays));
   const arrivalDay = Math.min(totalDays - returnDays, preferredArrivalDay || defaultArrivalDay);
   const onwardDays = Math.max(1, arrivalDay);
@@ -1133,6 +1171,528 @@ function getRoutePlaceReason(place, companionType, numberOfTravelers) {
   return `Worth a short detour as a famous ${category} with ${place.rating}/5 rating, ${reviews}, strong visual appeal${preferenceText}.`;
 }
 
+const ROAD_TRIP_CONFIG = {
+  checkpointDistanceKm: 50,
+  checkpointMinKm: 40,
+  checkpointMaxKm: 60,
+  searchRadiusMeters: 25000,
+  maxDistanceFromRouteKm: 25,
+  minRating: 4.2,
+  maxAttractionsPerDay: 3,
+  apiParallelism: 4,
+  maxCategoriesPerCheckpoint: 5,
+  categories: [
+    { label: 'Tourist Attraction', query: 'tourist attraction', priority: 80, interests: ['history', 'photography'] },
+    { label: 'Temple', query: 'famous temple', priority: 82, interests: ['temple', 'history'] },
+    { label: 'Historical Monument', query: 'historical monument', priority: 84, interests: ['history', 'photography'] },
+    { label: 'Waterfall', query: 'waterfall', priority: 92, interests: ['nature', 'adventure', 'photography'] },
+    { label: 'Hill Station', query: 'hill station viewpoint', priority: 88, interests: ['nature', 'photography'] },
+    { label: 'Beach', query: 'beach', priority: 84, interests: ['beaches', 'nature', 'photography'] },
+    { label: 'Lake', query: 'lake tourist spot', priority: 74, interests: ['nature', 'photography'] },
+    { label: 'National Park', query: 'national park', priority: 95, interests: ['wildlife', 'nature'] },
+    { label: 'Museum', query: 'museum', priority: 60, interests: ['history'] },
+    { label: 'Adventure', query: 'adventure place', priority: 78, interests: ['adventure', 'friends'] },
+    { label: 'Wildlife Sanctuary', query: 'wildlife sanctuary', priority: 93, interests: ['wildlife', 'nature'] },
+    { label: 'Scenic Viewpoint', query: 'scenic viewpoint', priority: 90, interests: ['photography', 'nature'] },
+    { label: 'Fort', query: 'fort', priority: 86, interests: ['history', 'photography'] },
+    { label: 'Palace', query: 'palace', priority: 84, interests: ['history', 'photography'] },
+    { label: 'Nature', query: 'nature attraction', priority: 78, interests: ['nature'] },
+    { label: 'Food Destination', query: 'famous food destination', priority: 68, interests: ['food'] }
+  ]
+};
+
+const corridorRouteCache = new Map();
+const corridorPlacesCache = new Map();
+
+function getCacheValue(cache, key, maxAgeMs = 1000 * 60 * 60) {
+  const cached = cache.get(key);
+  if (!cached) return null;
+  if (Date.now() - cached.createdAt > maxAgeMs) {
+    cache.delete(key);
+    return null;
+  }
+  return cached.value;
+}
+
+function setCacheValue(cache, key, value) {
+  cache.set(key, {
+    createdAt: Date.now(),
+    value
+  });
+  return value;
+}
+
+function decodeRoutePolyline(encoded) {
+  if (!encoded) return [];
+
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+  const coordinates = [];
+
+  while (index < encoded.length) {
+    let b;
+    let shift = 0;
+    let result = 0;
+
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = 0;
+    result = 0;
+
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+
+    coordinates.push({
+      lat: lat / 1e5,
+      lng: lng / 1e5
+    });
+  }
+
+  return coordinates;
+}
+
+function enrichRoutePoints(routePoints) {
+  let distanceAlongRoute = 0;
+
+  return routePoints.map((point, index) => {
+    if (index > 0) {
+      distanceAlongRoute += calculateStraightLineDistanceKm(routePoints[index - 1], point) || 0;
+    }
+
+    return {
+      ...point,
+      routeIndex: index,
+      distanceAlongRoute
+    };
+  });
+}
+
+function buildRouteCheckpoints(routePoints, checkpointDistanceKm = ROAD_TRIP_CONFIG.checkpointDistanceKm) {
+  if (!routePoints.length) return [];
+
+  const checkpoints = [];
+  let nextCheckpointKm = checkpointDistanceKm;
+
+  for (const point of routePoints) {
+    const isInteriorPoint =
+      point.routeIndex > 0 &&
+      point.routeIndex < routePoints.length - 1;
+
+    if (isInteriorPoint && point.distanceAlongRoute >= nextCheckpointKm) {
+      checkpoints.push({
+        lat: point.lat,
+        lng: point.lng,
+        routeIndex: point.routeIndex,
+        distanceAlongRoute: Math.round(point.distanceAlongRoute)
+      });
+      nextCheckpointKm += checkpointDistanceKm;
+    }
+  }
+
+  return checkpoints;
+}
+
+function getInterestList(interests) {
+  if (Array.isArray(interests)) {
+    return interests.map(item => String(item).trim().toLowerCase()).filter(Boolean);
+  }
+
+  return String(interests || '')
+    .split(',')
+    .map(item => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function parseRoadTripPreferences({
+  interests,
+  companionType,
+  numberOfTravelers,
+  options = {}
+}) {
+  const maxDetourKm = Number.parseFloat(options.maxDetourKm || options.maximumDetour || options.maxDetour) || ROAD_TRIP_CONFIG.maxDistanceFromRouteKm;
+  const minRating = Number.parseFloat(options.minRating || options.minimumRating) || ROAD_TRIP_CONFIG.minRating;
+  const maxAttractionsPerDay = Number.parseInt(options.maxAttractionsPerDay || options.maximumAttractionsPerDay, 10) || ROAD_TRIP_CONFIG.maxAttractionsPerDay;
+  const avoid = Array.isArray(options.avoid)
+    ? options.avoid
+    : String(options.avoid || options.avoidance || '')
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+
+  return {
+    interests: getInterestList(interests),
+    companionType,
+    numberOfTravelers: Number(numberOfTravelers) || 1,
+    maxDetourKm: Math.min(30, Math.max(10, maxDetourKm)),
+    minRating,
+    maxAttractionsPerDay: Math.max(1, maxAttractionsPerDay),
+    avoid: avoid.map(item => String(item).toLowerCase())
+  };
+}
+
+function getConfiguredCategories(preferences) {
+  const preferred = new Set(preferences.interests || []);
+  const categories = ROAD_TRIP_CONFIG.categories
+    .map(category => ({
+      ...category,
+      preferenceBoost: category.interests.some(interest => preferred.has(interest)) ? 18 : 0
+    }))
+    .sort((a, b) => (b.preferenceBoost + b.priority) - (a.preferenceBoost + a.priority));
+
+  return categories;
+}
+
+function normalizeCandidatePlace(place, category, checkpoint) {
+  const location = place.location || place.geometry?.location;
+  if (!location?.lat || !location?.lng) return null;
+
+  return {
+    placeId: place.placeId || place.place_id || `${place.name}-${location.lat}-${location.lng}`,
+    name: place.name,
+    location,
+    category: category.label,
+    categoryPriority: category.priority + (category.preferenceBoost || 0),
+    rating: place.rating || 0,
+    userRatingsTotal: place.userRatingsTotal || place.user_ratings_total || 0,
+    types: place.types || [],
+    formattedAddress: place.formattedAddress || place.formatted_address || place.vicinity || '',
+    checkpointKm: checkpoint.distanceAlongRoute,
+    checkpointRouteIndex: checkpoint.routeIndex
+  };
+}
+
+function findNearestRoutePoint(placeLocation, routePoints) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+
+  for (const point of routePoints) {
+    const distance = calculateStraightLineDistanceKm(placeLocation, point);
+    if (distance !== null && distance < nearestDistance) {
+      nearestDistance = distance;
+      nearest = point;
+    }
+  }
+
+  return {
+    point: nearest,
+    distanceKm: nearestDistance
+  };
+}
+
+function isAheadOfCheckpoint(candidate, nearestRoutePoint) {
+  if (!nearestRoutePoint) return false;
+  const routeIndexTolerance = 3;
+  const distanceToleranceKm = ROAD_TRIP_CONFIG.checkpointDistanceKm;
+
+  return (
+    nearestRoutePoint.routeIndex >= candidate.checkpointRouteIndex - routeIndexTolerance &&
+    nearestRoutePoint.distanceAlongRoute >= candidate.checkpointKm - distanceToleranceKm
+  );
+}
+
+function calculateVisitDurationMinutes(place) {
+  const durationText = getSuggestedVisitDuration(place);
+  const rangeMatch = String(durationText).match(/(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?/);
+  const hours = rangeMatch
+    ? (Number.parseFloat(rangeMatch[2] || rangeMatch[1]) + Number.parseFloat(rangeMatch[1])) / (rangeMatch[2] ? 2 : 1)
+    : 2;
+
+  return Math.round(hours * 60);
+}
+
+function scoreCorridorPlace(place, preferences) {
+  const ratingScore = Math.min(100, (place.rating / 5) * 100);
+  const reviewScore = Math.min(100, Math.log10((place.userRatingsTotal || 0) + 1) * 25);
+  const detourScore = Math.max(0, 100 - ((place.distanceFromRouteKm || 0) / preferences.maxDetourKm) * 100);
+  const popularityScore = getTouristPopularityScore(place);
+  const categoryScore = Math.min(100, place.categoryPriority || 0);
+  const preferenceScore = getPreferenceMatchScore(place, preferences.companionType, preferences.numberOfTravelers);
+
+  return Math.round((
+    ratingScore * 0.40 +
+    reviewScore * 0.25 +
+    detourScore * 0.20 +
+    popularityScore * 0.10 +
+    categoryScore * 0.05 +
+    preferenceScore
+  ) * 10) / 10;
+}
+
+function buildGoogleMapsLink(place) {
+  const query = place.placeId
+    ? `place_id:${place.placeId}`
+    : `${place.name} ${place.location.lat},${place.location.lng}`;
+
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+function decorateCorridorCandidate(candidate, routePoints, preferences, phase) {
+  const nearest = findNearestRoutePoint(candidate.location, routePoints);
+
+  if (!nearest.point) return null;
+  if (!isAheadOfCheckpoint(candidate, nearest.point)) return null;
+  if (nearest.distanceKm > preferences.maxDetourKm) return null;
+  if ((candidate.rating || 0) < preferences.minRating) return null;
+
+  const detourDistance = Math.round(nearest.distanceKm * 10) / 10;
+  const detourTime = Math.max(8, Math.round((detourDistance * 2 / 35) * 60));
+  const visitDurationMinutes = calculateVisitDurationMinutes(candidate);
+
+  const enriched = {
+    ...candidate,
+    phase,
+    distanceFromRouteKm: detourDistance,
+    detourDistance,
+    detourTime,
+    drivingTime: `${Math.round((nearest.point.distanceAlongRoute / 55) * 10) / 10} hr from route start`,
+    visitDurationMinutes,
+    estimatedVisitTime: `${Math.floor(visitDurationMinutes / 60)} hr ${visitDurationMinutes % 60} min`,
+    totalExtraTimeMinutes: detourTime + visitDurationMinutes,
+    journeyOrder: Math.round(nearest.point.distanceAlongRoute),
+    routePointIndex: nearest.point.routeIndex,
+    googleMapsLink: buildGoogleMapsLink(candidate),
+    imageUrl: null,
+    bestTimeToVisit: getBestTimeToVisit(candidate),
+    suggestedVisitDuration: getSuggestedVisitDuration(candidate)
+  };
+
+  enriched.aiRecommendationScore = scoreCorridorPlace(enriched, preferences);
+  enriched.routeScore = enriched.aiRecommendationScore;
+  enriched.reason = getRoutePlaceReason(enriched, preferences.companionType, preferences.numberOfTravelers);
+
+  return enriched;
+}
+
+function dedupeCorridorPlaces(places) {
+  const byPlaceId = new Map();
+
+  for (const place of places) {
+    const key = place.placeId || place.name.toLowerCase();
+    const existing = byPlaceId.get(key);
+    if (!existing || place.aiRecommendationScore > existing.aiRecommendationScore) {
+      byPlaceId.set(key, place);
+    }
+  }
+
+  return [...byPlaceId.values()];
+}
+
+function optimizeCorridorStops(places, days, preferences) {
+  const maxStops = Math.max(1, days * preferences.maxAttractionsPerDay);
+  const ordered = [...places].sort((a, b) =>
+    a.journeyOrder - b.journeyOrder ||
+    b.aiRecommendationScore - a.aiRecommendationScore
+  );
+
+  const selected = [];
+  let lastOrder = -Infinity;
+
+  for (const place of ordered) {
+    if (selected.length >= maxStops) break;
+
+    const isNearLastStop =
+      selected.length > 0 &&
+      Math.abs(place.journeyOrder - lastOrder) < 20;
+
+    if (isNearLastStop) {
+      const previous = selected[selected.length - 1];
+      if (place.aiRecommendationScore > previous.aiRecommendationScore + 8) {
+        selected[selected.length - 1] = place;
+        lastOrder = place.journeyOrder;
+      }
+      continue;
+    }
+
+    selected.push(place);
+    lastOrder = place.journeyOrder;
+  }
+
+  return selected.sort((a, b) => a.journeyOrder - b.journeyOrder);
+}
+
+async function runLimited(tasks, limit = ROAD_TRIP_CONFIG.apiParallelism) {
+  const results = [];
+
+  for (let index = 0; index < tasks.length; index += limit) {
+    const batch = tasks.slice(index, index + limit);
+    const batchResults = await Promise.all(batch.map(task => task()));
+    results.push(...batchResults);
+  }
+
+  return results;
+}
+
+async function withExponentialBackoff(task, retries = 2, baseDelayMs = 350) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (attempt === retries) break;
+
+      const delay = baseDelayMs * (2 ** attempt);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastError;
+}
+
+async function searchCheckpointCategory(checkpoint, category) {
+  const location = { lat: checkpoint.lat, lng: checkpoint.lng };
+  const cacheKey = `${category.query}:${checkpoint.lat.toFixed(3)},${checkpoint.lng.toFixed(3)}:${ROAD_TRIP_CONFIG.searchRadiusMeters}`;
+  const cached = getCacheValue(corridorPlacesCache, cacheKey);
+  if (cached) return cached;
+
+  const query = `${category.query} near ${checkpoint.lat},${checkpoint.lng}`;
+  const places = await withExponentialBackoff(() =>
+    searchPlacesByText(query, location, ROAD_TRIP_CONFIG.searchRadiusMeters)
+  );
+  const normalized = places
+    .map(place => normalizeCandidatePlace(place, category, checkpoint))
+    .filter(Boolean);
+
+  return setCacheValue(corridorPlacesCache, cacheKey, normalized);
+}
+
+async function getCachedDirections(origin, destination, transportMode, waypoints = [], options = {}) {
+  const cacheKey = JSON.stringify({ origin, destination, transportMode, waypoints, avoid: options.avoid || [] });
+  const cached = getCacheValue(corridorRouteCache, cacheKey, 1000 * 60 * 60 * 6);
+  if (cached) return cached;
+
+  let result = await getRouteFromGoogleRoutesAPI(origin, destination, waypoints, transportMode, {
+    avoid: options.avoid
+  });
+
+  if (result.error) {
+    result = await getDirectionsFromGoogleMaps(origin, destination, waypoints, transportMode, {
+      avoid: options.avoid
+    });
+  }
+
+  return setCacheValue(corridorRouteCache, cacheKey, result);
+}
+
+function getPrimaryPolyline(directionsResult) {
+  return directionsResult?.polyline || directionsResult?.routes?.[0]?.polyline || '';
+}
+
+async function buildCorridorRoutePlan({
+  startLocation,
+  destination,
+  transportMode,
+  numDays,
+  interests,
+  companionType,
+  numberOfTravelers,
+  options = {}
+}) {
+  const phase = options.segmentType === 'return' ? 'Return Journey' : 'Onward Journey';
+  const preferences = parseRoadTripPreferences({
+    interests,
+    companionType,
+    numberOfTravelers,
+    options
+  });
+
+  const directionsResult = await getCachedDirections(startLocation, destination, transportMode, [], preferences);
+
+  if (directionsResult.error) {
+    console.log(`Directions API failed: ${directionsResult.error}`);
+    return await getBestRoutePlan(startLocation, destination, transportMode, numDays);
+  }
+
+  const polyline = getPrimaryPolyline(directionsResult);
+  const routePoints = enrichRoutePoints(decodeRoutePolyline(polyline));
+
+  if (routePoints.length < 2) {
+    return await getBestRoutePlan(startLocation, destination, transportMode, numDays);
+  }
+
+  const checkpoints = buildRouteCheckpoints(routePoints, ROAD_TRIP_CONFIG.checkpointDistanceKm);
+  const categories = getConfiguredCategories(preferences).slice(0, ROAD_TRIP_CONFIG.maxCategoriesPerCheckpoint);
+  const searchTasks = checkpoints.flatMap(checkpoint =>
+    categories.map(category => () => searchCheckpointCategory(checkpoint, category))
+  );
+
+  const searchResults = await runLimited(searchTasks, ROAD_TRIP_CONFIG.apiParallelism);
+  const rawCandidates = searchResults.flat();
+  const excludedPlaceIds = new Set(options.excludePlaceIds || []);
+  const excludedPlaceNames = new Set((options.excludePlaceNames || []).map(name => String(name).toLowerCase()));
+  const validatedPlaces = rawCandidates
+    .filter(place => !excludedPlaceIds.has(place.placeId))
+    .filter(place => !excludedPlaceNames.has(String(place.name || '').toLowerCase()))
+    .map(place => decorateCorridorCandidate(place, routePoints, preferences, phase))
+    .filter(Boolean);
+
+  const dedupedPlaces = dedupeCorridorPlaces(validatedPlaces);
+  const optimizedPlaces = optimizeCorridorStops(dedupedPlaces, numDays, preferences)
+    .map((place, index) => ({
+      ...place,
+      journeyOrder: index + 1,
+      routeSectionKm: place.journeyOrder
+    }));
+
+  const waypoints = optimizedPlaces.map(place => `${place.location.lat},${place.location.lng}`);
+  const optimizedDirections = waypoints.length
+    ? await getCachedDirections(startLocation, destination, transportMode, waypoints, preferences)
+    : null;
+  const routeDistance = optimizedDirections?.distance || directionsResult.distance;
+  const routeDuration = optimizedDirections?.duration || directionsResult.duration;
+  const extraDistance = Math.max(0, (routeDistance || 0) - (directionsResult.distance || 0));
+  const extraTime = optimizedPlaces.reduce((sum, place) => sum + place.totalExtraTimeMinutes, 0);
+
+  return {
+    primaryRoute: {
+      from: startLocation,
+      to: destination,
+      distance: routeDistance,
+      estimatedDuration: routeDuration,
+      transportMode,
+      distanceSource: 'google_route_corridor',
+      mapPolyline: optimizedDirections?.polyline || polyline,
+      encodedPolyline: optimizedDirections?.polyline || polyline,
+      routes: optimizedDirections?.routes || directionsResult.routes || []
+    },
+    intermediateStops: optimizedPlaces,
+    onwardJourney: phase === 'Onward Journey' ? optimizedPlaces : [],
+    returnJourney: phase === 'Return Journey' ? optimizedPlaces : [],
+    totalDistance: routeDistance,
+    totalDuration: routeDuration,
+    extraDistance,
+    extraTime,
+    recommendedStops: optimizedPlaces,
+    mapPolyline: optimizedDirections?.polyline || polyline,
+    routeCoordinates: routePoints,
+    checkpoints,
+    routeSource: 'google_route_corridor',
+    segmentType: options.segmentType || 'route',
+    recommendationStats: {
+      checkpointCount: checkpoints.length,
+      candidateCount: rawCandidates.length,
+      validatedCount: validatedPlaces.length,
+      dedupedCount: dedupedPlaces.length,
+      selectedCount: optimizedPlaces.length,
+      categories: categories.map(category => category.label),
+      maxDetourKm: preferences.maxDetourKm,
+      minRating: preferences.minRating
+    }
+  };
+}
+
 /**
  * Generate dynamic route with places using Google Maps APIs
  * @param {string} startLocation - Starting location
@@ -1145,198 +1705,18 @@ function getRoutePlaceReason(place, companionType, numberOfTravelers) {
  */
 async function generateDynamicRouteWithPlaces(startLocation, destination, transportMode, numDays, interests, budget, companionType = 'solo', numberOfTravelers = 1, options = {}) {
   console.log(`🚀 Generating dynamic route: ${startLocation} → ${destination} (${numDays} days)`);
-  const excludedPlaceIds = new Set(options.excludePlaceIds || []);
-  const excludedPlaceNames = new Set((options.excludePlaceNames || []).map(name => String(name).toLowerCase()));
 
   try {
-    // Step 1: Get primary route using Directions API
-    const directionsResult = await getDirectionsFromGoogleMaps(startLocation, destination, [], transportMode);
-
-    if (directionsResult.error) {
-      console.log(`❌ Directions API failed: ${directionsResult.error}`);
-      // Fallback to existing route logic
-      return await getBestRoutePlan(startLocation, destination, transportMode, numDays);
-    }
-
-    const primaryRoute = {
-      from: startLocation,
-      to: destination,
-      distance: directionsResult.distance,
-      estimatedDuration: directionsResult.duration,
-      transportMode: transportMode,
-      distanceSource: 'google_directions',
-      routes: directionsResult.routes
-    };
-
-    // Step 2: Find interesting places along the route
-    const interestTypes = {
-      'nature': ['park', 'natural_feature', 'waterfall', 'national_park', 'scenic_viewpoint'],
-      'cultural': ['tourist_attraction', 'museum', 'art_gallery', 'historical_site', 'church', 'hindu_temple', 'mosque', 'landmark'],
-      'adventure': ['park', 'natural_feature', 'campground', 'amusement_park', 'waterfall', 'scenic_viewpoint'],
-      'food': ['restaurant', 'food', 'cafe', 'bar'],
-      'shopping': ['shopping_mall', 'store', 'department_store'],
-      'beach': ['beach', 'natural_feature', 'tourist_attraction'],
-      'mountain': ['park', 'natural_feature', 'campground', 'scenic_viewpoint']
-    };
-
-    const userInterests = interests ? interests.split(',').map(i => i.trim().toLowerCase()) : ['cultural', 'nature'];
-    const routeDiscoveryTypes = [
-      'tourist_attraction',
-      'landmark',
-      'scenic_viewpoint',
-      'historical_site',
-      'waterfall',
-      'hindu_temple',
-      'beach',
-      'national_park',
-      'wildlife_sanctuary',
-      'fort',
-      'palace'
-    ];
-    const placeTypes = [
-      ...userInterests.flatMap(interest => interestTypes[interest] || []),
-      ...routeDiscoveryTypes
-    ];
-
-    // Search around sampled points along the route. This favors worthwhile detours
-    // within about 20-40km of the journey instead of places near the source city.
-    const routePlaces = [];
-    const searchRadius = 40000;
-    const searchAnchors = getRouteSearchAnchors(primaryRoute);
-    const routeSearchLocations = searchAnchors.length > 0
-      ? searchAnchors
-      : [{ query: destination, location: null, distanceAlongRoute: primaryRoute.distance }];
-    const uniquePlaceTypes = [...new Set(placeTypes)].slice(0, 10);
-
-    for (const searchSection of routeSearchLocations) {
-      const sectionPlaces = [];
-
-      for (const placeType of uniquePlaceTypes) {
-        const places = await findPlacesNearby(searchSection.query, placeType, searchRadius);
-        sectionPlaces.push(...places.slice(0, 5).map(place => {
-          const distanceFromRouteKm = searchSection.location
-            ? calculateStraightLineDistanceKm(searchSection.location, place.location)
-            : null;
-
-          return {
-            ...place,
-            searchAnchor: searchSection.query,
-            routeSectionKm: searchSection.distanceAlongRoute,
-            distanceFromRouteKm: distanceFromRouteKm === null ? 30 : Math.round(distanceFromRouteKm * 10) / 10
-          };
-        }));
-      }
-
-      const bestSectionPlaces = sectionPlaces
-        .filter(place => place.distanceFromRouteKm >= 20 && place.distanceFromRouteKm <= 40)
-        .filter(isWorthRouteDetour)
-        .map(place => ({
-          ...place,
-          category: getPlaceCategory(place),
-          touristPopularityScore: getTouristPopularityScore(place),
-          routeScore: scoreRoutePlace(place, companionType, numberOfTravelers),
-          preferenceMatchScore: getPreferenceMatchScore(place, companionType, numberOfTravelers)
-        }))
-        .sort((a, b) =>
-          b.touristPopularityScore - a.touristPopularityScore ||
-          (b.rating || 0) - (a.rating || 0) ||
-          (b.userRatingsTotal || 0) - (a.userRatingsTotal || 0) ||
-          (a.distanceFromRouteKm || 99) - (b.distanceFromRouteKm || 99) ||
-          (b.preferenceMatchScore || 0) - (a.preferenceMatchScore || 0)
-        )
-        .slice(0, 2);
-
-      routePlaces.push(...bestSectionPlaces);
-    }
-
-    // Remove duplicates and rank by popularity, rating, reviews, route detour, and preference match.
-    const uniquePlaces = routePlaces
-      .filter((place, index, self) =>
-        index === self.findIndex(p => p.placeId === place.placeId)
-      )
-      .filter(place => !excludedPlaceIds.has(place.placeId))
-      .filter(place => !excludedPlaceNames.has(String(place.name || '').toLowerCase()))
-      .sort((a, b) =>
-        b.touristPopularityScore - a.touristPopularityScore ||
-        (b.rating || 0) - (a.rating || 0) ||
-        (b.userRatingsTotal || 0) - (a.userRatingsTotal || 0) ||
-        (a.distanceFromRouteKm || 99) - (b.distanceFromRouteKm || 99) ||
-        (b.preferenceMatchScore || 0) - (a.preferenceMatchScore || 0)
-      )
-      .slice(0, 8);
-
-    // Step 3: Select optimal places within budget and time constraints
-    const maxStops = Math.min(6, Math.max(2, Math.floor(numDays * 0.75)));
-    const selectedPlaces = [];
-    let totalAdditionalTime = 0;
-    let totalAdditionalDistance = 0;
-
-    for (const place of uniquePlaces.slice(0, maxStops)) {
-      // Estimate detour time and distance within the target 20-40km route-deviation band.
-      const detourDistance = Math.round(place.distanceFromRouteKm || 30);
-      const detourTime = Math.max(45, Math.round((detourDistance * 2 / 35) * 60)); // Round trip at scenic-road pace
-
-      // Check if adding this place would exceed time budget
-      if (totalAdditionalTime + detourTime > numDays * 4 * 60) { // Max 4 hours per day for travel
-        break;
-      }
-
-      selectedPlaces.push({
-        name: place.name,
-        placeId: place.placeId,
-        location: place.location,
-        category: place.category,
-        rating: place.rating,
-        userRatingsTotal: place.userRatingsTotal,
-        types: place.types,
-        distance: detourDistance,
-        distanceFromRouteKm: detourDistance,
-        detourDistance: detourDistance,
-        detourTime: detourTime,
-        routeScore: place.routeScore,
-        touristPopularityScore: place.touristPopularityScore,
-        preferenceMatchScore: place.preferenceMatchScore,
-        bestTimeToVisit: getBestTimeToVisit(place),
-        suggestedVisitDuration: getSuggestedVisitDuration(place),
-        visitTime: Number.parseFloat(getSuggestedVisitDuration(place)) || 2,
-        reason: getRoutePlaceReason(place, companionType, numberOfTravelers)
-      });
-
-      totalAdditionalTime += detourTime;
-      totalAdditionalDistance += detourDistance;
-    }
-
-    // Step 4: Calculate updated route with waypoints
-    let optimizedRoute = primaryRoute;
-    if (selectedPlaces.length > 0) {
-      const waypoints = selectedPlaces.map(place => `${place.location.lat},${place.location.lng}`);
-      const optimizedDirections = await getDirectionsFromGoogleMaps(
-        startLocation,
-        destination,
-        waypoints,
-        transportMode
-      );
-
-      if (!optimizedDirections.error) {
-        optimizedRoute = {
-          ...primaryRoute,
-          distance: optimizedDirections.distance,
-          estimatedDuration: optimizedDirections.duration,
-          waypoints: selectedPlaces,
-          additionalDistance: (optimizedDirections.distance || primaryRoute.distance) - primaryRoute.distance,
-          additionalTime: totalAdditionalTime
-        };
-      }
-    }
-
-    return {
-      primaryRoute: optimizedRoute,
-      intermediateStops: selectedPlaces,
-      totalDistance: optimizedRoute.distance + totalAdditionalDistance,
-      totalDuration: optimizedRoute.estimatedDuration,
-      routeSource: 'google_dynamic',
-      segmentType: options.segmentType || 'route'
-    };
+    return await buildCorridorRoutePlan({
+      startLocation,
+      destination,
+      transportMode,
+      numDays,
+      interests,
+      companionType,
+      numberOfTravelers,
+      options
+    });
 
   } catch (error) {
     console.error('Error in dynamic route generation:', error);
@@ -1358,6 +1738,31 @@ function getStopDetails(stop) {
     suggestedVisitDuration: stop.suggestedVisitDuration,
     phase: stop.phase,
     location: stop.location
+  };
+}
+
+function serializeRoadTripAttraction(stop, fallbackPhase) {
+  return {
+    placeId: stop.placeId,
+    name: stop.name,
+    latitude: stop.location?.lat,
+    longitude: stop.location?.lng,
+    category: stop.category || (stop.types ? stop.types[0] : 'attraction'),
+    googleRating: stop.rating,
+    totalReviews: stop.userRatingsTotal || 0,
+    distanceFromRoute: stop.distanceFromRouteKm || stop.detourDistance || 0,
+    drivingTime: stop.drivingTime,
+    detourDistance: stop.detourDistance || stop.distanceFromRouteKm || 0,
+    detourTime: stop.detourTime || 0,
+    estimatedVisitTime: stop.estimatedVisitTime || stop.suggestedVisitDuration,
+    imageUrl: stop.imageUrl || null,
+    googleMapsLink: stop.googleMapsLink || buildGoogleMapsLink(stop),
+    aiRecommendationScore: stop.aiRecommendationScore || stop.routeScore || 0,
+    journeyOrder: stop.journeyOrder,
+    routeSectionKm: stop.routeSectionKm,
+    phase: stop.phase || fallbackPhase,
+    reason: stop.reason,
+    bestTimeToVisit: stop.bestTimeToVisit
   };
 }
 
@@ -1484,12 +1889,14 @@ async function generateRoundTripRoutePlan({
   companionType,
   numberOfTravelers,
   preferredArrivalDay,
+  preferredStayDays,
   accommodationType,
-  vehicleType
+  vehicleType,
+  plannerOptions = {}
 }) {
   const estimateRoute = await getDirectionsFromGoogleMaps(startLocation, destination, [], transportMode);
   const estimatedDistance = estimateRoute.distance || 350;
-  const phases = buildTripPhases(numDays, preferredArrivalDay, estimatedDistance, transportMode, vehicleType);
+  const phases = buildTripPhases(numDays, preferredArrivalDay, estimatedDistance, transportMode, vehicleType, preferredStayDays);
 
   const onwardRoute = await generateDynamicRouteWithPlaces(
     startLocation,
@@ -1500,7 +1907,7 @@ async function generateRoundTripRoutePlan({
     budget,
     companionType,
     numberOfTravelers,
-    { segmentType: 'onward' }
+    { ...plannerOptions, segmentType: 'onward' }
   );
   onwardRoute.segmentType = 'onward';
   onwardRoute.intermediateStops = (onwardRoute.intermediateStops || []).map(stop => ({ ...stop, phase: 'Onward Journey' }));
@@ -1519,6 +1926,7 @@ async function generateRoundTripRoutePlan({
     companionType,
     numberOfTravelers,
     {
+      ...plannerOptions,
       segmentType: 'return',
       excludePlaceIds: usedPlaceIds,
       excludePlaceNames: usedPlaceNames
@@ -1533,6 +1941,13 @@ async function generateRoundTripRoutePlan({
     ...(returnRoute.intermediateStops || [])
   ];
   const totalDistance = (onwardRoute.totalDistance || 0) + (returnRoute.totalDistance || 0);
+  const extraDistance = (onwardRoute.extraDistance || 0) + (returnRoute.extraDistance || 0);
+  const extraTime = (onwardRoute.extraTime || 0) + (returnRoute.extraTime || 0);
+  const phaseRank = phase => String(phase || '').toLowerCase().includes('return') ? 2 : 1;
+  const recommendedStops = [...allStops].sort((a, b) =>
+    phaseRank(a.phase) - phaseRank(b.phase) ||
+    (a.routeSectionKm || 0) - (b.routeSectionKm || 0)
+  );
 
   return {
     phases,
@@ -1549,6 +1964,10 @@ async function generateRoundTripRoutePlan({
     intermediateStops: allStops,
     totalDistance,
     totalDuration: `${onwardRoute.totalDuration || 'TBD'} onward, ${returnRoute.totalDuration || 'TBD'} return`,
+    extraDistance,
+    extraTime,
+    recommendedStops,
+    mapPolyline: onwardRoute.mapPolyline,
     routeSource: 'google_dynamic_round_trip',
     routeSegments: [
       { phase: 'Onward Journey', ...onwardRoute },
@@ -1574,7 +1993,15 @@ async function generateItinerary(data) {
       vehicleType, // 'car' or 'bike' (for own transport)
       fuelType, // 'petrol', 'diesel', 'electric' (for own transport)
       mileage, // Vehicle mileage (for own transport)
-      vehicleMileage
+      vehicleMileage,
+      maxDetourKm,
+      maximumDetour,
+      minRating,
+      minimumRating,
+      maxAttractionsPerDay,
+      maximumAttractionsPerDay,
+      avoid,
+      avoidance
     } = data;
 
     // Validate inputs
@@ -1586,6 +2013,13 @@ async function generateItinerary(data) {
     const numDays = calculateDays(formatDate(startDate), formatDate(endDate));
     const parsedBudget = parseFloat(budget);
     const preferredArrivalDay = getPreferredArrivalDay(data, startDate, numDays);
+    const preferredStayDays = parseDestinationStayDays(data);
+    const plannerOptions = {
+      maxDetourKm: maxDetourKm || maximumDetour,
+      minRating: minRating || minimumRating,
+      maxAttractionsPerDay: maxAttractionsPerDay || maximumAttractionsPerDay,
+      avoid: avoid || avoidance
+    };
 
     // Allocate budget
     const budgetAllocation = allocateBudget(parsedBudget, numDays);
@@ -1601,8 +2035,10 @@ async function generateItinerary(data) {
       companionType: travelCompanionType,
       numberOfTravelers,
       preferredArrivalDay,
+      preferredStayDays,
       accommodationType: accommodation || 'hostel',
-      vehicleType
+      vehicleType,
+      plannerOptions
     });
 
     // Calculate transport costs based on type
@@ -1757,10 +2193,39 @@ async function generateItinerary(data) {
         additionalTravelTime: routePlan.primaryRoute.additionalTime || 0
       },
 
+      aiRoadTripPlan: {
+        onwardJourney: (routePlan.onwardRoute.intermediateStops || [])
+          .map(stop => serializeRoadTripAttraction(stop, 'Onward')),
+        destination: {
+          name: destination,
+          stayDays: routePlan.phases.destinationStayDays,
+          arrivalDay: routePlan.phases.arrivalDay,
+          arrivalDate: formatDate(addDays(startDate, routePlan.phases.arrivalDay - 1)),
+          activities: destinationStayPlan
+        },
+        returnJourney: (routePlan.returnRoute.intermediateStops || [])
+          .map(stop => serializeRoadTripAttraction(stop, 'Return')),
+        totalDistance: routePlan.totalDistance,
+        totalDuration: routePlan.totalDuration,
+        extraDistance: routePlan.extraDistance || 0,
+        extraTime: routePlan.extraTime || 0,
+        recommendedStops: (routePlan.recommendedStops || routePlan.intermediateStops || [])
+          .map(stop => serializeRoadTripAttraction(stop, stop.phase)),
+        mapPolyline: routePlan.mapPolyline || routePlan.onwardRoute.mapPolyline,
+        routeStats: {
+          onward: routePlan.onwardRoute.recommendationStats,
+          return: routePlan.returnRoute.recommendationStats
+        }
+      },
+
       route: {
         primaryRoute: routePlan.primaryRoute,
         intermediateStops: routePlan.intermediateStops,
-        routeSegments: routePlan.routeSegments
+        routeSegments: routePlan.routeSegments,
+        mapPolyline: routePlan.mapPolyline,
+        recommendedStops: routePlan.recommendedStops,
+        extraDistance: routePlan.extraDistance,
+        extraTime: routePlan.extraTime
       },
 
       tripPhases: {

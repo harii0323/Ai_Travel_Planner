@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import '../styles/ItineraryDisplay.css';
+import RouteMap from './RouteMap';
 
 function ItineraryDisplay({ data }) {
   const [activeTab, setActiveTab] = useState('overview');
@@ -108,6 +109,7 @@ function ItineraryDisplay({ data }) {
       {route.primaryRoute && (
         <div className="route-section">
           <h3>Round-trip route planning</h3>
+          <RouteMap route={route} />
           <div className="route-info">
             <div className="route-primary">
               <h4>Primary Route</h4>
