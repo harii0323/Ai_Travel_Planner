@@ -4,7 +4,7 @@ pipeline {
   environment {
     APP_VERSION = "${env.BUILD_NUMBER}"
     FRONTEND_URL = credentials('ai-travel-frontend-url')
-    MONGODB_URI = credentials('ai-travel-mongodb-uri')
+    DATABASE_URL = credentials('ai-travel-postgres-url')
     JWT_SECRET = credentials('ai-travel-jwt-secret')
     GOOGLE_MAPS_API_KEY = credentials('ai-travel-google-maps-api-key')
   }
@@ -70,7 +70,7 @@ pipeline {
 NODE_ENV=production
 PORT=5000
 FRONTEND_URL=${FRONTEND_URL}
-MONGODB_URI=${MONGODB_URI}
+DATABASE_URL=${DATABASE_URL}
 JWT_SECRET=${JWT_SECRET}
 GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
 EOF

@@ -11,6 +11,8 @@ function ItineraryForm({ onSubmit }) {
     startLocation: '',
     destination: '',
     activities: '',
+    preferredPlaceType: '',
+    travelStyle: 'balanced',
     accommodation: 'hostel',
     transport: 'bus',
     destinationArrivalDay: '',
@@ -31,7 +33,31 @@ function ItineraryForm({ onSubmit }) {
     { label: 'Adventure (Hiking, Rock climbing, Kayaking)', value: 'adventure' },
     { label: 'Cultural (Museums, Temples, Street art)', value: 'cultural' },
     { label: 'Food (Street food, Cooking classes, Markets)', value: 'food' },
-    { label: 'Nature (Beaches, Parks, Waterfalls)', value: 'nature' }
+    { label: 'Nature (Beaches, Parks, Waterfalls)', value: 'nature' },
+    { label: 'Trekking', value: 'trekking' },
+    { label: 'Camping', value: 'camping' },
+    { label: 'Wildlife and forests', value: 'wildlife' },
+    { label: 'Photography and scenic views', value: 'photography' },
+    { label: 'Snow destinations', value: 'snow' },
+    { label: 'Relaxation and resorts', value: 'relaxation' }
+  ];
+
+  const placeTypeOptions = [
+    { label: 'Any place type', value: '' },
+    { label: 'Mountains', value: 'mountain' },
+    { label: 'Beaches', value: 'beach' },
+    { label: 'Forests and wildlife', value: 'wildlife' },
+    { label: 'Historical and cultural', value: 'heritage' },
+    { label: 'Resorts and relaxation', value: 'resort' },
+    { label: 'Adventure locations', value: 'adventure' }
+  ];
+
+  const travelStyleOptions = [
+    { label: 'Balanced', value: 'balanced' },
+    { label: 'Relaxed', value: 'relaxed' },
+    { label: 'Adventure-heavy', value: 'adventure' },
+    { label: 'Sightseeing-heavy', value: 'sightseeing' },
+    { label: 'Budget-first', value: 'budget' }
   ];
 
   const accommodationOptions = [
@@ -342,6 +368,52 @@ function ItineraryForm({ onSubmit }) {
                 <span>{option.label}</span>
               </label>
             ))}
+          </div>
+        </div>
+
+        {/* Planning Preferences Section */}
+        <div className="form-section">
+          <h3>Place and Activity Planning</h3>
+          <p className="section-info">Weather is analyzed automatically for your travel dates and used to schedule safe activities.</p>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label htmlFor="preferredPlaceType">
+                Preferred Place Type
+                <span className="tooltip">Mountains, beaches, forests, culture, or similar</span>
+              </label>
+              <select
+                id="preferredPlaceType"
+                name="preferredPlaceType"
+                value={form.preferredPlaceType}
+                onChange={handleChange}
+              >
+                {placeTypeOptions.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="travelStyle">
+                Travel Style
+                <span className="tooltip">Adjusts the recommendation balance</span>
+              </label>
+              <select
+                id="travelStyle"
+                name="travelStyle"
+                value={form.travelStyle}
+                onChange={handleChange}
+              >
+                {travelStyleOptions.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 

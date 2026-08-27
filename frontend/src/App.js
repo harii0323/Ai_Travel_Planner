@@ -108,6 +108,24 @@ function App() {
     }
   };
 
+  const handleSelectItinerary = async (id) => {
+    setSelectedItineraryId(id);
+    setCurrentPage('planner');
+    setLoading(true);
+    setError(null);
+    setItinerary(null);
+
+    try {
+      const res = await api.get(`/api/history/${id}`);
+      setItinerary(res.data.itinerary || res.data);
+    } catch (err) {
+      console.error(err);
+      setError(err.response?.data?.error || 'Failed to load itinerary details. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Render Authentication Pages
   if (!isAuthenticated) {
     if (authMode === 'register') {
@@ -156,6 +174,7 @@ function App() {
               onClick={() => {
                 setCurrentPage('planner');
                 setItinerary(null);
+                setSelectedItineraryId(null);
               }}
             >
               Plan Trip
@@ -201,12 +220,16 @@ function App() {
           <div className="planner-container">
             <header className="planner-header">
               <p className="eyebrow">AI itinerary builder</p>
-              <h2>Create a travel plan that fits your budget</h2>
-              <p>Choose the dates, route, comfort level, and group size. VISTA will shape the itinerary around your constraints.</p>
+              <h2>{selectedItineraryId ? 'Review and edit your travel plan' : 'Create a travel plan that fits your budget'}</h2>
+              <p>
+                {selectedItineraryId
+                  ? 'Open Edit places to replace stops you do not want and add places you care about.'
+                  : 'Choose the dates, route, comfort level, and group size. VISTA will shape the itinerary around your constraints.'}
+              </p>
             </header>
 
             <div className="planner-content">
-              <ItineraryForm onSubmit={handlePlannerSubmit} />
+              {!selectedItineraryId && <ItineraryForm onSubmit={handlePlannerSubmit} />}
 
               {loading && (
                 <div className="loading-container">
@@ -229,10 +252,7 @@ function App() {
         )}
 
         {currentPage === 'history' && (
-          <History onSelectItinerary={(id) => {
-            setSelectedItineraryId(id);
-            setCurrentPage('planner');
-          }} />
+          <History onSelectItinerary={handleSelectItinerary} />
         )}
 
         {currentPage === 'profile' && (

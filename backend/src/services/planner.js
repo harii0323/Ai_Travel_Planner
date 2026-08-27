@@ -1,4 +1,5 @@
 // AI Travel Planner Service - Comprehensive Route Planning with Cost Estimation
+const axios = require('axios');
 
 // Import Google Maps API utility
 const {
@@ -170,6 +171,26 @@ function getDailyTravelLimitKm(transportMode, vehicleType) {
   if (mode === 'flight') return 700;
 
   return 350;
+}
+
+function getDailyTravelMinutesLimit(transportMode, vehicleType) {
+  const mode = String(transportMode || '').toLowerCase();
+
+  if (mode === 'owntransport' && vehicleType === 'bike') return 5.5 * 60;
+  if (mode === 'owntransport') return 7 * 60;
+  if (mode === 'bus') return 7 * 60;
+  if (mode === 'train') return 8 * 60;
+  if (mode === 'flight') return 6 * 60;
+
+  return 7 * 60;
+}
+
+function getDailySightseeingMinutesLimit(transportMode, vehicleType) {
+  const mode = String(transportMode || '').toLowerCase();
+
+  if (mode === 'owntransport' && vehicleType === 'bike') return 3 * 60;
+  if (mode === 'owntransport') return 4 * 60;
+  return 4.5 * 60;
 }
 
 function getPreferredArrivalDay(data, tripStartDate, totalDays) {
@@ -1167,8 +1188,11 @@ function getRoutePlaceReason(place, companionType, numberOfTravelers) {
   const reviews = place.userRatingsTotal ? `${place.userRatingsTotal} reviews` : 'strong visitor interest';
   const preferenceScore = getPreferenceMatchScore(place, companionType, numberOfTravelers);
   const preferenceText = preferenceScore >= 16 ? ' and fits your traveler group' : '';
+  const climateText = place.climateRecommendation
+    ? ` Climate status: ${place.climateRecommendation.currentClimate}; season-climate score ${place.climateRecommendation.seasonClimateSuitabilityScore}%.`
+    : '';
 
-  return `Worth a short detour as a famous ${category} with ${place.rating}/5 rating, ${reviews}, strong visual appeal${preferenceText}.`;
+  return `Worth a short detour as a famous ${category} with ${place.rating}/5 rating, ${reviews}, strong visual appeal${preferenceText}.${climateText}`;
 }
 
 const ROAD_TRIP_CONFIG = {
@@ -1178,7 +1202,11 @@ const ROAD_TRIP_CONFIG = {
   searchRadiusMeters: 25000,
   maxDistanceFromRouteKm: 25,
   minRating: 4.2,
-  maxAttractionsPerDay: 3,
+  maxAttractionsPerDay: 2,
+  maxHighRiskStopsPerSegment: 1,
+  minimumStopSpacingKm: 35,
+  minimumGenericStopReviews: 100,
+  routeStartEndBufferKm: 35,
   apiParallelism: 4,
   maxCategoriesPerCheckpoint: 5,
   categories: [
@@ -1314,6 +1342,483 @@ function getInterestList(interests) {
     .filter(Boolean);
 }
 
+function normalizePreferenceText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getTravelMonthName(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString('en-US', { month: 'long' });
+}
+
+function getIndianSeason(date) {
+  const month = (date instanceof Date && !Number.isNaN(date.getTime()))
+    ? date.getMonth() + 1
+    : new Date().getMonth() + 1;
+
+  if ([12, 1, 2].includes(month)) return 'Winter';
+  if ([3, 4, 5].includes(month)) return 'Summer';
+  if ([6, 7, 8, 9].includes(month)) return 'Monsoon';
+  return 'Post-monsoon';
+}
+
+function getRegionalClimateProfile(place, date) {
+  const season = getIndianSeason(date);
+  const categoryText = [
+    place.category,
+    ...(place.categories || []),
+    ...(place.types || [])
+  ].join(' ').toLowerCase();
+  const nameText = `${place.name || ''} ${place.formattedAddress || ''}`.toLowerCase();
+  const isMountain = /hill|mountain|snow|valley|peak|leh|ladakh|manali|shimla|darjeeling|sikkim|tawang/.test(`${categoryText} ${nameText}`);
+  const isBeach = /beach|coast|sea|island|backwater|water-sports|goa|puri|andaman|lakshadweep/.test(`${categoryText} ${nameText}`);
+  const isDesert = /desert|jaisalmer|kutch|rajasthan/.test(`${categoryText} ${nameText}`);
+
+  let temperatureRange = '18-30 C';
+  let rainfallProbability = 20;
+  let humidity = 55;
+  let windKph = 12;
+
+  if (season === 'Winter') {
+    temperatureRange = isMountain ? '2-15 C' : isDesert ? '10-24 C' : isBeach ? '22-31 C' : '12-26 C';
+    rainfallProbability = isMountain ? 18 : 8;
+    humidity = isBeach ? 68 : 45;
+  } else if (season === 'Summer') {
+    temperatureRange = isMountain ? '12-26 C' : isBeach ? '27-34 C' : isDesert ? '30-43 C' : '28-40 C';
+    rainfallProbability = isMountain ? 22 : 12;
+    humidity = isBeach ? 76 : 42;
+  } else if (season === 'Monsoon') {
+    temperatureRange = isMountain ? '14-24 C' : isBeach ? '25-31 C' : '24-32 C';
+    rainfallProbability = isDesert ? 35 : isBeach ? 78 : 68;
+    humidity = isDesert ? 58 : 82;
+    windKph = isBeach ? 24 : 16;
+  } else {
+    temperatureRange = isMountain ? '10-22 C' : isBeach ? '24-32 C' : '20-32 C';
+    rainfallProbability = isMountain ? 25 : 22;
+    humidity = isBeach ? 70 : 60;
+  }
+
+  return {
+    season,
+    temperatureRange,
+    rainfallProbability,
+    humidity,
+    windKph,
+    alerts: [],
+    source: 'seasonal_estimate'
+  };
+}
+
+function parseTemperatureRange(rangeText) {
+  const matches = String(rangeText || '').match(/-?\d+/g);
+  if (!matches || matches.length === 0) return { min: 20, max: 30 };
+  const min = Number(matches[0]);
+  const max = Number(matches[1] || matches[0]);
+  return { min: Math.min(min, max), max: Math.max(min, max) };
+}
+
+function scoreTemperatureSafety(temperatureRange) {
+  const actual = parseTemperatureRange(temperatureRange);
+  const midpoint = (actual.min + actual.max) / 2;
+
+  if (midpoint >= 12 && midpoint <= 30) return 94;
+  if (midpoint >= 5 && midpoint < 12) return 76;
+  if (midpoint > 30 && midpoint <= 35) return 72;
+  if (midpoint > 35 && midpoint <= 40) return 48;
+  if (midpoint >= -2 && midpoint < 5) return 50;
+
+  return 28;
+}
+
+function getPlaceKeywordText(place) {
+  return [
+    place.name,
+    place.category,
+    place.formattedAddress,
+    ...(place.categories || []),
+    ...(place.types || [])
+  ].join(' ').toLowerCase();
+}
+
+function getActivityAvailabilityScore(place, preferences, climate) {
+  const text = getPlaceKeywordText(place);
+  const interests = preferences.interests || [];
+  let score = interests.length ? 50 : 72;
+
+  const activityMap = {
+    trekking: ['trek', 'hill', 'mountain', 'valley', 'peak', 'nature'],
+    camping: ['camp', 'forest', 'hill', 'mountain', 'lake', 'adventure'],
+    adventure: ['adventure', 'trek', 'waterfall', 'rafting', 'climb', 'park'],
+    nature: ['nature', 'forest', 'waterfall', 'lake', 'wildlife', 'hill'],
+    wildlife: ['wildlife', 'sanctuary', 'national park', 'safari'],
+    beach: ['beach', 'coast', 'sea', 'island', 'water-sports'],
+    beaches: ['beach', 'coast', 'sea', 'island', 'water-sports'],
+    snow: ['snow', 'mountain', 'hill'],
+    cultural: ['culture', 'heritage', 'temple', 'palace', 'fort', 'museum'],
+    history: ['history', 'heritage', 'temple', 'palace', 'fort', 'museum'],
+    photography: ['viewpoint', 'waterfall', 'lake', 'mountain', 'landscape', 'palace']
+  };
+
+  for (const interest of interests) {
+    const keywords = activityMap[interest] || [interest];
+    if (keywords.some(keyword => text.includes(keyword))) score += 14;
+  }
+
+  if (preferences.preferredPlaceType && text.includes(normalizePreferenceText(preferences.preferredPlaceType))) {
+    score += 12;
+  }
+
+  if ((climate.rainfallProbability || 0) > 65 && interests.some(item => ['trekking', 'camping', 'adventure', 'beach', 'beaches'].includes(item))) {
+    score -= 28;
+  }
+  if ((climate.windKph || 0) > 35 && interests.some(item => ['camping', 'beach', 'beaches'].includes(item))) {
+    score -= 20;
+  }
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function getWeatherCondition(climate) {
+  const temps = parseTemperatureRange(climate.temperatureRange);
+  const maxTemp = temps.max;
+  const rain = climate.rainfallProbability || 0;
+  const wind = climate.windKph || 0;
+
+  if ((climate.alerts || []).length > 0 || wind >= 45) return 'Storm or severe weather';
+  if (rain >= 70) return 'Heavy rain';
+  if (rain >= 35) return 'Light rain';
+  if (maxTemp >= 38) return 'Extreme heat';
+  if (temps.min <= 3) return 'Cold weather';
+  if (rain >= 20) return 'Mild or cloudy';
+  return 'Clear or sunny';
+}
+
+function getWeatherSuitableActivities(preferences, climate) {
+  const selected = preferences.interests?.length ? preferences.interests : ['sightseeing', 'nature', 'cultural'];
+  const condition = getWeatherCondition(climate);
+  const indoorFallbacks = ['cultural', 'history', 'food', 'relaxation'];
+  const outdoorActivities = ['trekking', 'camping', 'adventure', 'beach', 'beaches', 'nature', 'wildlife', 'photography'];
+  const unsafeInRain = ['trekking', 'camping', 'adventure', 'beach', 'beaches', 'wildlife'];
+  const unsafeInWind = ['camping', 'beach', 'beaches', 'boating', 'photography'];
+
+  let suitable = selected.filter(Boolean);
+
+  if (condition === 'Heavy rain') {
+    suitable = selected.filter(activity => indoorFallbacks.includes(activity));
+  } else if (condition === 'Light rain') {
+    suitable = selected.filter(activity => !['camping', 'beach', 'beaches'].includes(activity));
+    suitable = [...new Set([...suitable, ...selected.filter(activity => indoorFallbacks.includes(activity))])];
+  } else if (condition === 'Extreme heat') {
+    suitable = selected.filter(activity => !['trekking', 'camping'].includes(activity));
+  } else if (condition === 'Storm or severe weather') {
+    suitable = selected.filter(activity => !outdoorActivities.includes(activity));
+  }
+
+  if ((climate.windKph || 0) > 35) {
+    suitable = suitable.filter(activity => !unsafeInWind.includes(activity));
+  }
+
+  if ((climate.rainfallProbability || 0) > 60) {
+    suitable = suitable.filter(activity => !unsafeInRain.includes(activity));
+  }
+
+  return suitable.length ? suitable : selected.filter(activity => indoorFallbacks.includes(activity));
+}
+
+function getBestWeatherTimeWindow(activity, climate) {
+  const condition = getWeatherCondition(climate);
+  const temps = parseTemperatureRange(climate.temperatureRange);
+
+  if (activity === 'camping') return getWeatherRiskLevel(climate, 80) === 'Low' ? 'Evening and overnight after local permission check' : 'Do not schedule camping';
+  if (['trekking', 'adventure', 'wildlife'].includes(activity)) return temps.max >= 34 || condition === 'Light rain' ? 'Early morning' : 'Morning';
+  if (['photography', 'beach', 'beaches'].includes(activity)) return condition === 'Clear or sunny' ? 'Early morning or sunset' : 'Late afternoon if visibility improves';
+  if (['cultural', 'history', 'food', 'relaxation'].includes(activity)) return condition.includes('rain') || condition.includes('heat') ? 'Afternoon' : 'Late morning or afternoon';
+
+  return temps.max >= 34 ? 'Early morning or evening' : 'Morning or late afternoon';
+}
+
+function getSeasonalSuitabilityScore(place, preferences, climate) {
+  const monthName = getTravelMonthName(preferences.startDate);
+  const bestMonths = place.bestTimeToVisit?.months || [];
+  const seasonText = normalizePreferenceText(place.bestTimeToVisit?.season || '');
+  const travelSeason = normalizePreferenceText(climate.season);
+
+  if (monthName && bestMonths.map(normalizePreferenceText).includes(normalizePreferenceText(monthName))) return 95;
+  if (seasonText && travelSeason && seasonText.includes(travelSeason)) return 86;
+  if (climate.season === 'Monsoon' && /beach|trek|mountain|wildlife|safari/.test(getPlaceKeywordText(place))) return 46;
+  if (climate.season === 'Summer' && /desert|heritage|fort|palace/.test(getPlaceKeywordText(place))) return 58;
+
+  return 72;
+}
+
+function getClimateCompatibilityScore(place, preferences, climate) {
+  let score = scoreTemperatureSafety(climate.temperatureRange);
+  const text = getPlaceKeywordText(place);
+  const suitableActivities = getWeatherSuitableActivities(preferences, climate);
+  const selectedActivities = preferences.interests || [];
+
+  if (selectedActivities.length && suitableActivities.some(activity => text.includes(activity))) score += 10;
+  if (preferences.preferredPlaceType && text.includes(normalizePreferenceText(preferences.preferredPlaceType))) score += 10;
+  if ((climate.rainfallProbability || 0) > 65 && /beach|trek|camp|viewpoint|peak/.test(text)) score -= 28;
+  if ((climate.windKph || 0) > 35 && /beach|camp|viewpoint|peak|boating/.test(text)) score -= 22;
+  if ((climate.alerts || []).length > 0) score -= 35;
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function getWeatherForecastSuitabilityScore(preferences, climate) {
+  let score = 88;
+  const interests = preferences.interests || [];
+
+  if ((climate.rainfallProbability || 0) > 70) score -= 28;
+  if ((climate.humidity || 0) > 80 && !interests.includes('rainy')) score -= 12;
+  if ((climate.windKph || 0) > 35) score -= 18;
+  if ((climate.alerts || []).length > 0) score -= 40;
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function getWeightedRecommendationScore(place, preferences, climate) {
+  const weights = {
+    preferenceMatch: 0.30,
+    seasonalSuitability: 0.20,
+    currentClimateCompatibility: 0.15,
+    weatherForecastSuitability: 0.10,
+    ratingReviews: 0.10,
+    distanceEfficiency: 0.10,
+    activityAvailability: 0.05,
+    ...(preferences.scoreWeights || {})
+  };
+  const weightTotal = Object.values(weights).reduce((sum, weight) => sum + Number(weight || 0), 0) || 1;
+  const ratingReviews = (
+    Math.min(100, ((place.rating || 0) / 5) * 70) +
+    Math.min(30, Math.log10((place.userRatingsTotal || 0) + 1) * 10)
+  );
+  const distanceEfficiency = Math.max(0, 100 - ((place.distanceFromRouteKm || 0) / preferences.maxDetourKm) * 100);
+  const preferenceMatch = Math.min(100, getPreferenceMatchScore(place, preferences.companionType, preferences.numberOfTravelers) * 5);
+  const components = {
+    preferenceMatch,
+    seasonalSuitability: getSeasonalSuitabilityScore(place, preferences, climate),
+    currentClimateCompatibility: getClimateCompatibilityScore(place, preferences, climate),
+    weatherForecastSuitability: getWeatherForecastSuitabilityScore(preferences, climate),
+    ratingReviews,
+    distanceEfficiency,
+    activityAvailability: getActivityAvailabilityScore(place, preferences, climate)
+  };
+  const weighted = Object.entries(components).reduce((sum, [key, value]) => (
+    sum + value * (Number(weights[key] || 0) / weightTotal)
+  ), 0);
+
+  return {
+    score: Math.round(weighted),
+    components: Object.fromEntries(Object.entries(components).map(([key, value]) => [key, Math.round(value)])),
+    weights
+  };
+}
+
+function getRecommendationWeightsForTravelStyle(travelStyle) {
+  const style = normalizePreferenceText(travelStyle);
+
+  if (style.includes('adventure')) {
+    return {
+      preferenceMatch: 0.30,
+      seasonalSuitability: 0.22,
+      currentClimateCompatibility: 0.18,
+      weatherForecastSuitability: 0.12,
+      ratingReviews: 0.06,
+      distanceEfficiency: 0.05,
+      activityAvailability: 0.07
+    };
+  }
+
+  if (style.includes('sightseeing')) {
+    return {
+      preferenceMatch: 0.28,
+      seasonalSuitability: 0.18,
+      currentClimateCompatibility: 0.12,
+      weatherForecastSuitability: 0.08,
+      ratingReviews: 0.16,
+      distanceEfficiency: 0.12,
+      activityAvailability: 0.06
+    };
+  }
+
+  if (style.includes('relaxed')) {
+    return {
+      preferenceMatch: 0.28,
+      seasonalSuitability: 0.22,
+      currentClimateCompatibility: 0.18,
+      weatherForecastSuitability: 0.12,
+      ratingReviews: 0.08,
+      distanceEfficiency: 0.08,
+      activityAvailability: 0.04
+    };
+  }
+
+  if (style.includes('budget')) {
+    return {
+      preferenceMatch: 0.25,
+      seasonalSuitability: 0.18,
+      currentClimateCompatibility: 0.12,
+      weatherForecastSuitability: 0.08,
+      ratingReviews: 0.08,
+      distanceEfficiency: 0.24,
+      activityAvailability: 0.05
+    };
+  }
+
+  return {};
+}
+
+function getClimateStatus(score) {
+  if (score >= 78) return 'Suitable';
+  if (score >= 55) return 'Moderate';
+  return 'Not Recommended';
+}
+
+function getWeatherRiskLevel(climate, score) {
+  if ((climate.alerts || []).length > 0 || score < 45) return 'High';
+  if ((climate.rainfallProbability || 0) > 60 || (climate.windKph || 0) > 30 || score < 70) return 'Medium';
+  return 'Low';
+}
+
+function getCampingSuitability(place, preferences, climate) {
+  const wantsCamping = (preferences.interests || []).includes('camping');
+  const text = getPlaceKeywordText(place);
+  const locationFits = /camp|hill|mountain|forest|lake|valley|nature|adventure/.test(text);
+
+  if (!wantsCamping && !locationFits) return 'Not a camping-focused stop';
+  if ((climate.rainfallProbability || 0) > 60 || (climate.windKph || 0) > 30 || (climate.alerts || []).length) {
+    return 'Not recommended in current conditions';
+  }
+  return locationFits ? 'Suitable with local permission check' : 'Moderate';
+}
+
+function getWeatherUnsuitableActivities(preferences, climate) {
+  const selected = preferences.interests || [];
+  const suitable = new Set(getWeatherSuitableActivities(preferences, climate));
+  return selected.filter(activity => !suitable.has(activity));
+}
+
+function buildClimateRecommendation(place, preferences, overrideClimate = null) {
+  const climate = overrideClimate || getRegionalClimateProfile(place, preferences.startDate);
+  const weighted = getWeightedRecommendationScore(place, preferences, climate);
+  const climateScore = weighted.components.currentClimateCompatibility;
+  const text = getPlaceKeywordText(place);
+  const suitableActivities = getWeatherSuitableActivities(preferences, climate);
+  const unsuitableActivities = getWeatherUnsuitableActivities(preferences, climate);
+  const bestActivity = suitableActivities.find(interest => text.includes(interest)) ||
+    suitableActivities[0] ||
+    place.category ||
+    (place.types || [])[0] ||
+    'sightseeing';
+  const bestTimeToVisit = getBestWeatherTimeWindow(bestActivity, climate);
+
+  return {
+    matchScore: weighted.score,
+    seasonClimateSuitabilityScore: Math.round((
+      weighted.components.seasonalSuitability * 0.45 +
+      weighted.components.currentClimateCompatibility * 0.35 +
+      weighted.components.weatherForecastSuitability * 0.20
+    )),
+    scoreBreakdown: weighted.components,
+    scoreWeights: weighted.weights,
+    season: climate.season,
+    currentClimate: getClimateStatus(climateScore),
+    weatherCondition: getWeatherCondition(climate),
+    temperatureRange: climate.temperatureRange,
+    weatherForecast: `${climate.rainfallProbability}% rain probability, ${climate.humidity}% humidity, wind around ${climate.windKph} km/h`,
+    bestActivity,
+    suitableActivities,
+    unsuitableActivities,
+    rescheduleAdvice: unsuitableActivities.length
+      ? `Move ${unsuitableActivities.join(', ')} to a clearer or safer weather window.`
+      : 'Selected activities fit this weather window.',
+    bestTimeToVisit,
+    recommendedStayDuration: getSuggestedVisitDuration(place),
+    campingSuitability: getCampingSuitability(place, preferences, climate),
+    weatherRiskLevel: getWeatherRiskLevel(climate, weighted.score),
+    weatherAlerts: climate.alerts || [],
+    climateDataSource: climate.source
+  };
+}
+
+async function fetchOpenMeteoClimate(place, date) {
+  const lat = place.location?.lat || place.coordinates?.lat;
+  const lng = place.location?.lng || place.coordinates?.lng;
+  if (!lat || !lng || !(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+
+  const travelDate = formatDate(date);
+  const today = formatDate(new Date());
+  const daysUntilTravel = Math.ceil((new Date(travelDate) - new Date(today)) / (1000 * 60 * 60 * 24));
+  if (daysUntilTravel < 0 || daysUntilTravel > 15) return null;
+
+  try {
+    const response = await axios.get('https://api.open-meteo.com/v1/forecast', {
+      timeout: 2500,
+      params: {
+        latitude: lat,
+        longitude: lng,
+        daily: 'temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max',
+        hourly: 'relative_humidity_2m',
+        timezone: 'auto',
+        start_date: travelDate,
+        end_date: travelDate
+      }
+    });
+    const daily = response.data?.daily || {};
+    const hourly = response.data?.hourly || {};
+    const fallbackClimate = getRegionalClimateProfile(place, date);
+    const minTemp = Number.isFinite(daily.temperature_2m_min?.[0])
+      ? daily.temperature_2m_min[0]
+      : parseTemperatureRange(fallbackClimate.temperatureRange).min;
+    const maxTemp = Number.isFinite(daily.temperature_2m_max?.[0])
+      ? daily.temperature_2m_max[0]
+      : parseTemperatureRange(fallbackClimate.temperatureRange).max;
+    const humidityValues = hourly.relative_humidity_2m || [];
+    const averageHumidity = humidityValues.length
+      ? Math.round(humidityValues.reduce((sum, value) => sum + value, 0) / humidityValues.length)
+      : fallbackClimate.humidity;
+
+    return {
+      season: getIndianSeason(date),
+      temperatureRange: `${Math.round(minTemp)}-${Math.round(maxTemp)} C`,
+      rainfallProbability: daily.precipitation_probability_max?.[0] ?? fallbackClimate.rainfallProbability,
+      humidity: averageHumidity,
+      windKph: Math.round(daily.wind_speed_10m_max?.[0] || fallbackClimate.windKph),
+      alerts: [],
+      source: 'open_meteo_forecast'
+    };
+  } catch (error) {
+    console.warn(`Weather forecast unavailable for ${place.name}: ${error.message}`);
+    return null;
+  }
+}
+
+async function enrichStopsWithLiveClimate(stops, preferences) {
+  const enriched = [];
+
+  for (const stop of stops) {
+    if (stop.climateRecommendation) {
+      enriched.push(stop);
+      continue;
+    }
+
+    const liveClimate = await fetchOpenMeteoClimate(stop, preferences.startDate);
+    const climateRecommendation = buildClimateRecommendation(stop, preferences, liveClimate);
+    enriched.push({
+      ...stop,
+      climateRecommendation,
+      matchScore: climateRecommendation.matchScore,
+      seasonClimateSuitabilityScore: climateRecommendation.seasonClimateSuitabilityScore,
+      weatherRiskLevel: climateRecommendation.weatherRiskLevel,
+      currentClimate: climateRecommendation.currentClimate
+    });
+  }
+
+  return enriched;
+}
+
 function parseRoadTripPreferences({
   interests,
   companionType,
@@ -1334,6 +1839,14 @@ function parseRoadTripPreferences({
     interests: getInterestList(interests),
     companionType,
     numberOfTravelers: Number(numberOfTravelers) || 1,
+    preferredPlaceType: options.preferredPlaceType || options.placeType || '',
+    travelStyle: options.travelStyle || '',
+    startDate: options.startDate,
+    endDate: options.endDate,
+    scoreWeights: {
+      ...getRecommendationWeightsForTravelStyle(options.travelStyle),
+      ...(options.scoreWeights || options.recommendationWeights || {})
+    },
     maxDetourKm: Math.min(30, Math.max(10, maxDetourKm)),
     minRating,
     maxAttractionsPerDay: Math.max(1, maxAttractionsPerDay),
@@ -1411,6 +1924,119 @@ function calculateVisitDurationMinutes(place) {
   return Math.round(hours * 60);
 }
 
+function parseDurationToMinutes(durationText) {
+  if (typeof durationText === 'number') return Math.round(durationText * 60);
+  const text = String(durationText || '').toLowerCase();
+  if (!text) return 0;
+
+  const dayMatch = text.match(/(\d+(?:\.\d+)?)\s*d/);
+  const hourMatch = text.match(/(\d+(?:\.\d+)?)\s*h/);
+  const minuteMatch = text.match(/(\d+(?:\.\d+)?)\s*m/);
+  const rangeMatch = text.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*hours?/);
+
+  if (rangeMatch) {
+    return Math.round(((Number.parseFloat(rangeMatch[1]) + Number.parseFloat(rangeMatch[2])) / 2) * 60);
+  }
+
+  const days = dayMatch ? Number.parseFloat(dayMatch[1]) : 0;
+  const hours = hourMatch ? Number.parseFloat(hourMatch[1]) : 0;
+  const minutes = minuteMatch ? Number.parseFloat(minuteMatch[1]) : 0;
+  const total = days * 24 * 60 + hours * 60 + minutes;
+
+  if (total > 0) return Math.round(total);
+
+  const plainHours = text.match(/(\d+(?:\.\d+)?)\s*hours?/);
+  return plainHours ? Math.round(Number.parseFloat(plainHours[1]) * 60) : 0;
+}
+
+function getRouteDistanceKm(routePlan) {
+  return Number(routePlan?.distance || routePlan?.primaryRoute?.distance || routePlan?.totalDistance || 0);
+}
+
+function isGenericStopName(name) {
+  return /^(view\s*point|viewpoint|sunset view point|sunrise view point|hill view|water falls?|reserve forest area|eco trekking)/i
+    .test(String(name || '').trim());
+}
+
+function isRealisticCorridorStop(place, routeDistanceKm) {
+  if (!place?.name) return false;
+  if (routeDistanceKm > 0) {
+    const order = Number(place.journeyOrder || place.routeSectionKm || 0);
+    if (order < ROAD_TRIP_CONFIG.routeStartEndBufferKm) return false;
+    if (order > routeDistanceKm - ROAD_TRIP_CONFIG.routeStartEndBufferKm) return false;
+  }
+  if (isGenericStopName(place.name) && (place.userRatingsTotal || 0) < ROAD_TRIP_CONFIG.minimumGenericStopReviews) {
+    return false;
+  }
+  return true;
+}
+
+function buildSegmentFeasibility(routePlan, days, transportMode, vehicleType) {
+  const baseDrivingMinutes = parseDurationToMinutes(routePlan?.primaryRoute?.estimatedDuration || routePlan?.totalDuration);
+  const selectedStops = routePlan?.intermediateStops || [];
+  const sightseeingMinutes = selectedStops.reduce((sum, stop) => sum + Number(stop.totalExtraTimeMinutes || 0), 0);
+  const dailyTravelMinutes = getDailyTravelMinutesLimit(transportMode, vehicleType);
+  const dailySightseeingMinutes = getDailySightseeingMinutesLimit(transportMode, vehicleType);
+  const totalWorkMinutes = baseDrivingMinutes + sightseeingMinutes;
+  const feasibleMinutes = days * dailyTravelMinutes;
+  const averageDailyMinutes = days > 0 ? Math.round(totalWorkMinutes / days) : totalWorkMinutes;
+  const averageDailyHours = Math.round((averageDailyMinutes / 60) * 10) / 10;
+  const averageStopMinutes = 150;
+  const maxStopsByTime = Math.max(0, Math.floor((days * dailySightseeingMinutes) / averageStopMinutes));
+
+  return {
+    days,
+    baseDrivingHours: Math.round((baseDrivingMinutes / 60) * 10) / 10,
+    stopTimeHours: Math.round((sightseeingMinutes / 60) * 10) / 10,
+    averageDailyHours,
+    dailyTravelLimitHours: Math.round((dailyTravelMinutes / 60) * 10) / 10,
+    selectedStops: selectedStops.length,
+    feasible: totalWorkMinutes <= feasibleMinutes,
+    reason: totalWorkMinutes <= feasibleMinutes
+      ? `Balanced for ${days} travel day${days === 1 ? '' : 's'} with ${selectedStops.length} selected stop${selectedStops.length === 1 ? '' : 's'}.`
+      : `Too much driving and sightseeing for ${days} travel day${days === 1 ? '' : 's'}; reduce stops or add days.`,
+    maxSuggestedStops: Math.min(days * 2, maxStopsByTime)
+  };
+}
+
+function buildTripFeasibility(routePlan, numDays, transportMode, vehicleType) {
+  const onward = buildSegmentFeasibility(routePlan.onwardRoute, routePlan.phases.onwardDays, transportMode, vehicleType);
+  const returning = buildSegmentFeasibility(routePlan.returnRoute, routePlan.phases.returnDays, transportMode, vehicleType);
+  const highRiskStops = (routePlan.intermediateStops || []).filter(stop =>
+    stop.weatherRiskLevel === 'High' || stop.climateRecommendation?.weatherRiskLevel === 'High'
+  );
+  const notRecommendedClimateStops = (routePlan.intermediateStops || []).filter(stop =>
+    stop.currentClimate === 'Not Recommended' || stop.climateRecommendation?.currentClimate === 'Not Recommended'
+  );
+  const isFeasible = onward.feasible && returning.feasible;
+  const minimumComfortableDays = Math.max(
+    numDays,
+    Math.ceil((onward.baseDrivingHours + onward.stopTimeHours + returning.baseDrivingHours + returning.stopTimeHours) / 7)
+  );
+
+  return {
+    status: isFeasible ? 'Realistic' : 'Too rushed',
+    isFeasible,
+    minimumComfortableDays,
+    onward,
+    return: returning,
+    selectedStops: (routePlan.intermediateStops || []).length,
+    highRiskStopCount: highRiskStops.length,
+    notRecommendedClimateStopCount: notRecommendedClimateStops.length,
+    notes: [
+      isFeasible
+        ? 'The plan fits conservative daily driving and sightseeing limits.'
+        : `The trip needs about ${minimumComfortableDays} days for a comfortable pace.`,
+      highRiskStops.length
+        ? `${highRiskStops.length} stop${highRiskStops.length === 1 ? '' : 's'} still have high weather risk.`
+        : '',
+      notRecommendedClimateStops.length
+        ? `${notRecommendedClimateStops.length} selected stop${notRecommendedClimateStops.length === 1 ? '' : 's'} have Not Recommended climate fit.`
+        : ''
+    ].filter(Boolean)
+  };
+}
+
 function scoreCorridorPlace(place, preferences) {
   const ratingScore = Math.min(100, (place.rating / 5) * 100);
   const reviewScore = Math.min(100, Math.log10((place.userRatingsTotal || 0) + 1) * 25);
@@ -1418,12 +2044,14 @@ function scoreCorridorPlace(place, preferences) {
   const popularityScore = getTouristPopularityScore(place);
   const categoryScore = Math.min(100, place.categoryPriority || 0);
   const preferenceScore = getPreferenceMatchScore(place, preferences.companionType, preferences.numberOfTravelers);
+  const climateRecommendation = buildClimateRecommendation(place, preferences);
 
   return Math.round((
-    ratingScore * 0.40 +
-    reviewScore * 0.25 +
+    climateRecommendation.matchScore * 0.35 +
+    ratingScore * 0.20 +
+    reviewScore * 0.15 +
     detourScore * 0.20 +
-    popularityScore * 0.10 +
+    popularityScore * 0.05 +
     categoryScore * 0.05 +
     preferenceScore
   ) * 10) / 10;
@@ -1467,6 +2095,11 @@ function decorateCorridorCandidate(candidate, routePoints, preferences, phase) {
     suggestedVisitDuration: getSuggestedVisitDuration(candidate)
   };
 
+  enriched.climateRecommendation = buildClimateRecommendation(enriched, preferences);
+  enriched.matchScore = enriched.climateRecommendation.matchScore;
+  enriched.seasonClimateSuitabilityScore = enriched.climateRecommendation.seasonClimateSuitabilityScore;
+  enriched.weatherRiskLevel = enriched.climateRecommendation.weatherRiskLevel;
+  enriched.currentClimate = enriched.climateRecommendation.currentClimate;
   enriched.aiRecommendationScore = scoreCorridorPlace(enriched, preferences);
   enriched.routeScore = enriched.aiRecommendationScore;
   enriched.reason = getRoutePlaceReason(enriched, preferences.companionType, preferences.numberOfTravelers);
@@ -1488,8 +2121,14 @@ function dedupeCorridorPlaces(places) {
   return [...byPlaceId.values()];
 }
 
-function optimizeCorridorStops(places, days, preferences) {
-  const maxStops = Math.max(1, days * preferences.maxAttractionsPerDay);
+function optimizeCorridorStops(places, days, preferences, routeContext = {}) {
+  const baseDrivingMinutes = parseDurationToMinutes(routeContext.baseDuration);
+  const routeDistanceKm = Number(routeContext.routeDistanceKm || 0);
+  const dailyTravelMinutes = getDailyTravelMinutesLimit(routeContext.transportMode, routeContext.vehicleType);
+  const sightseeingMinutes = getDailySightseeingMinutesLimit(routeContext.transportMode, routeContext.vehicleType);
+  const maxStops = Math.max(0, days * preferences.maxAttractionsPerDay);
+  const totalAvailableMinutes = Math.max(0, (days * dailyTravelMinutes) - baseDrivingMinutes);
+  const sightseeingBudgetMinutes = Math.min(days * sightseeingMinutes, totalAvailableMinutes);
   const ordered = [...places].sort((a, b) =>
     a.journeyOrder - b.journeyOrder ||
     b.aiRecommendationScore - a.aiRecommendationScore
@@ -1497,25 +2136,38 @@ function optimizeCorridorStops(places, days, preferences) {
 
   const selected = [];
   let lastOrder = -Infinity;
+  let usedExtraMinutes = 0;
+  let highRiskStops = 0;
 
   for (const place of ordered) {
     if (selected.length >= maxStops) break;
+    if (!isRealisticCorridorStop(place, routeDistanceKm)) continue;
 
     const isNearLastStop =
       selected.length > 0 &&
-      Math.abs(place.journeyOrder - lastOrder) < 20;
+      Math.abs(place.journeyOrder - lastOrder) < ROAD_TRIP_CONFIG.minimumStopSpacingKm;
+    const placeExtraMinutes = Number(place.totalExtraTimeMinutes || 0);
+    const isHighRisk = place.weatherRiskLevel === 'High' || place.climateRecommendation?.weatherRiskLevel === 'High';
+
+    if (isHighRisk && highRiskStops >= ROAD_TRIP_CONFIG.maxHighRiskStopsPerSegment) continue;
+    if (usedExtraMinutes + placeExtraMinutes > sightseeingBudgetMinutes) continue;
 
     if (isNearLastStop) {
       const previous = selected[selected.length - 1];
-      if (place.aiRecommendationScore > previous.aiRecommendationScore + 8) {
+      const previousExtraMinutes = Number(previous.totalExtraTimeMinutes || 0);
+      const replacingFits = usedExtraMinutes - previousExtraMinutes + placeExtraMinutes <= sightseeingBudgetMinutes;
+      if (replacingFits && place.aiRecommendationScore > previous.aiRecommendationScore + 8) {
         selected[selected.length - 1] = place;
         lastOrder = place.journeyOrder;
+        usedExtraMinutes = usedExtraMinutes - previousExtraMinutes + placeExtraMinutes;
       }
       continue;
     }
 
     selected.push(place);
     lastOrder = place.journeyOrder;
+    usedExtraMinutes += placeExtraMinutes;
+    if (isHighRisk) highRiskStops += 1;
   }
 
   return selected.sort((a, b) => a.journeyOrder - b.journeyOrder);
@@ -1639,12 +2291,18 @@ async function buildCorridorRoutePlan({
     .filter(Boolean);
 
   const dedupedPlaces = dedupeCorridorPlaces(validatedPlaces);
-  const optimizedPlaces = optimizeCorridorStops(dedupedPlaces, numDays, preferences)
+  let optimizedPlaces = optimizeCorridorStops(dedupedPlaces, numDays, preferences, {
+    baseDuration: directionsResult.duration,
+    routeDistanceKm: directionsResult.distance,
+    transportMode,
+    vehicleType: options.vehicleType
+  })
     .map((place, index) => ({
       ...place,
       journeyOrder: index + 1,
       routeSectionKm: place.journeyOrder
     }));
+  optimizedPlaces = await enrichStopsWithLiveClimate(optimizedPlaces, preferences);
 
   const waypoints = optimizedPlaces.map(place => `${place.location.lat},${place.location.lng}`);
   const optimizedDirections = waypoints.length
@@ -1736,6 +2394,11 @@ function getStopDetails(stop) {
     whyRecommended: stop.reason,
     bestTimeToVisit: stop.bestTimeToVisit,
     suggestedVisitDuration: stop.suggestedVisitDuration,
+    matchScore: stop.matchScore || stop.climateRecommendation?.matchScore,
+    seasonClimateSuitabilityScore: stop.seasonClimateSuitabilityScore || stop.climateRecommendation?.seasonClimateSuitabilityScore,
+    currentClimate: stop.currentClimate || stop.climateRecommendation?.currentClimate,
+    weatherRiskLevel: stop.weatherRiskLevel || stop.climateRecommendation?.weatherRiskLevel,
+    climateRecommendation: stop.climateRecommendation,
     phase: stop.phase,
     location: stop.location
   };
@@ -1758,6 +2421,11 @@ function serializeRoadTripAttraction(stop, fallbackPhase) {
     imageUrl: stop.imageUrl || null,
     googleMapsLink: stop.googleMapsLink || buildGoogleMapsLink(stop),
     aiRecommendationScore: stop.aiRecommendationScore || stop.routeScore || 0,
+    matchScore: stop.matchScore || stop.climateRecommendation?.matchScore || 0,
+    seasonClimateSuitabilityScore: stop.seasonClimateSuitabilityScore || stop.climateRecommendation?.seasonClimateSuitabilityScore || 0,
+    currentClimate: stop.currentClimate || stop.climateRecommendation?.currentClimate,
+    weatherRiskLevel: stop.weatherRiskLevel || stop.climateRecommendation?.weatherRiskLevel,
+    climateRecommendation: stop.climateRecommendation,
     journeyOrder: stop.journeyOrder,
     routeSectionKm: stop.routeSectionKm,
     phase: stop.phase || fallbackPhase,
@@ -1766,7 +2434,15 @@ function serializeRoadTripAttraction(stop, fallbackPhase) {
   };
 }
 
-function buildDestinationStayPlan(destination, stayDays, activities, accommodationDetails) {
+function buildDestinationStayPlan(destination, stayDays, activities, accommodationDetails, preferences = {}) {
+  const destinationClimateRecommendation = buildClimateRecommendation({
+    name: destination,
+    category: preferences.preferredPlaceType || 'destination',
+    categories: preferences.interests || [],
+    rating: 4.4,
+    userRatingsTotal: 1000
+  }, preferences);
+
   return Array.from({ length: stayDays }, (_, index) => {
     const dayActivities = activities.filter(activity => (activity.estimatedDay || 1) % Math.max(stayDays, 1) === index % Math.max(stayDays, 1));
     const focus = dayActivities.length > 0
@@ -1778,9 +2454,57 @@ function buildDestinationStayPlan(destination, stayDays, activities, accommodati
       title: `Destination stay in ${destination}`,
       focus,
       accommodationPlan: `Stay at ${accommodationDetails.type}`,
-      mealPlan: `Breakfast near accommodation, lunch near sightseeing area, dinner at a well-rated local restaurant`
+      mealPlan: `Breakfast near accommodation, lunch near sightseeing area, dinner at a well-rated local restaurant`,
+      climateRecommendation: destinationClimateRecommendation
     };
   });
+}
+
+function buildDailyWeatherPlan(dayClimateRecommendation, fallbackActivities = []) {
+  if (!dayClimateRecommendation) {
+    return {
+      weatherCondition: 'Unknown',
+      selectedActivities: fallbackActivities.map(activity => activity.name || activity).filter(Boolean),
+      movedActivities: [],
+      bestTimeWindow: 'Morning or late afternoon',
+      campingSuitability: 'Unknown',
+      note: 'Weather data was not available for this day.'
+    };
+  }
+
+  return {
+    weatherCondition: dayClimateRecommendation.weatherCondition,
+    forecast: dayClimateRecommendation.weatherForecast,
+    selectedActivities: dayClimateRecommendation.suitableActivities || [],
+    movedActivities: dayClimateRecommendation.unsuitableActivities || [],
+    bestActivity: dayClimateRecommendation.bestActivity,
+    bestTimeWindow: dayClimateRecommendation.bestTimeToVisit,
+    campingSuitability: dayClimateRecommendation.campingSuitability,
+    weatherRiskLevel: dayClimateRecommendation.weatherRiskLevel,
+    note: dayClimateRecommendation.rescheduleAdvice
+  };
+}
+
+function splitStopsAcrossJourneyDays(stops, days, routeDistanceKm) {
+  const buckets = Array.from({ length: days }, () => []);
+  if (!stops.length || days <= 0) return buckets;
+
+  const safeDistance = Math.max(1, Number(routeDistanceKm || stops[stops.length - 1]?.routeSectionKm || 1));
+
+  for (const stop of stops) {
+    const sectionKm = Number(stop.routeSectionKm || stop.journeyOrder || 0);
+    const dayIndex = Math.min(
+      days - 1,
+      Math.max(0, Math.floor((sectionKm / safeDistance) * days))
+    );
+    buckets[dayIndex].push(stop);
+  }
+
+  return buckets.map(dayStops =>
+    dayStops
+      .sort((a, b) => (a.routeSectionKm || a.journeyOrder || 0) - (b.routeSectionKm || b.journeyOrder || 0))
+      .slice(0, ROAD_TRIP_CONFIG.maxAttractionsPerDay)
+  );
 }
 
 function generateRoundTripDayPlans({
@@ -1800,10 +2524,10 @@ function generateRoundTripDayPlans({
   const pushJourneyDays = (phaseName, routePlan, from, to, days) => {
     const stops = routePlan.intermediateStops || [];
     const services = routePlan.routeServices || [];
-    const stopsPerDay = Math.max(1, Math.ceil(stops.length / Math.max(days, 1)));
+    const dayStopBuckets = splitStopsAcrossJourneyDays(stops, days, getRouteDistanceKm(routePlan));
 
     for (let index = 0; index < days; index += 1) {
-      const dayStops = stops.slice(index * stopsPerDay, (index + 1) * stopsPerDay);
+      const dayStops = dayStopBuckets[index] || [];
       const service = services[index] || {};
       const isFinalPhaseDay = index === days - 1;
       let plan = `**${phaseName} - Day ${index + 1}**\n\n`;
@@ -1814,6 +2538,16 @@ function generateRoundTripDayPlans({
       plan += `**Daily Travel Limit:** About ${phases.dailyTravelLimitKm} km before major rest\n\n`;
 
       if (dayStops.length > 0) {
+        const dayClimate = dayStops[0].climateRecommendation;
+        if (dayClimate) {
+          plan += `**Weather Window:** ${dayClimate.weatherCondition}; ${dayClimate.weatherForecast}\n`;
+          plan += `**Best Activity Today:** ${dayClimate.bestActivity} during ${dayClimate.bestTimeToVisit}\n`;
+          if (dayClimate.unsuitableActivities?.length) {
+            plan += `**Move/Avoid Today:** ${dayClimate.unsuitableActivities.join(', ')}\n`;
+          }
+          plan += '\n';
+        }
+
         plan += `**Worthwhile Detours:**\n`;
         for (const stop of dayStops) {
           plan += `- **${stop.name}** (${stop.category})\n`;
@@ -1822,6 +2556,13 @@ function generateRoundTripDayPlans({
           plan += `  * Detour time: ${stop.detourTime} minutes\n`;
           plan += `  * Visit duration: ${stop.suggestedVisitDuration}\n`;
           plan += `  * Best time: ${stop.bestTimeToVisit}\n`;
+          if (stop.climateRecommendation) {
+            plan += `  * Climate fit: ${stop.climateRecommendation.currentClimate}, ${stop.climateRecommendation.temperatureRange}, risk ${stop.climateRecommendation.weatherRiskLevel}\n`;
+            plan += `  * Suitable selected activities: ${(stop.climateRecommendation.suitableActivities || []).join(', ') || 'weather-safe sightseeing'}\n`;
+            if (stop.climateRecommendation.unsuitableActivities?.length) {
+              plan += `  * Reschedule: ${stop.climateRecommendation.unsuitableActivities.join(', ')}\n`;
+            }
+          }
           plan += `  * Why: ${stop.reason}\n\n`;
         }
       } else {
@@ -1837,6 +2578,7 @@ function generateRoundTripDayPlans({
         date: formatDate(addDays(startDate, dayNumber - 1)),
         phase: phaseName,
         plan,
+        weatherPlan: buildDailyWeatherPlan(dayStops[0]?.climateRecommendation),
         activities: [],
         stops: dayStops,
         restaurants: [service.restaurantPlan].filter(Boolean),
@@ -1858,6 +2600,13 @@ function generateRoundTripDayPlans({
     plan += `**Morning:** Start with a top-rated local breakfast and your highest-priority activity\n`;
     plan += `**Afternoon:** Sightseeing, cultural stops, nature time, or rest based on pace\n`;
     plan += `**Evening:** Local food, markets, viewpoint, or relaxed waterfront/city walk\n`;
+    if (stayDay.climateRecommendation) {
+      plan += `**Climate Fit:** ${stayDay.climateRecommendation.currentClimate}; ${stayDay.climateRecommendation.weatherForecast}\n`;
+      plan += `**Best Activity Today:** ${stayDay.climateRecommendation.bestActivity} during ${stayDay.climateRecommendation.bestTimeToVisit}\n`;
+      if (stayDay.climateRecommendation.unsuitableActivities?.length) {
+        plan += `**Move/Avoid Today:** ${stayDay.climateRecommendation.unsuitableActivities.join(', ')}\n`;
+      }
+    }
     plan += `**Meals:** ${stayDay.mealPlan}\n`;
     plan += `**Accommodation:** ${stayDay.accommodationPlan}\n`;
 
@@ -1866,6 +2615,7 @@ function generateRoundTripDayPlans({
       date: formatDate(addDays(startDate, dayNumber - 1)),
       phase: 'Destination Stay',
       plan,
+      weatherPlan: buildDailyWeatherPlan(stayDay.climateRecommendation, activityList),
       activities: activityList,
       stops: [],
       restaurants: [stayDay.mealPlan],
@@ -1897,6 +2647,12 @@ async function generateRoundTripRoutePlan({
   const estimateRoute = await getDirectionsFromGoogleMaps(startLocation, destination, [], transportMode);
   const estimatedDistance = estimateRoute.distance || 350;
   const phases = buildTripPhases(numDays, preferredArrivalDay, estimatedDistance, transportMode, vehicleType, preferredStayDays);
+  const weatherPreferences = parseRoadTripPreferences({
+    interests,
+    companionType,
+    numberOfTravelers,
+    options: plannerOptions
+  });
 
   const onwardRoute = await generateDynamicRouteWithPlaces(
     startLocation,
@@ -1911,6 +2667,7 @@ async function generateRoundTripRoutePlan({
   );
   onwardRoute.segmentType = 'onward';
   onwardRoute.intermediateStops = (onwardRoute.intermediateStops || []).map(stop => ({ ...stop, phase: 'Onward Journey' }));
+  onwardRoute.intermediateStops = await enrichStopsWithLiveClimate(onwardRoute.intermediateStops, weatherPreferences);
   onwardRoute.routeServices = buildRouteServices('Onward Journey', startLocation, destination, phases.onwardDays, accommodationType, transportMode);
 
   const usedPlaceIds = onwardRoute.intermediateStops.map(stop => stop.placeId).filter(Boolean);
@@ -1934,6 +2691,7 @@ async function generateRoundTripRoutePlan({
   );
   returnRoute.segmentType = 'return';
   returnRoute.intermediateStops = (returnRoute.intermediateStops || []).map(stop => ({ ...stop, phase: 'Return Journey' }));
+  returnRoute.intermediateStops = await enrichStopsWithLiveClimate(returnRoute.intermediateStops, weatherPreferences);
   returnRoute.routeServices = buildRouteServices('Return Journey', destination, startLocation, phases.returnDays, accommodationType, transportMode);
 
   const allStops = [
@@ -1948,11 +2706,18 @@ async function generateRoundTripRoutePlan({
     phaseRank(a.phase) - phaseRank(b.phase) ||
     (a.routeSectionKm || 0) - (b.routeSectionKm || 0)
   );
+  const feasibility = buildTripFeasibility({
+    phases,
+    onwardRoute,
+    returnRoute,
+    intermediateStops: allStops
+  }, numDays, transportMode, vehicleType);
 
   return {
     phases,
     onwardRoute,
     returnRoute,
+    feasibility,
     primaryRoute: {
       from: startLocation,
       to: destination,
@@ -2001,7 +2766,12 @@ async function generateItinerary(data) {
       maxAttractionsPerDay,
       maximumAttractionsPerDay,
       avoid,
-      avoidance
+      avoidance,
+      preferredPlaceType,
+      placeType,
+      travelStyle,
+      scoreWeights,
+      recommendationWeights
     } = data;
 
     // Validate inputs
@@ -2018,7 +2788,13 @@ async function generateItinerary(data) {
       maxDetourKm: maxDetourKm || maximumDetour,
       minRating: minRating || minimumRating,
       maxAttractionsPerDay: maxAttractionsPerDay || maximumAttractionsPerDay,
-      avoid: avoid || avoidance
+      avoid: avoid || avoidance,
+      preferredPlaceType: preferredPlaceType || placeType,
+      travelStyle,
+      startDate,
+      endDate,
+      vehicleType,
+      scoreWeights: scoreWeights || recommendationWeights
     };
 
     // Allocate budget
@@ -2124,7 +2900,13 @@ async function generateItinerary(data) {
       destination,
       routePlan.phases.destinationStayDays,
       recommendedActivities,
-      accommodationDetails
+      accommodationDetails,
+      parseRoadTripPreferences({
+        interests: activitiesPreference,
+        companionType: travelCompanionType,
+        numberOfTravelers,
+        options: plannerOptions
+      })
     );
 
     // Generate optimized day-wise itinerary with onward, stay, and return phases
@@ -2139,6 +2921,37 @@ async function generateItinerary(data) {
       activities: recommendedActivities,
       accommodationDetails
     });
+
+    const climateAwarePlaces = routePlan.intermediateStops.map(stop => ({
+      name: stop.name,
+      matchScore: stop.matchScore || stop.climateRecommendation?.matchScore || 0,
+      seasonClimateSuitabilityScore: stop.seasonClimateSuitabilityScore || stop.climateRecommendation?.seasonClimateSuitabilityScore || 0,
+      season: stop.climateRecommendation?.season,
+      currentClimate: stop.currentClimate || stop.climateRecommendation?.currentClimate,
+      temperatureRange: stop.climateRecommendation?.temperatureRange,
+      weatherCondition: stop.climateRecommendation?.weatherCondition,
+      weatherForecast: stop.climateRecommendation?.weatherForecast,
+      bestActivity: stop.climateRecommendation?.bestActivity,
+      suitableActivities: stop.climateRecommendation?.suitableActivities,
+      unsuitableActivities: stop.climateRecommendation?.unsuitableActivities,
+      rescheduleAdvice: stop.climateRecommendation?.rescheduleAdvice,
+      bestTimeToVisit: stop.climateRecommendation?.bestTimeToVisit,
+      recommendedStayDuration: stop.climateRecommendation?.recommendedStayDuration,
+      campingSuitability: stop.climateRecommendation?.campingSuitability,
+      weatherRiskLevel: stop.weatherRiskLevel || stop.climateRecommendation?.weatherRiskLevel,
+      dataSource: stop.climateRecommendation?.climateDataSource,
+      whyRecommended: stop.reason,
+      scoreBreakdown: stop.climateRecommendation?.scoreBreakdown
+    }));
+    const highRiskClimatePlaces = climateAwarePlaces.filter(place => place.weatherRiskLevel === 'High');
+    const climateWarnings = highRiskClimatePlaces.map(place =>
+      `${place.name} has high weather risk for your travel window. Prefer indoor alternatives or reschedule this stop.`
+    );
+    const feasibilityWarnings = routePlan.feasibility?.isFeasible
+      ? []
+      : [
+        `This route is too rushed for ${numDays} days. A comfortable plan needs about ${routePlan.feasibility?.minimumComfortableDays || numDays + 1} days, or fewer stops.`
+      ];
 
     // Generate money-saving tips
     const tips = generateMoneyTips(destination, numDays, transport, accommodation);
@@ -2156,7 +2969,8 @@ async function generateItinerary(data) {
         numDays: numDays,
         numTravelers: numberOfTravelers,
         arrivalDay: routePlan.phases.arrivalDay,
-        arrivalDate: formatDate(addDays(startDate, routePlan.phases.arrivalDay - 1))
+        arrivalDate: formatDate(addDays(startDate, routePlan.phases.arrivalDay - 1)),
+        feasibilityStatus: routePlan.feasibility?.status
       },
 
       summary: {
@@ -2168,12 +2982,16 @@ async function generateItinerary(data) {
         originalBudget: parsedBudget,
         withinBudget: estimatedCosts.total <= parsedBudget,
         arrivalDay: routePlan.phases.arrivalDay,
-        arrivalDate: formatDate(addDays(startDate, routePlan.phases.arrivalDay - 1))
+        arrivalDate: formatDate(addDays(startDate, routePlan.phases.arrivalDay - 1)),
+        preferredPlaceType: preferredPlaceType || placeType || '',
+        travelStyle: travelStyle || ''
       },
 
       details: {
         startLocation: startLocation || destination,
         preferredActivities: activitiesPreference || '',
+        preferredPlaceType: preferredPlaceType || placeType || '',
+        travelStyle: travelStyle || '',
         accommodationType: accommodation || 'hostel',
         transportMode: transport || 'bus'
       },
@@ -2215,7 +3033,8 @@ async function generateItinerary(data) {
         routeStats: {
           onward: routePlan.onwardRoute.recommendationStats,
           return: routePlan.returnRoute.recommendationStats
-        }
+        },
+        feasibility: routePlan.feasibility
       },
 
       route: {
@@ -2225,7 +3044,8 @@ async function generateItinerary(data) {
         mapPolyline: routePlan.mapPolyline,
         recommendedStops: routePlan.recommendedStops,
         extraDistance: routePlan.extraDistance,
-        extraTime: routePlan.extraTime
+        extraTime: routePlan.extraTime,
+        feasibility: routePlan.feasibility
       },
 
       tripPhases: {
@@ -2264,8 +3084,43 @@ async function generateItinerary(data) {
         whyRecommended: stop.reason,
         bestTimeToVisit: stop.bestTimeToVisit,
         suggestedVisitDuration: stop.suggestedVisitDuration,
+        matchScore: stop.matchScore || stop.climateRecommendation?.matchScore,
+        seasonClimateSuitabilityScore: stop.seasonClimateSuitabilityScore || stop.climateRecommendation?.seasonClimateSuitabilityScore,
+        season: stop.climateRecommendation?.season,
+        currentClimate: stop.currentClimate || stop.climateRecommendation?.currentClimate,
+        temperatureRange: stop.climateRecommendation?.temperatureRange,
+        weatherCondition: stop.climateRecommendation?.weatherCondition,
+        weatherForecast: stop.climateRecommendation?.weatherForecast,
+        bestActivity: stop.climateRecommendation?.bestActivity,
+        suitableActivities: stop.climateRecommendation?.suitableActivities,
+        unsuitableActivities: stop.climateRecommendation?.unsuitableActivities,
+        rescheduleAdvice: stop.climateRecommendation?.rescheduleAdvice,
+        recommendedStayDuration: stop.climateRecommendation?.recommendedStayDuration,
+        campingSuitability: stop.climateRecommendation?.campingSuitability,
+        weatherRiskLevel: stop.weatherRiskLevel || stop.climateRecommendation?.weatherRiskLevel,
+        climateRecommendation: stop.climateRecommendation,
         location: stop.location
       })),
+
+      climateIntelligence: {
+        enabled: true,
+        dataSources: [...new Set(climateAwarePlaces.map(place => place.dataSource).filter(Boolean))],
+        travelSeason: getIndianSeason(startDate),
+        scoringModel: 'selected activity preference 30%, seasonal suitability 20%, actual weather compatibility 15%, forecast suitability 10%, ratings 10%, distance 10%, activity availability 5%',
+        recommendedPlaces: climateAwarePlaces,
+        replanning: {
+          supported: true,
+          triggerConditions: [
+            'High weather risk',
+            'Heavy rainfall probability',
+            'Strong winds',
+            'Low activity availability',
+            'Extreme temperature mismatch'
+          ],
+          action: 'Recalculate scores, move outdoor activities to safer times, and suggest nearby alternatives.'
+        }
+      },
+      warnings: [...feasibilityWarnings, ...climateWarnings],
 
       // 📅 Day-wise Itinerary
       dayWiseItinerary: dayPlans,

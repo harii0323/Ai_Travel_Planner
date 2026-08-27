@@ -128,7 +128,7 @@ Generate a personalized travel itinerary.
 
 - `npm start` - Production mode
 - `npm run dev` - Development with auto-reload
-- `npm run seed:india-tourism` - Seed India tourist places and pairwise distance data into MongoDB
+- `npm run seed:india-tourism` - Seed India tourist places and pairwise distance data into PostgreSQL
 
 ## Local India Tourism Dataset
 

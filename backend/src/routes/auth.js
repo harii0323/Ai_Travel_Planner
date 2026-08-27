@@ -2,18 +2,18 @@
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
+const { isConnected } = require('../config/database');
 const User = require('../models/User');
 
 const router = express.Router();
 
 const requireDatabase = (res) => {
-  if (mongoose.connection.readyState === 1) {
+  if (isConnected()) {
     return true;
   }
 
   res.status(503).json({
-    error: 'Database is not connected. Please check MONGODB_URI and restart the backend.'
+    error: 'Database is not connected. Please check DATABASE_URL and restart the backend.'
   });
   return false;
 };

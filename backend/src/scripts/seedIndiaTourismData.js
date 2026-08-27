@@ -1,11 +1,12 @@
 const path = require('path');
 const dotenv = require('dotenv');
-const mongoose = require('mongoose');
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+const { connectDB, closeDB } = require('../config/database');
 const indiaTouristPlaces = require('../data/indiaTouristPlaces');
 const TouristPlace = require('../models/TouristPlace');
 const PlaceDistance = require('../models/PlaceDistance');
-
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const EARTH_RADIUS_KM = 6371;
 
@@ -126,19 +127,17 @@ function getRecommendedModes(distanceKm, fromPlace, toPlace) {
 }
 
 async function seedIndiaTourismData() {
-  const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-travel-planner';
+  await connectDB();
 
-  await mongoose.connect(mongoUri);
-
-  await TouristPlace.deleteMany({});
   await PlaceDistance.deleteMany({});
+  await TouristPlace.deleteMany({});
 
   const places = await TouristPlace.insertMany(indiaTouristPlaces);
   const distances = [];
 
   for (const fromPlace of places) {
     for (const toPlace of places) {
-      if (fromPlace._id.equals(toPlace._id)) {
+      if (fromPlace._id === toPlace._id) {
         continue;
       }
 
@@ -171,11 +170,11 @@ async function seedIndiaTourismData() {
   console.log(`Seeded ${distances.length} directional place distances.`);
   console.log('Distance values are coordinate-based estimates; replace with Google Maps/manual values when precision is required.');
 
-  await mongoose.disconnect();
+  await closeDB();
 }
 
 seedIndiaTourismData().catch(async (error) => {
   console.error('Failed to seed India tourism data:', error.message);
-  await mongoose.disconnect();
+  await closeDB();
   process.exit(1);
 });

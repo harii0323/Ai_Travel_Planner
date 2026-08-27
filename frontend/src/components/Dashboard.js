@@ -117,7 +117,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
 
           <div className="recent-plans-list">
             {recentPlans.map(plan => (
-              <div key={plan._id} className="plan-card">
+              <div key={plan.id || plan._id} className="plan-card">
                 <div className="plan-header">
                   <h3>{plan.destination}</h3>
                   <span className={`status-badge status-${plan.status}`}>
@@ -127,7 +127,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory }) {
 
                 <div className="plan-details">
                   <p><strong>Budget:</strong> ₹{plan.budget.toLocaleString('en-IN')}</p>
-                  <p><strong>Duration:</strong> {plan.numberOfDays} days</p>
+                  <p><strong>Duration:</strong> {plan.totalDays || plan.numberOfDays} days</p>
                   <p><strong>Type:</strong> {plan.travelCompanionType}</p>
                   {plan.plannedTravelDate && (
                     <p><strong>Planned Date:</strong> {new Date(plan.plannedTravelDate).toLocaleDateString()}</p>

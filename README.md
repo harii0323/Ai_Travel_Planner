@@ -35,7 +35,7 @@ An intelligent, budget-optimized travel itinerary generator designed specificall
 - **Protected Routes** - All data endpoints protected with authentication
 
 ### Phase 2: Travel History & Data Persistence ✅
-- **Save Itineraries** - Store unlimited travel plans to MongoDB
+- **Save Itineraries** - Store unlimited travel plans to PostgreSQL
 - **History Management** - View, edit, delete, and duplicate saved plans
 - **Plan Status Tracking** - Track plans as draft, saved, completed, or archived
 - **Flexible Filtering** - Sort and filter by destination, status, date, or budget
@@ -59,7 +59,7 @@ An intelligent, budget-optimized travel itinerary generator designed specificall
 ## 🏗️ Architecture
 
 ### Backend (Node.js/Express)
-**Database**: MongoDB with Mongoose ODM
+**Database**: PostgreSQL with JSONB-backed model helpers
 **Authentication**: JWT tokens with bcryptjs password hashing
 **Key Services:**
 - `planner.js` - Itinerary generation and recommendations
@@ -80,7 +80,7 @@ An intelligent, budget-optimized travel itinerary generator designed specificall
 
 ### Prerequisites
 - Node.js (v14 or higher)
-- MongoDB (local or Atlas)
+- PostgreSQL 14+
 - npm or yarn
 
 ### Installation
@@ -93,7 +93,7 @@ An intelligent, budget-optimized travel itinerary generator designed specificall
    # Create .env file
    cat > .env << EOF
    PORT=5000
-   MONGODB_URI=mongodb://localhost:27017/ai-travel-planner
+   DATABASE_URL=postgres://postgres:postgres@localhost:5432/ai_travel_planner
    JWT_SECRET=your_secure_secret_key_here
    FRONTEND_URL=http://localhost:3000
    NODE_ENV=development

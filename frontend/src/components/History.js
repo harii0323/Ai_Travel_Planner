@@ -33,7 +33,7 @@ function History({ onSelectItinerary }) {
         const config = { headers: { Authorization: `Bearer ${token}` } };
 
         await api.delete(`/api/history/${id}`, config);
-        setItineraries(itineraries.filter(it => it._id !== id));
+        setItineraries(itineraries.filter(it => (it.id || it._id) !== id));
       } catch (error) {
         console.error('Error deleting itinerary:', error);
       }
@@ -140,7 +140,7 @@ function History({ onSelectItinerary }) {
       ) : (
         <div className="history-grid">
           {filteredItineraries.map(itinerary => (
-            <div key={itinerary._id} className="itinerary-card">
+            <div key={itinerary.id || itinerary._id} className="itinerary-card">
               <div className="card-header">
                 <div>
                   <h3>{itinerary.destination}</h3>
@@ -160,7 +160,7 @@ function History({ onSelectItinerary }) {
                 </div>
                 <div className="detail-row">
                   <span className="label">Duration:</span>
-                  <span className="value">{itinerary.numberOfDays} days</span>
+                  <span className="value">{itinerary.totalDays || itinerary.numberOfDays} days</span>
                 </div>
                 <div className="detail-row">
                   <span className="label">Travelers:</span>
@@ -191,7 +191,7 @@ function History({ onSelectItinerary }) {
               <div className="card-actions">
                 <button 
                   className="btn-small btn-view"
-                  onClick={() => onSelectItinerary(itinerary._id)}
+                  onClick={() => onSelectItinerary(itinerary.id || itinerary._id)}
                 >
                   View Details
                 </button>
@@ -199,7 +199,7 @@ function History({ onSelectItinerary }) {
                 <select
                   className="status-dropdown"
                   value={itinerary.status}
-                  onChange={(e) => handleStatusUpdate(itinerary._id, e.target.value)}
+                  onChange={(e) => handleStatusUpdate(itinerary.id || itinerary._id, e.target.value)}
                 >
                   <option value="draft">Draft</option>
                   <option value="saved">Saved</option>
@@ -209,7 +209,7 @@ function History({ onSelectItinerary }) {
 
                 <button
                   className="btn-small btn-duplicate"
-                  onClick={() => handleDuplicate(itinerary._id)}
+                  onClick={() => handleDuplicate(itinerary.id || itinerary._id)}
                   title="Create a copy of this plan"
                 >
                   Duplicate
@@ -217,7 +217,7 @@ function History({ onSelectItinerary }) {
 
                 <button
                   className="btn-small btn-delete"
-                  onClick={() => handleDelete(itinerary._id)}
+                  onClick={() => handleDelete(itinerary.id || itinerary._id)}
                   title="Delete this plan"
                 >
                   Delete

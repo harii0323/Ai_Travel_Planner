@@ -1,9 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const mongoose = require('mongoose');
 
 dotenv.config();
+
+const { connectDB, isConnected } = require('./config/database');
 
 const app = express();
 
@@ -20,28 +21,13 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || '10mb' }));
+app.use(express.urlencoded({
+  extended: true,
+  limit: process.env.REQUEST_BODY_LIMIT || '10mb'
+}));
 
-// MongoDB Connection
-const connectDB = async () => {
-  try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-travel-planner';
-    
-    await mongoose.connect(mongoUri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    
-    console.log('✅ MongoDB connected successfully');
-  } catch (err) {
-    console.error('❌ MongoDB connection failed:', err.message);
-    // Start without MongoDB if connection fails (for development)
-    console.log('⚠️  Running in demo mode without database');
-  }
-};
-
-// Connect to MongoDB
+// Connect to PostgreSQL
 connectDB();
 
 // Routes
@@ -62,7 +48,7 @@ app.get('/api/health', async (req, res) => {
 
   res.json({
     status: 'Server is running',
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    database: isConnected() ? 'connected' : 'disconnected',
     googleMaps: {
       ok: googleMapsHealth.ok,
       status: googleMapsHealth.status,
@@ -81,8 +67,15 @@ hasGoogleMapsAPI();
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err.message);
+
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'Request payload is too large',
+      message: 'The itinerary is larger than the server request limit. Increase REQUEST_BODY_LIMIT or save a smaller plan.'
+    });
+  }
   
-  // Mongoose validation error
+  // Validation error
   if (err.name === 'ValidationError') {
     return res.status(400).json({ 
       error: 'Validation Error', 
