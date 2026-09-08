@@ -1,42 +1,70 @@
 import React, { useState } from 'react';
 import api from '../api';
 import '../styles/Profile.css';
+import {
+  User,
+  Compass,
+  Wallet,
+  Sparkles,
+  ShieldCheck,
+  Check,
+  Edit2,
+  Save,
+  X,
+  GraduationCap,
+  Heart,
+  Trees,
+  Camera,
+  Utensils,
+  Landmark,
+  Coffee
+} from 'lucide-react';
 
-function Profile({ user, onProfileUpdate }) {
+const INTEREST_OPTIONS = [
+  { id: 'adventure', label: 'Adventure', icon: '🧗' },
+  { id: 'culture', label: 'Culture & Heritage', icon: '🏛️' },
+  { id: 'beach', label: 'Beaches & Ocean', icon: '🏖️' },
+  { id: 'food', label: 'Food & Cuisine', icon: '🍲' },
+  { id: 'nightlife', label: 'Nightlife & Social', icon: '✨' },
+  { id: 'nature', label: 'Nature & Forests', icon: '🌲' },
+  { id: 'history', label: 'History & Forts', icon: '🏰' },
+  { id: 'photography', label: 'Photography', icon: '📸' },
+  { id: 'shopping', label: 'Local Bazaars', icon: '🛍️' }
+];
+
+function Profile({ user, onProfileUpdate, addToast }) {
   const [formData, setFormData] = useState({
     name: user?.name || '',
     age: user?.age || '',
     studentId: user?.studentId || '',
     companionType: user?.travelPreferences?.companionType || 'solo',
     budget: user?.travelPreferences?.budget || 'budget-friendly',
-    interests: user?.travelPreferences?.interests || ['adventure', 'culture']
+    interests: user?.travelPreferences?.interests || ['adventure', 'culture', 'nature']
   });
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [name]: value
     }));
   };
 
-  const handleInterestToggle = (interest) => {
-    setFormData(prev => ({
+  const handleInterestToggle = (id) => {
+    if (!editing) return;
+    setFormData((prev) => ({
       ...prev,
-      interests: prev.interests.includes(interest)
-        ? prev.interests.filter(i => i !== interest)
-        : [...prev.interests, interest]
+      interests: prev.interests.includes(id)
+        ? prev.interests.filter((i) => i !== id)
+        : [...prev.interests, id]
     }));
   };
 
   const handleSave = async () => {
     setSaving(true);
-    setMessage('');
-
     try {
       const token = localStorage.getItem('token');
       const config = { headers: { Authorization: `Bearer ${token}` } };
@@ -45,7 +73,7 @@ function Profile({ user, onProfileUpdate }) {
         '/api/auth/profile',
         {
           name: formData.name,
-          age: parseInt(formData.age),
+          age: parseInt(formData.age) || null,
           studentId: formData.studentId || null,
           travelPreferences: {
             companionType: formData.companionType,
@@ -58,66 +86,80 @@ function Profile({ user, onProfileUpdate }) {
 
       if (response.data.success) {
         const updatedUser = response.data.user;
-        localStorage.setItem('user', JSON.stringify(updatedUser));
         onProfileUpdate(updatedUser);
-        
         setEditing(false);
-        setMessage('Profile updated successfully!');
-        setTimeout(() => setMessage(''), 3000);
+        if (addToast) addToast('Profile & travel preferences saved! ✨', 'success');
       }
     } catch (error) {
-      setMessage(error.response?.data?.error || 'Error updating profile');
+      if (addToast) addToast(error.response?.data?.error || 'Error updating profile', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const interests = [
-    { id: 'adventure', label: 'Adventure' },
-    { id: 'culture', label: 'Culture' },
-    { id: 'beach', label: 'Beach' },
-    { id: 'food', label: 'Food & cuisine' },
-    { id: 'nightlife', label: 'Nightlife' },
-    { id: 'nature', label: 'Nature' },
-    { id: 'history', label: 'History' },
-    { id: 'shopping', label: 'Shopping' }
-  ];
+  const initials = formData.name
+    ? formData.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
+    : 'VI';
 
   return (
     <div className="profile-container">
       <header className="profile-header">
-        <p className="eyebrow">Traveler settings</p>
-        <h2>Your profile</h2>
-        <p>Manage your account and travel preferences</p>
+        <span className="eyebrow-badge">
+          <Sparkles size={13} />
+          Account & Vibe
+        </span>
+        <h2>Traveler Profile</h2>
+        <p>Personalize your travel persona, student discounts, and activity preferences.</p>
       </header>
 
-      {message && <div className={`alert ${message.includes('successfully') ? 'success' : 'error'}`}>{message}</div>}
-
       <div className="profile-card">
+        {/* Traveler Persona Banner */}
+        <div className="profile-persona-banner">
+          <div className="profile-big-avatar">{initials}</div>
+          <div className="profile-persona-info">
+            <h3>{formData.name || 'Student Traveler'}</h3>
+            <p>{user?.email}</p>
+            <div className="profile-badges-row">
+              <span className="persona-pill style">
+                <Compass size={13} />
+                {formData.companionType ? `${formData.companionType.toUpperCase()} EXPLORER` : 'SOLO EXPLORER'}
+              </span>
+              <span className="persona-pill student">
+                <GraduationCap size={13} />
+                {formData.studentId ? 'STUDENT DISCOUNT VERIFIED' : 'STUDENT TIER'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Basic Info Section */}
         <div className="profile-section">
-          <h3>Basic Information</h3>
-          
+          <h4>
+            <User size={18} color="#14b8a6" />
+            Personal Details
+          </h4>
+
           {!editing ? (
-            <div className="info-display">
-              <div className="info-item">
-                <label>Name</label>
-                <p>{formData.name}</p>
+            <div className="profile-fields-grid">
+              <div className="profile-field-item">
+                <label>Full Name</label>
+                <span>{formData.name || 'Not provided'}</span>
               </div>
-              <div className="info-item">
-                <label>Email</label>
-                <p>{user?.email}</p>
+              <div className="profile-field-item">
+                <label>Email Address</label>
+                <span>{user?.email}</span>
               </div>
-              <div className="info-item">
+              <div className="profile-field-item">
                 <label>Age</label>
-                <p>{formData.age || 'Not specified'}</p>
+                <span>{formData.age ? `${formData.age} years old` : 'Not specified'}</span>
               </div>
-              <div className="info-item">
+              <div className="profile-field-item">
                 <label>Student ID</label>
-                <p>{formData.studentId || '(Unlocked student discounts!)'}</p>
+                <span>{formData.studentId || 'Enabled for student discounts'}</span>
               </div>
             </div>
           ) : (
-            <div className="info-edit">
+            <div className="profile-fields-grid">
               <div className="form-group">
                 <label>Full Name</label>
                 <input
@@ -125,6 +167,7 @@ function Profile({ user, onProfileUpdate }) {
                   name="name"
                   value={formData.name}
                   onChange={handleChange}
+                  placeholder="Enter full name"
                 />
               </div>
 
@@ -135,8 +178,7 @@ function Profile({ user, onProfileUpdate }) {
                   name="age"
                   value={formData.age}
                   onChange={handleChange}
-                  min="16"
-                  max="120"
+                  placeholder="e.g. 21"
                 />
               </div>
 
@@ -147,100 +189,106 @@ function Profile({ user, onProfileUpdate }) {
                   name="studentId"
                   value={formData.studentId}
                   onChange={handleChange}
-                  placeholder="For additional discounts"
+                  placeholder="College ID number"
                 />
               </div>
             </div>
           )}
         </div>
 
+        {/* Travel Preferences Section */}
         <div className="profile-section">
-          <h3>Travel Preferences</h3>
+          <h4>
+            <Compass size={18} color="#f59e0b" />
+            Default Travel Preferences
+          </h4>
 
           {!editing ? (
-            <div className="prefs-display">
-              <div className="pref-item">
-                <label>Travel Style</label>
-                <p>
-                  <span className="badge">{formData.companionType}</span>
-                </p>
+            <div className="profile-fields-grid">
+              <div className="profile-field-item">
+                <label>Default Travel Style</label>
+                <span style={{ textTransform: 'capitalize' }}>{formData.companionType}</span>
               </div>
-              <div className="pref-item">
-                <label>Budget Preference</label>
-                <p>
-                  <span className="badge">{formData.budget.replace('-', ' ')}</span>
-                </p>
-              </div>
-              <div className="pref-item">
-                <label>Interests</label>
-                <div className="interest-badges">
-                  {formData.interests.map(interest => {
-                    const intInfo = interests.find(i => i.id === interest);
-                    return (
-                      <span key={interest} className="badge interest">
-                        {intInfo?.label || interest}
-                      </span>
-                    );
-                  })}
-                </div>
+              <div className="profile-field-item">
+                <label>Budget Level</label>
+                <span style={{ textTransform: 'capitalize' }}>{formData.budget.replace('-', ' ')}</span>
               </div>
             </div>
           ) : (
-            <div className="prefs-edit">
+            <div className="profile-fields-grid">
               <div className="form-group">
-                <label>Travel Companion Type</label>
+                <label>Preferred Travel Style</label>
                 <select
                   name="companionType"
                   value={formData.companionType}
                   onChange={handleChange}
                 >
-                  <option value="solo">Solo traveler</option>
+                  <option value="solo">Solo Traveler</option>
                   <option value="couple">Couple</option>
-                  <option value="friends">Friends group</option>
+                  <option value="friends">Friends Group</option>
                   <option value="family">Family</option>
                 </select>
               </div>
 
               <div className="form-group">
-                <label>Budget Preference</label>
+                <label>Budget Tier</label>
                 <select
                   name="budget"
                   value={formData.budget}
                   onChange={handleChange}
                 >
-                  <option value="budget-friendly">Budget-Friendly (Under ₹500/day)</option>
-                  <option value="moderate">Moderate (₹500-1500/day)</option>
-                  <option value="comfortable">Comfortable (₹1500-3000/day)</option>
-                  <option value="luxury">Luxury (₹3000+/day)</option>
+                  <option value="budget-friendly">Budget Friendly (Under ₹1,500/day)</option>
+                  <option value="moderate">Moderate (₹1,500 - 3,500/day)</option>
+                  <option value="comfortable">Comfortable (₹3,500 - 6,000/day)</option>
                 </select>
-              </div>
-
-              <div className="form-group">
-                <label>Travel Interests (Select all that apply)</label>
-                <div className="interest-selector">
-                  {interests.map(interest => (
-                    <label key={interest.id} className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={formData.interests.includes(interest.id)}
-                        onChange={() => handleInterestToggle(interest.id)}
-                      />
-                      <span>{interest.label}</span>
-                    </label>
-                  ))}
-                </div>
               </div>
             </div>
           )}
+
+          {/* Interest Chips */}
+          <div style={{ marginTop: '10px' }}>
+            <label style={{ display: 'block', color: 'var(--muted)', fontSize: '13px', fontWeight: 700, marginBottom: '10px' }}>
+              Favorite Travel Interests {editing && '(Click to toggle)'}:
+            </label>
+            <div className="profile-interests-chips">
+              {INTEREST_OPTIONS.map((item) => {
+                const selected = formData.interests.includes(item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className={`profile-interest-pill ${selected ? 'selected' : ''}`}
+                    onClick={() => handleInterestToggle(item.id)}
+                  >
+                    <span>{item.icon}</span>
+                    <span>{item.label}</span>
+                    {selected && <Check size={14} />}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
-        <div className="profile-actions">
+        {/* Student Discount Verification Box */}
+        <div className="profile-section" style={{ borderBottom: 'none' }}>
+          <div className="student-perks-box">
+            <div className="student-perks-left">
+              <GraduationCap size={32} color="#f59e0b" />
+              <div>
+                <h5>Student Travel Perks Active</h5>
+                <p>Enjoy automatic 15% to 30% savings calculated on hostels, state buses, and museum tickets.</p>
+              </div>
+            </div>
+            <span className="persona-pill student">ACTIVE PERKS</span>
+          </div>
+        </div>
+
+        {/* Profile Action Footer */}
+        <div className="profile-actions-footer">
           {!editing ? (
-            <button
-              className="btn-primary"
-              onClick={() => setEditing(true)}
-            >
-              Edit Profile
+            <button className="btn-primary" onClick={() => setEditing(true)}>
+              <Edit2 size={16} />
+              <span>Edit Preferences</span>
             </button>
           ) : (
             <>
@@ -249,30 +297,18 @@ function Profile({ user, onProfileUpdate }) {
                 onClick={handleSave}
                 disabled={saving}
               >
-                {saving ? 'Saving...' : 'Save Changes'}
+                <Save size={16} />
+                <span>{saving ? 'Saving...' : 'Save Changes'}</span>
               </button>
               <button
                 className="btn-secondary"
                 onClick={() => setEditing(false)}
               >
-                Cancel
+                <X size={16} />
+                <span>Cancel</span>
               </button>
             </>
           )}
-        </div>
-
-        <div className="profile-info-box">
-          <h4>About your preferences</h4>
-          <p>
-            Your travel preferences help us personalize itineraries with:
-          </p>
-          <ul>
-            <li>Activities matched to your travel style</li>
-            <li>Budget allocation optimized for your preferences</li>
-            <li>Group recommendations based on companion type</li>
-            <li>Destination suggestions matching your interests</li>
-            <li>Student discounts if you have a valid student ID</li>
-          </ul>
         </div>
       </div>
     </div>

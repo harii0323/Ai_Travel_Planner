@@ -32,6 +32,8 @@ class ItineraryDocument {
     this.createdAt = row.created_at;
     this.updatedAt = row.updated_at;
     this.plannedTravelDate = row.planned_travel_date;
+    this.rentalBooking = row.rental_booking || {};
+    this.rentalVehicle = row.rental_vehicle || {};
   }
 
   async save() {
@@ -129,11 +131,11 @@ const Itinerary = {
         id, user_id, title, description, destination, start_location, start_date, end_date,
         total_days, budget, estimated_cost, without_budget, activities, accommodation,
         transport, travel_companion_type, number_of_travelers, estimated_costs, day_plans,
-        money_tips, recommendations, planned_travel_date, tags
+        money_tips, recommendations, planned_travel_date, tags, rental_booking, rental_vehicle
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-        $15, $16, $17, $18, $19, $20, $21, $22, $23
+        $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
       )
       RETURNING *`,
       [
@@ -159,7 +161,9 @@ const Itinerary = {
         JSON.stringify(data.moneyTips || []),
         JSON.stringify(data.recommendations || {}),
         data.plannedTravelDate || null,
-        JSON.stringify(data.tags || [])
+        JSON.stringify(data.tags || []),
+        JSON.stringify(data.rentalBooking || {}),
+        JSON.stringify(data.rentalVehicle || {})
       ]
     );
 

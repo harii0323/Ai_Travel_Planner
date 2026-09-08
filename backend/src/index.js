@@ -35,12 +35,14 @@ const authRouter = require('./routes/auth');
 const itineraryRouter = require('./routes/itinerary');
 const historyRouter = require('./routes/history');
 const placesRouter = require('./routes/places');
+const rentalsRouter = require('./routes/rentals');
 const { validateGoogleMapsApiKey } = require('./utils/googleMapsAPI');
 
 app.use('/api/auth', authRouter);
 app.use('/api/itinerary', itineraryRouter);
 app.use('/api/history', historyRouter);
 app.use('/api/places', placesRouter);
+app.use('/api/rentals', rentalsRouter);
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {

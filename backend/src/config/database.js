@@ -54,6 +54,10 @@ const initializeSchema = async () => {
       planned_travel_date TIMESTAMPTZ
     );
 
+    ALTER TABLE itineraries
+      ADD COLUMN IF NOT EXISTS rental_booking JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS rental_vehicle JSONB NOT NULL DEFAULT '{}'::jsonb;
+
     CREATE TABLE IF NOT EXISTS tourist_places (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,

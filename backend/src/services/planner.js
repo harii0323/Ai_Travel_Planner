@@ -11,6 +11,27 @@ const {
   hasGoogleMapsAPI
 } = require('../utils/googleMapsAPI');
 
+const {
+  dynamicTravelPlanner,
+  reoptimizeItinerary
+} = require('./dynamicTravelPlanner');
+
+const {
+  getLiveFuelPrice,
+  getLiveAccommodationRate,
+  getLiveTollRate,
+  getLivePublicTransitRates,
+  getLiveMealCost,
+  getLiveAttractionFee,
+  computeRealTimeTripCost
+} = require('./realTimePricingService');
+
+const {
+  discoverAllRouteCandidates,
+  segmentRoute,
+  calculateFameScore
+} = require('./routePlaceDiscoveryEngine');
+
 // Database of budget-friendly accommodations by destination type (all prices in INR)
 const accommodationDb = {
   hostel: { avgPrice: 300, maxPrice: 600, description: 'Youth hostels with shared or private rooms' },
@@ -347,7 +368,7 @@ async function getBestRoutePlan(startLocation, destination, transportMode, numDa
           distance: googleResult.distance,
           estimatedDuration: googleResult.duration,
           transportMode: transportMode,
-          distanceSource: 'google_maps'
+          distanceSource: "google_maps"
         },
         intermediateStops: selectedStops,
         totalDistance: googleResult.distance + selectedStops.reduce((sum, stop) => sum + (stop.distance || 50), 0)
@@ -356,7 +377,7 @@ async function getBestRoutePlan(startLocation, destination, transportMode, numDa
   }
 
   // Google Maps not available or failed: use local database route if available
-  console.log(`📚 Checking local database route...`);
+  console.log("📚 Checking local database route...");
   if (routeData) {
     console.log(`✅ Found in database with ${routeData.distance} km distance`);
     const maxStops = Math.min(3, Math.floor(numDays / 2));
@@ -371,7 +392,7 @@ async function getBestRoutePlan(startLocation, destination, transportMode, numDa
         distance: routeData.distance,
         estimatedDuration: routeData.duration,
         transportMode: transportMode,
-        distanceSource: 'database'
+        distanceSource: "database"
       },
       intermediateStops: selectedStops,
       totalDistance: routeData.distance + selectedStops.reduce((sum, stop) => sum + (stop.distance || 50), 0)
@@ -379,16 +400,16 @@ async function getBestRoutePlan(startLocation, destination, transportMode, numDa
   }
 
   // No Google Maps and no local route: provide basic fallback
-  console.log(`⚠️ Using fallback_basic distance (no API, no database)`);
-  const fallbackDistance = Math.floor(Math.random() * 1000) + 500; // 500-1500 km
+  console.log("⚠️ Using fallback_basic distance (no API, no database)");
+  const fallbackDistance = Math.floor(Math.random() * 1000) + 500;
   return {
     primaryRoute: {
       from: startLocation,
       to: destination,
       distance: fallbackDistance,
-      estimatedDuration: '12-24 hours',
+      estimatedDuration: "12-24 hours",
       transportMode: transportMode,
-      distanceSource: 'fallback_basic'
+      distanceSource: "fallback_basic"
     },
     intermediateStops: [],
     totalDistance: fallbackDistance
@@ -398,30 +419,26 @@ async function getBestRoutePlan(startLocation, destination, transportMode, numDa
 // Enhance route data with Google Maps distance (if API key configured)
 async function enhanceRouteWithGoogleMaps(routePlan, startLocation, destination) {
   try {
-    // Only attempt if Google Maps API is configured
     if (!hasGoogleMapsAPI()) {
-      return routePlan; // Return original route plan if API not configured
+      return routePlan;
     }
 
     console.log(`Attempting to fetch distance from Google Maps for ${startLocation} to ${destination}`);
-    
     const result = await getDistanceFromGoogleMaps(startLocation, destination);
     
     if (result.error) {
       console.warn(`Google Maps API warning: ${result.error}`);
-      return routePlan; // Return original route plan on error
+      return routePlan;
     }
 
-    // Update route plan with Google Maps data
     const enhancedRoutePlan = { ...routePlan };
     enhancedRoutePlan.primaryRoute = {
       ...routePlan.primaryRoute,
       distance: result.distance,
       estimatedDuration: result.duration,
-      distanceSource: 'google_maps'
+      distanceSource: "google_maps"
     };
     
-    // Recalculate total distance
     enhancedRoutePlan.totalDistance = 
       result.distance + 
       routePlan.intermediateStops.reduce((sum, stop) => sum + (stop.distance || 50), 0);
@@ -429,8 +446,8 @@ async function enhanceRouteWithGoogleMaps(routePlan, startLocation, destination)
     console.log(`Successfully fetched distance from Google Maps: ${result.distance} km`);
     return enhancedRoutePlan;
   } catch (error) {
-    console.error('Error enhancing route with Google Maps:', error.message);
-    return routePlan; // Return original route plan on error
+    console.error("Error enhancing route with Google Maps:", error.message);
+    return routePlan;
   }
 }
 
@@ -440,65 +457,55 @@ async function estimateRouteDistance(startLocation, destination, intermediateSto
     if (!hasGoogleMapsAPI() || !intermediateStops || intermediateStops.length === 0) {
       return null;
     }
-
-    console.log(`Fetching distances for ${intermediateStops.length} intermediate stops`);
-    const locations = intermediateStops.map(stop => stop.name);
-    
-    // This would require using getDistancesToMultipleLocations
-    // For now, we'll calculate cumulative distance
     return null;
   } catch (error) {
-    console.error('Error estimating route distance:', error.message);
+    console.error("Error estimating route distance:", error.message);
     return null;
   }
 }
+
 function estimateTransportCost(mode, distance, isStudent = false) {
-  const config = transportCosts[mode] || transportCosts.bus;
-  const baseCost = config.base + (distance * (config.perKm || 0));
-
-  // Apply student discount (20% for flights and trains)
-  const studentDiscount = isStudent && (mode === 'flight' || mode === 'train') ? 0.2 : 0;
-  const discountedCost = baseCost * (1 - studentDiscount);
-
+  const liveTransit = getLivePublicTransitRates(distance, mode, 1, isStudent);
   return {
     mode: mode,
-    baseCost: Math.round(baseCost * 100) / 100,
-    discountedCost: Math.round(discountedCost * 100) / 100,
-    studentDiscount: studentDiscount > 0 ? Math.round(studentDiscount * 100) + '%' : 'N/A',
+    baseCost: liveTransit.baseFarePerPerson,
+    discountedCost: liveTransit.netFarePerPerson,
+    studentDiscount: liveTransit.studentDiscountPercent ? `${liveTransit.studentDiscountPercent}%` : "N/A",
     distance: distance,
     isStudent: isStudent
   };
 }
 
-// Calculate transportation cost for public transport
-function calculatePublicTransportCost(transportMode, distance, numTravelers) {
-  const config = transportCosts[transportMode] || transportCosts.bus;
-  const baseCost = config.base + (distance * config.perKm || 0);
-  const totalCost = baseCost * numTravelers; // Multiply by number of travelers
+// Calculate transportation cost for public transport using live dynamic slabs
+function calculatePublicTransportCost(transportMode, distance, numTravelers, isStudent = true) {
+  const liveTransit = getLivePublicTransitRates(distance, transportMode, numTravelers, isStudent);
 
   return {
     mode: transportMode,
-    baseCostPerPerson: Math.round(baseCost * 100) / 100,
-    totalCost: Math.round(totalCost * 100) / 100,
+    serviceClass: liveTransit.serviceClass,
+    baseCostPerPerson: liveTransit.baseFarePerPerson,
+    studentDiscount: liveTransit.studentDiscountPercent ? `${liveTransit.studentDiscountPercent}%` : "N/A",
+    netCostPerPerson: liveTransit.netFarePerPerson,
+    totalCost: liveTransit.totalTripTransitCost,
     numTravelers: numTravelers,
-    distance: distance
+    distance: distance,
+    source: liveTransit.source
   };
 }
 
-// Calculate transportation cost for own vehicle
-function calculateOwnVehicleCost(vehicleType, fuelType, mileage, totalDistance, numTravelers) {
-  const efficiency = vehicleEfficiency[vehicleType]?.[fuelType];
-  if (!efficiency) {
-    throw new Error(`Invalid vehicle type or fuel type: ${vehicleType}, ${fuelType}`);
-  }
+// Calculate transportation cost for own vehicle using live city fuel rates and NHAI tolls
+function calculateOwnVehicleCost(vehicleType, fuelType, mileage, totalDistance, numTravelers, origin = "Mumbai", destination = "Goa") {
+  const efficiency = vehicleEfficiency[vehicleType]?.[fuelType] || vehicleEfficiency.car.petrol;
+  const actualMileage = Number(mileage) || efficiency.avgMileage;
+  const fuelRequired = Math.round((totalDistance / actualMileage) * 10) / 10;
 
-  const actualMileage = mileage || efficiency.avgMileage;
-  const fuelRequired = totalDistance / actualMileage;
-  const fuelPrice = fuelPrices[fuelType];
-  const fuelCost = fuelRequired * fuelPrice;
+  // Real-time live fuel price based on origin city / state
+  const liveFuel = getLiveFuelPrice(origin, fuelType);
+  const fuelCost = Math.round(fuelRequired * liveFuel.price);
 
-  // Toll charges (only for cars)
-  const tollCost = vehicleType === 'car' ? getTollCharges(totalDistance) : 0;
+  // Real-time Fastag toll charges based on route corridor
+  const liveToll = getLiveTollRate(origin, destination, totalDistance, vehicleType);
+  const tollCost = liveToll.totalToll;
 
   const totalTransportCost = fuelCost + tollCost;
 
@@ -506,10 +513,15 @@ function calculateOwnVehicleCost(vehicleType, fuelType, mileage, totalDistance, 
     vehicleType,
     fuelType,
     mileage: actualMileage,
-    fuelRequired: Math.round(fuelRequired * 100) / 100,
-    fuelCost: Math.round(fuelCost * 100) / 100,
-    tollCost: Math.round(tollCost * 100) / 100,
-    totalCost: Math.round(totalTransportCost * 100) / 100,
+    fuelRequired,
+    fuelPricePerUnit: liveFuel.price,
+    fuelUnit: liveFuel.unit,
+    fuelCost,
+    fuelSource: liveFuel.source,
+    tollCost,
+    tollSource: liveToll.source,
+    totalCost: totalTransportCost,
+    perPersonCost: Math.round(totalTransportCost / Math.max(1, numTravelers)),
     numTravelers: numTravelers,
     distance: totalDistance
   };
@@ -517,39 +529,44 @@ function calculateOwnVehicleCost(vehicleType, fuelType, mileage, totalDistance, 
 
 // Get toll charges based on route
 function getTollCharges(distance) {
-  // Simplified toll calculation based on distance
-  const tollPerKm = 1.5; // Average toll per km for cars
-  return Math.round(distance * tollPerKm * 100) / 100;
+  return Math.round(distance * 1.65);
 }
 
-// Calculate food cost
-function calculateFoodCost(numTravelers, numDays, budgetCategory = 'moderate') {
-  const dailyCosts = foodCosts[budgetCategory] || foodCosts.moderate;
-  const dailyTotal = dailyCosts.breakfast + dailyCosts.lunch + dailyCosts.dinner;
-  const tripTotal = dailyTotal * numTravelers * numDays;
+// Calculate food cost using live city cost-of-living index
+function calculateFoodCost(numTravelers, numDays, budgetCategory = "moderate", destination = "Goa") {
+  const liveMeals = getLiveMealCost(destination, budgetCategory, numDays, numTravelers);
 
   return {
-    perPersonPerDay: dailyTotal,
-    totalCost: Math.round(tripTotal * 100) / 100,
+    perPersonPerDay: liveMeals.perPersonPerDay,
+    totalCost: liveMeals.totalFoodCost,
     numTravelers: numTravelers,
     numDays: numDays,
-    breakdown: dailyCosts
+    cityTier: liveMeals.cityTier,
+    breakdown: {
+      breakfast: liveMeals.breakfast,
+      lunch: liveMeals.lunch,
+      dinner: liveMeals.dinner
+    },
+    source: liveMeals.source
   };
 }
 
-// Calculate accommodation cost
-function calculateAccommodationCost(destination, accommodationType, numNights, numTravelers) {
-  const accommodation = accommodationDb[accommodationType] || accommodationDb.hostel;
-  const costPerNight = accommodation.avgPrice;
-  const totalCost = costPerNight * numNights;
+// Calculate accommodation cost with destination & seasonality multipliers
+function calculateAccommodationCost(destination, accommodationType, numNights, numTravelers, travelDate = new Date()) {
+  const liveAccom = getLiveAccommodationRate(destination, accommodationType, travelDate, numTravelers);
+  const costPerNight = liveAccom.pricePerNight;
+  const totalCost = costPerNight * Math.max(1, numNights) * numTravelers;
 
   return {
     type: accommodationType,
+    label: liveAccom.label,
     costPerNight: costPerNight,
-    numNights: numNights,
-    totalCost: Math.round(totalCost * 100) / 100,
-    description: accommodation.description,
-    numTravelers: numTravelers
+    priceRange: liveAccom.priceRange,
+    demandStatus: liveAccom.demandStatus,
+    numNights: Math.max(1, numNights),
+    totalCost: totalCost,
+    numTravelers: numTravelers,
+    source: liveAccom.source
   };
 }
 
@@ -579,12 +596,10 @@ function calculateActivityCosts(activities, numTravelers) {
   };
 }
 
-// Main itinerary generation function
-
 // Get recommended activities based on preferences
 function getRecommendedActivities(preferences, budget, numDays) {
   const activities = [];
-  const preferredCategories = preferences.split(',').map(p => p.trim().toLowerCase()).filter(p => p);
+  const preferredCategories = preferences.split(",").map(p => p.trim().toLowerCase()).filter(p => p);
   
   let remainingBudget = budget;
   const activitiesPerDay = {};
@@ -593,9 +608,7 @@ function getRecommendedActivities(preferences, budget, numDays) {
     activitiesPerDay[day] = [];
   }
 
-  // Select activities within budget
   let currentDay = 1;
-  
   for (const category of preferredCategories) {
     if (activityDb[category]) {
       for (const activity of activityDb[category]) {
@@ -613,15 +626,15 @@ function getRecommendedActivities(preferences, budget, numDays) {
     }
   }
 
-  // If no preferences, add some free/cheap activities
   if (activities.length === 0) {
     const freeActivities = [
-      { name: 'Local market exploration', cost: 0, category: 'cultural' },
-      { name: 'Beach time', cost: 0, category: 'nature' },
-      { name: 'Hiking', cost: 0, category: 'adventure' },
-      { name: 'Street food tour', cost: 200, category: 'food' }
+      { name: "Local market exploration", cost: 0, category: "cultural" },
+      { name: "Beach time", cost: 0, category: "nature" },
+      { name: "Hiking", cost: 0, category: "adventure" },
+      { name: "Street food tour", cost: 200, category: "food" }
     ];
 
+    let currentDay = 1;
     for (const activity of freeActivities) {
       if (currentDay <= numDays) {
         activities.push({
@@ -682,7 +695,6 @@ function generateDayWiseItineraryWithStops(numDays, routePlan, activities, accom
     // Add intermediate stops for this day
     const dayStops = routePlan.intermediateStops.slice(stopIndex, stopIndex + stopsPerDay);
     stopIndex += stopsPerDay;
-
     if (day === 1) {
       plan += `**Morning:** Departure from ${routePlan.primaryRoute.from}\n`;
       plan += `**Travel:** ${routePlan.primaryRoute.estimatedDuration} journey to ${routePlan.primaryRoute.to}\n\n`;
@@ -2038,9 +2050,11 @@ function buildTripFeasibility(routePlan, numDays, transportMode, vehicleType) {
 }
 
 function scoreCorridorPlace(place, preferences) {
+  const fameScore = calculateFameScore(place);
+  const fameComponent = fameScore * 100;
   const ratingScore = Math.min(100, (place.rating / 5) * 100);
   const reviewScore = Math.min(100, Math.log10((place.userRatingsTotal || 0) + 1) * 25);
-  const detourScore = Math.max(0, 100 - ((place.distanceFromRouteKm || 0) / preferences.maxDetourKm) * 100);
+  const detourScore = Math.max(0, 100 - ((place.distanceFromRouteKm || 0) / (preferences.maxDetourKm || 40)) * 100);
   const popularityScore = getTouristPopularityScore(place);
   const categoryScore = Math.min(100, place.categoryPriority || 0);
   const preferenceScore = getPreferenceMatchScore(place, preferences.companionType, preferences.numberOfTravelers);
@@ -2049,8 +2063,12 @@ function scoreCorridorPlace(place, preferences) {
   return Math.round((
     climateRecommendation.matchScore * 0.35 +
     ratingScore * 0.20 +
+    fameComponent * 0.25 +
+    climateRecommendation.matchScore * 0.25 +
+    ratingScore * 0.15 +
     reviewScore * 0.15 +
     detourScore * 0.20 +
+    detourScore * 0.10 +
     popularityScore * 0.05 +
     categoryScore * 0.05 +
     preferenceScore
@@ -2073,6 +2091,15 @@ function decorateCorridorCandidate(candidate, routePoints, preferences, phase) {
   if (nearest.distanceKm > preferences.maxDetourKm) return null;
   if ((candidate.rating || 0) < preferences.minRating) return null;
 
+  const fameScore = calculateFameScore(candidate);
+  // Protect famous places from being eliminated by tight detour thresholds
+  const effectiveMaxDetour = fameScore >= 0.85 ? Math.max(preferences.maxDetourKm, 65) : preferences.maxDetourKm;
+  if (nearest.distanceKm > effectiveMaxDetour) return null;
+
+  // Protect high-fame attractions from strict minRating pruning
+  const effectiveMinRating = fameScore >= 0.85 ? 4.0 : preferences.minRating;
+  if ((candidate.rating || 0) < effectiveMinRating) return null;
+
   const detourDistance = Math.round(nearest.distanceKm * 10) / 10;
   const detourTime = Math.max(8, Math.round((detourDistance * 2 / 35) * 60));
   const visitDurationMinutes = calculateVisitDurationMinutes(candidate);
@@ -2080,6 +2107,8 @@ function decorateCorridorCandidate(candidate, routePoints, preferences, phase) {
   const enriched = {
     ...candidate,
     phase,
+    fameScore,
+    isMustVisit: fameScore >= 0.85,
     distanceFromRouteKm: detourDistance,
     detourDistance,
     detourTime,
@@ -2282,9 +2311,37 @@ async function buildCorridorRoutePlan({
 
   const searchResults = await runLimited(searchTasks, ROAD_TRIP_CONFIG.apiParallelism);
   const rawCandidates = searchResults.flat();
+
+  // Multi-Segment Landmark Discovery Engine candidates
+  let adaptedCorridorPlaces = [];
+  try {
+    const corridorDiscovered = await discoverAllRouteCandidates({
+      startLocation,
+      destination,
+      userPreferences: {
+        activities: Array.isArray(interests) ? interests.join(',') : interests,
+        preferredPlaceType: options.preferredPlaceType
+      },
+      maxPlaces: 35
+    });
+
+    adaptedCorridorPlaces = corridorDiscovered.map(p => ({
+      name: p.name,
+      placeId: p.placeId,
+      rating: p.rating,
+      userRatingsTotal: p.reviews,
+      types: [p.category],
+      location: p.coordinates,
+      formattedAddress: `${p.name}, ${p.city}, ${p.state}`
+    }));
+  } catch (err) {
+    console.warn('Corridor discovery engine warning:', err.message);
+  }
+
+  const allCandidatePool = [...rawCandidates, ...adaptedCorridorPlaces];
   const excludedPlaceIds = new Set(options.excludePlaceIds || []);
   const excludedPlaceNames = new Set((options.excludePlaceNames || []).map(name => String(name).toLowerCase()));
-  const validatedPlaces = rawCandidates
+  const validatedPlaces = allCandidatePool
     .filter(place => !excludedPlaceIds.has(place.placeId))
     .filter(place => !excludedPlaceNames.has(String(place.name || '').toLowerCase()))
     .map(place => decorateCorridorCandidate(place, routePoints, preferences, phase))
@@ -2434,7 +2491,7 @@ function serializeRoadTripAttraction(stop, fallbackPhase) {
   };
 }
 
-function buildDestinationStayPlan(destination, stayDays, activities, accommodationDetails, preferences = {}) {
+async function buildDestinationStayPlan(destination, stayDays, activities, accommodationDetails, preferences = {}, options = {}) {
   const destinationClimateRecommendation = buildClimateRecommendation({
     name: destination,
     category: preferences.preferredPlaceType || 'destination',
@@ -2443,16 +2500,45 @@ function buildDestinationStayPlan(destination, stayDays, activities, accommodati
     userRatingsTotal: 1000
   }, preferences);
 
+  let dynamicDailyPlans = [];
+  try {
+    const dynamicResult = await dynamicTravelPlanner({
+      destination,
+      numberOfDays: Math.max(1, stayDays),
+      userPreferences: {
+        activities: Array.isArray(preferences.interests) ? preferences.interests.join(',') : preferences.interests,
+        preferredPlaceType: preferences.preferredPlaceType,
+        travelStyle: preferences.travelStyle || 'balanced'
+      },
+      dailyStartTime: options.dailyStartTime || '08:00',
+      dailyEndTime: options.dailyEndTime || '21:00',
+      transportMode: options.transportMode || 'car'
+    });
+
+    if (dynamicResult && Array.isArray(dynamicResult.dailyItinerary)) {
+      dynamicDailyPlans = dynamicResult.dailyItinerary;
+    }
+  } catch (err) {
+    console.warn('Dynamic planner fallback:', err.message);
+  }
+
   return Array.from({ length: stayDays }, (_, index) => {
-    const dayActivities = activities.filter(activity => (activity.estimatedDay || 1) % Math.max(stayDays, 1) === index % Math.max(stayDays, 1));
+    const dynamicDay = dynamicDailyPlans[index];
+    const dayActivities = dynamicDay?.activities?.length > 0
+      ? dynamicDay.activities
+      : activities.filter(activity => (activity.estimatedDay || 1) % Math.max(stayDays, 1) === index % Math.max(stayDays, 1));
+
     const focus = dayActivities.length > 0
-      ? dayActivities.map(activity => activity.name).join(', ')
+      ? dayActivities.map(activity => activity.name || activity.rawName).join(', ')
       : `local sightseeing, food walks, markets, and relaxed exploration in ${destination}`;
 
     return {
       dayOffset: index + 1,
       title: `Destination stay in ${destination}`,
       focus,
+      activities: dayActivities,
+      detailedSchedule: dynamicDay?.plan || '',
+      stops: dynamicDay?.stops || [],
       accommodationPlan: `Stay at ${accommodationDetails.type}`,
       mealPlan: `Breakfast near accommodation, lunch near sightseeing area, dinner at a well-rated local restaurant`,
       climateRecommendation: destinationClimateRecommendation
@@ -2592,14 +2678,20 @@ function generateRoundTripDayPlans({
   pushJourneyDays('Onward Journey', onwardRoute, startLocation, destination, phases.onwardDays);
 
   for (const stayDay of destinationStayPlan) {
-    const activityList = activities.slice(0, 3);
+    const activityList = stayDay.activities && stayDay.activities.length > 0 ? stayDay.activities : activities.slice(0, 3);
     let plan = `**Destination Stay - Day ${stayDay.dayOffset}**\n\n`;
     plan += `**Location:** ${destination}\n`;
     plan += `**Date:** ${formatDate(addDays(startDate, dayNumber - 1))}\n`;
-    plan += `**Focus:** ${stayDay.focus}\n`;
-    plan += `**Morning:** Start with a top-rated local breakfast and your highest-priority activity\n`;
-    plan += `**Afternoon:** Sightseeing, cultural stops, nature time, or rest based on pace\n`;
-    plan += `**Evening:** Local food, markets, viewpoint, or relaxed waterfront/city walk\n`;
+    plan += `**Focus:** ${stayDay.focus}\n\n`;
+
+    if (stayDay.detailedSchedule) {
+      plan += `${stayDay.detailedSchedule}\n\n`;
+    } else {
+      plan += `**Morning:** Start with a top-rated local breakfast and your highest-priority activity\n`;
+      plan += `**Afternoon:** Sightseeing, cultural stops, nature time, or rest based on pace\n`;
+      plan += `**Evening:** Local food, markets, viewpoint, or relaxed waterfront/city walk\n`;
+    }
+
     if (stayDay.climateRecommendation) {
       plan += `**Climate Fit:** ${stayDay.climateRecommendation.currentClimate}; ${stayDay.climateRecommendation.weatherForecast}\n`;
       plan += `**Best Activity Today:** ${stayDay.climateRecommendation.bestActivity} during ${stayDay.climateRecommendation.bestTimeToVisit}\n`;
@@ -2617,7 +2709,7 @@ function generateRoundTripDayPlans({
       plan,
       weatherPlan: buildDailyWeatherPlan(stayDay.climateRecommendation, activityList),
       activities: activityList,
-      stops: [],
+      stops: stayDay.stops || [],
       restaurants: [stayDay.mealPlan],
       accommodation: stayDay.accommodationPlan
     });
@@ -2759,6 +2851,9 @@ async function generateItinerary(data) {
       fuelType, // 'petrol', 'diesel', 'electric' (for own transport)
       mileage, // Vehicle mileage (for own transport)
       vehicleMileage,
+      rentalDetails,
+      rentalVehicle,
+      rentalBooking,
       maxDetourKm,
       maximumDetour,
       minRating,
@@ -2784,6 +2879,15 @@ async function generateItinerary(data) {
     const parsedBudget = parseFloat(budget);
     const preferredArrivalDay = getPreferredArrivalDay(data, startDate, numDays);
     const preferredStayDays = parseDestinationStayDays(data);
+    const isSelfDriveRental = transport === 'selfDriveRentalCar';
+    const effectiveTransportMode = isSelfDriveRental ? 'ownTransport' : (transport || 'bus');
+    const effectiveVehicleType = isSelfDriveRental ? 'car' : vehicleType;
+    const effectiveFuelType = isSelfDriveRental
+      ? String(rentalVehicle?.fuelType || fuelType || 'petrol').toLowerCase()
+      : fuelType;
+    const effectiveMileage = isSelfDriveRental
+      ? (rentalVehicle?.mileage || vehicleMileage || mileage || (effectiveFuelType === 'electric' ? 6 : 16))
+      : (mileage || vehicleMileage);
     const plannerOptions = {
       maxDetourKm: maxDetourKm || maximumDetour,
       minRating: minRating || minimumRating,
@@ -2793,7 +2897,7 @@ async function generateItinerary(data) {
       travelStyle,
       startDate,
       endDate,
-      vehicleType,
+      vehicleType: effectiveVehicleType,
       scoreWeights: scoreWeights || recommendationWeights
     };
 
@@ -2804,7 +2908,7 @@ async function generateItinerary(data) {
     const routePlan = await generateRoundTripRoutePlan({
       startLocation: startLocation || destination,
       destination,
-      transportMode: transport || 'bus',
+      transportMode: effectiveTransportMode,
       numDays,
       interests: activitiesPreference,
       budget: parsedBudget,
@@ -2813,7 +2917,7 @@ async function generateItinerary(data) {
       preferredArrivalDay,
       preferredStayDays,
       accommodationType: accommodation || 'hostel',
-      vehicleType,
+      vehicleType: effectiveVehicleType,
       plannerOptions
     });
 
@@ -2821,20 +2925,33 @@ async function generateItinerary(data) {
     let transportCostDetails;
     let transportCost = 0;
 
-    if (transportType === 'own' && vehicleType) {
+    if ((transportType === 'own' && effectiveVehicleType) || isSelfDriveRental) {
       // Calculate cost for own vehicle
       transportCostDetails = calculateOwnVehicleCost(
-        vehicleType,
-        fuelType || 'petrol',
-        mileage || vehicleMileage,
+        effectiveVehicleType,
+        effectiveFuelType || 'petrol',
+        effectiveMileage,
         routePlan.totalDistance,
-        numberOfTravelers
+        numberOfTravelers,
+        startLocation || destination,
+        destination
       );
+      if (isSelfDriveRental && rentalVehicle) {
+        const rentalCost = Number(rentalVehicle.estimatedTotalCost || rentalVehicle.pricePerDay || 0);
+        transportCostDetails = {
+          ...transportCostDetails,
+          mode: 'Self-Drive Rental Car',
+          rentalCost,
+          selectedVehicle: rentalVehicle,
+          rentalBooking: rentalBooking || {},
+          totalCost: transportCostDetails.totalCost + rentalCost
+        };
+      }
       transportCost = transportCostDetails.totalCost;
     } else {
       // Calculate cost for public transport
       transportCostDetails = calculatePublicTransportCost(
-        transport || 'bus',
+        effectiveTransportMode || 'bus',
         routePlan.totalDistance,
         numberOfTravelers
       );
@@ -2896,7 +3013,7 @@ async function generateItinerary(data) {
       alternatives = generateBudgetAdjustmentOptions(parsedBudget, estimatedCosts, routePlan, numDays);
     }
 
-    const destinationStayPlan = buildDestinationStayPlan(
+    const destinationStayPlan = await buildDestinationStayPlan(
       destination,
       routePlan.phases.destinationStayDays,
       recommendedActivities,
@@ -2906,7 +3023,13 @@ async function generateItinerary(data) {
         companionType: travelCompanionType,
         numberOfTravelers,
         options: plannerOptions
-      })
+      }),
+      {
+        startLocation: startLocation || destination,
+        dailyStartTime: data.dailyStartTime || '08:00',
+        dailyEndTime: data.dailyEndTime || '21:00',
+        transportMode: effectiveTransportMode || 'car'
+      }
     );
 
     // Generate optimized day-wise itinerary with onward, stay, and return phases
@@ -2953,8 +3076,15 @@ async function generateItinerary(data) {
         `This route is too rushed for ${numDays} days. A comfortable plan needs about ${routePlan.feasibility?.minimumComfortableDays || numDays + 1} days, or fewer stops.`
       ];
 
+    const rentalWarnings = isSelfDriveRental
+      ? [
+        `Rental pickup is planned for ${rentalDetails?.pickupDate || formatDate(startDate)} ${rentalDetails?.pickupTime || '10:00'}. Schedule earlier stops only if another transport is available.`,
+        `Rental return is due by ${rentalDetails?.returnDate || formatDate(endDate)} ${rentalDetails?.returnTime || '18:00'}. The return journey must leave enough buffer for drop-off.`
+      ]
+      : [];
+
     // Generate money-saving tips
-    const tips = generateMoneyTips(destination, numDays, transport, accommodation);
+    const tips = generateMoneyTips(destination, numDays, effectiveTransportMode, accommodation);
 
     // Final itinerary object with structured output
     const itinerary = {
@@ -2993,7 +3123,9 @@ async function generateItinerary(data) {
         preferredPlaceType: preferredPlaceType || placeType || '',
         travelStyle: travelStyle || '',
         accommodationType: accommodation || 'hostel',
-        transportMode: transport || 'bus'
+        transportMode: isSelfDriveRental ? 'Self-Drive Rental Car' : effectiveTransportMode || 'bus',
+        rentalPickupDateTime: rentalDetails ? `${rentalDetails.pickupDate} ${rentalDetails.pickupTime}` : undefined,
+        rentalReturnDateTime: rentalDetails ? `${rentalDetails.returnDate} ${rentalDetails.returnTime}` : undefined
       },
 
       // 🗺️ Optimized Route
@@ -3120,7 +3252,7 @@ async function generateItinerary(data) {
           action: 'Recalculate scores, move outdoor activities to safer times, and suggest nearby alternatives.'
         }
       },
-      warnings: [...feasibilityWarnings, ...climateWarnings],
+      warnings: [...feasibilityWarnings, ...climateWarnings, ...rentalWarnings],
 
       // 📅 Day-wise Itinerary
       dayWiseItinerary: dayPlans,
@@ -3129,7 +3261,7 @@ async function generateItinerary(data) {
       // 💵 Budget Breakdown
       budgetBreakdown: {
         transport: {
-          type: transportType === 'own' ? `${vehicleType} (${fuelType})` : transport || 'bus',
+          type: isSelfDriveRental ? 'Self-Drive Rental Car' : transportType === 'own' ? `${effectiveVehicleType} (${effectiveFuelType})` : effectiveTransportMode || 'bus',
           cost: transportCost,
           details: transportCostDetails
         },
@@ -3153,9 +3285,29 @@ async function generateItinerary(data) {
       },
 
       estimatedCosts,
+      transportation: {
+        mode: isSelfDriveRental ? 'Self-Drive Rental Car' : effectiveTransportMode || 'bus',
+        vehicleType: effectiveVehicleType,
+        distance: routePlan.totalDistance,
+        fuelCost: transportCostDetails.fuelCost,
+        tollCost: transportCostDetails.tollCost,
+        rentalVehicle: rentalVehicle || null,
+        rentalBooking: rentalBooking || null,
+        rentalDetails: rentalDetails || null,
+        pickupConstraints: isSelfDriveRental ? {
+          pickupDateTime: rentalDetails ? `${rentalDetails.pickupDate} ${rentalDetails.pickupTime}` : null,
+          returnDateTime: rentalDetails ? `${rentalDetails.returnDate} ${rentalDetails.returnTime}` : null,
+          parkingRequired: true,
+          roadTravelOptimized: true,
+          chargingStopsRequired: effectiveFuelType === 'electric',
+          fuelStopsRequired: effectiveFuelType !== 'electric'
+        } : null
+      },
+      rentalVehicle: rentalVehicle || null,
+      rentalBooking: rentalBooking || null,
       costBreakdown: {
         transport: {
-          type: transportType === 'own' ? `${vehicleType} (${fuelType})` : transport || 'bus',
+          type: isSelfDriveRental ? 'Self-Drive Rental Car' : transportType === 'own' ? `${effectiveVehicleType} (${effectiveFuelType})` : effectiveTransportMode || 'bus',
           cost: transportCost,
           details: transportCostDetails
         },

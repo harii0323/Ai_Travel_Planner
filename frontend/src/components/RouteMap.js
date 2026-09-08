@@ -1,4 +1,5 @@
 import React from 'react';
+import { MapPin, Navigation, ExternalLink, Compass } from 'lucide-react';
 
 const GOOGLE_MAPS_EMBED_KEY = process.env.REACT_APP_GOOGLE_MAPS_EMBED_KEY;
 
@@ -9,11 +10,9 @@ function getStopKey(stop) {
 
 function getStopLabel(stop) {
   if (!stop) return '';
-
   if (stop.location?.lat && stop.location?.lng) {
     return `${stop.location.lat},${stop.location.lng}`;
   }
-
   return stop.name || stop.formattedAddress || '';
 }
 
@@ -32,18 +31,16 @@ function getCoordinates(stop) {
   if (!Number.isFinite(numberLat) || !Number.isFinite(numberLng)) {
     return null;
   }
-
   return { lat: numberLat, lng: numberLng };
 }
 
 function calculateStraightLineDistanceKm(fromStop, toStop) {
   const from = getCoordinates(fromStop);
   const to = getCoordinates(toStop);
-
   if (!from || !to) return null;
 
   const earthRadiusKm = 6371;
-  const toRadians = degrees => degrees * (Math.PI / 180);
+  const toRadians = (degrees) => degrees * (Math.PI / 180);
   const deltaLat = toRadians(to.lat - from.lat);
   const deltaLng = toRadians(to.lng - from.lng);
   const fromLat = toRadians(from.lat);
@@ -111,7 +108,7 @@ function buildSegmentStops(route) {
         type: segmentIndex === route.routeSegments.length - 1 ? 'Destination' : `${segment.phase || 'Route'} end`,
         phase: segment.phase
       }
-    ].filter(stop => getStopLabel(stop));
+    ].filter((stop) => getStopLabel(stop));
 
     return decorateStopDistances(segmentStops, segment.totalDistance || primaryRoute.distance);
   });
@@ -129,8 +126,8 @@ function getAllStops(route) {
 
   const seen = new Set();
   const uniqueStops = stopCandidates
-    .filter(stop => getStopLabel(stop))
-    .filter(stop => {
+    .filter((stop) => getStopLabel(stop))
+    .filter((stop) => {
       const key = `${stop.phase || stop.type || 'route'}:${getStopKey(stop)}`;
       if (seen.has(key)) return false;
       seen.add(key);
@@ -148,10 +145,8 @@ function getTravelMode(mode) {
     metro: 'transit',
     public: 'transit',
     walking: 'walking',
-    bicycling: 'bicycling',
-    bicycle: 'bicycling'
+    bicycling: 'bicycling'
   };
-
   return modeMap[normalizedMode] || 'driving';
 }
 
@@ -213,7 +208,11 @@ function RouteMap({ route = {} }) {
   const travelMode = getTravelMode(primaryRoute.transportMode);
 
   if (!origin || !destination) {
-    return null;
+    return (
+      <div style={{ padding: '24px', background: 'var(--surface-soft)', borderRadius: 'var(--radius)', color: 'var(--muted)', textAlign: 'center' }}>
+        Route details not available for this plan.
+      </div>
+    );
   }
 
   const directionsParams = buildQueryParams({
@@ -240,14 +239,26 @@ function RouteMap({ route = {} }) {
     : null;
 
   return (
-    <div className="route-map-panel">
-      <div className="route-map-header">
+    <div className="route-map-panel" style={{ background: 'var(--surface-card)', border: '1px solid var(--surface-border)', borderRadius: 'var(--radius)' }}>
+      <div className="route-map-header" style={{ padding: '18px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface-soft)', borderBottom: '1px solid var(--surface-border)', borderRadius: 'var(--radius) var(--radius) 0 0' }}>
         <div>
-          <h4>Visual Route Map</h4>
-          <p>{origin} to {destination}</p>
+          <h4 style={{ color: 'var(--ink-heading)', fontSize: '16px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Compass size={18} color="var(--brand)" />
+            Interactive Route Path
+          </h4>
+          <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '2px' }}>
+            {origin} ➔ {destination} • {routeStops.length} stops
+          </p>
         </div>
-        <a href={externalMapUrl} target="_blank" rel="noreferrer" className="map-open-link">
-          Open in Google Maps
+        <a
+          href={externalMapUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="btn-primary"
+          style={{ minHeight: '36px', padding: '0 14px', fontSize: '12px' }}
+        >
+          <ExternalLink size={13} />
+          <span>Open Google Maps</span>
         </a>
       </div>
 
@@ -260,70 +271,62 @@ function RouteMap({ route = {} }) {
           />
         </div>
       ) : embedUrl ? (
-        <>
-          <iframe
-            className="route-map-frame"
-            title={`Route map from ${origin} to ${destination}`}
-            src={embedUrl}
-            loading="lazy"
-            allowFullScreen
-            referrerPolicy="no-referrer-when-downgrade"
-          />
-          <div className="route-map-note">
-            Showing route waypoints. Add REACT_APP_GOOGLE_MAPS_EMBED_KEY with Static Maps enabled to show labeled pins for every stop.
-          </div>
-        </>
+        <iframe
+          className="route-map-frame"
+          title={`Route map from ${origin} to ${destination}`}
+          src={embedUrl}
+          loading="lazy"
+          allowFullScreen
+          referrerPolicy="no-referrer-when-downgrade"
+          style={{ width: '100%', height: '400px', border: 0 }}
+        />
       ) : (
-        <div className="route-map-fallback" aria-label={`Route overview from ${origin} to ${destination}`}>
-          <div className="route-map-track">
+        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
             {routeStops.map((stop, index) => (
               <a
                 key={`${stop.phase || stop.type}-${getStopLabel(stop)}-${index}`}
-                className="route-map-stop"
                 href={buildPlaceUrl(stop)}
                 target="_blank"
                 rel="noreferrer"
-                title={`Open ${stop.name || getStopLabel(stop)} in Google Maps`}
+                style={{
+                  padding: '14px',
+                  background: 'var(--surface-card)',
+                  border: '1px solid var(--surface-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  alignItems: 'flex-start',
+                  gap: '12px',
+                  textDecoration: 'none'
+                }}
               >
-                <span className="route-stop-marker">{getMarkerLabel(index) || index + 1}</span>
-                <div className="route-stop-copy">
-                  <span className="route-stop-type">{stop.type || stop.phase || `Stop ${index}`}</span>
-                  <strong>{stop.name || getStopLabel(stop)}</strong>
-                  {(stop.category || stop.types?.[0]) && (
-                    <span className="route-stop-meta">{stop.category || stop.types?.[0]}</span>
-                  )}
-                  {stop.distanceFromPreviousKm !== null && stop.distanceFromPreviousKm !== undefined && (
-                    <span className="route-stop-distance">
-                      {formatDistance(stop.distanceFromPreviousKm)} from previous stop
+                <div
+                  style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    background: index === 0 ? 'var(--brand)' : index === routeStops.length - 1 ? 'var(--accent)' : 'var(--surface-soft)',
+                    color: index === 0 || index === routeStops.length - 1 ? '#fff' : 'var(--ink)',
+                    fontWeight: 900,
+                    fontSize: '13px',
+                    display: 'grid',
+                  }}
+                >
+                  {getMarkerLabel(index) || index + 1}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--brand-dark)', fontWeight: 800, textTransform: 'uppercase' }}>
+                    {stop.type || stop.phase || `Stop ${index + 1}`}
+                  </span>
+                  <strong style={{ color: 'var(--ink-heading)', fontSize: '14px' }}>
+                    {stop.name || getStopLabel(stop)}
+                  </strong>
+                    <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                      +{formatDistance(stop.distanceFromPreviousKm)}
                     </span>
-                  )}
                 </div>
               </a>
             ))}
           </div>
-        </div>
-      )}
-
-      {(staticMapUrl || embedUrl) && (
-        <div className="route-stop-links" aria-label="Open route stops in Google Maps">
-          {routeStops.map((stop, index) => (
-            <a
-              key={`link-${stop.phase || stop.type}-${getStopLabel(stop)}-${index}`}
-              className="route-stop-link"
-              href={buildPlaceUrl(stop)}
-              target="_blank"
-              rel="noreferrer"
-              title={`Open ${stop.name || getStopLabel(stop)} in Google Maps`}
-            >
-              <span>{getMarkerLabel(index) || index + 1}</span>
-              <strong>
-                {stop.name || getStopLabel(stop)}
-                {stop.distanceFromPreviousKm !== null && stop.distanceFromPreviousKm !== undefined && (
-                  <small>{formatDistance(stop.distanceFromPreviousKm)} from previous</small>
-                )}
-              </strong>
-            </a>
-          ))}
         </div>
       )}
     </div>
