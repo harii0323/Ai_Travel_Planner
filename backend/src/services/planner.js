@@ -254,7 +254,6 @@ function parseDestinationStayDays(data) {
 function buildTripPhases(totalDays, preferredArrivalDay, routeDistanceKm, transportMode, vehicleType, preferredStayDays = null) {
   const dailyLimitKm = getDailyTravelLimitKm(transportMode, vehicleType);
   const naturalTravelDays = Math.max(1, Math.ceil((routeDistanceKm || dailyLimitKm) / dailyLimitKm));
-  const returnDays = Math.min(Math.max(1, naturalTravelDays), Math.max(1, Math.floor(totalDays / 2)));
 
   if (preferredStayDays !== null && totalDays >= 2) {
     const destinationStayDays = Math.min(
@@ -262,7 +261,7 @@ function buildTripPhases(totalDays, preferredArrivalDay, routeDistanceKm, transp
       Math.max(0, totalDays - 2)
     );
     const remainingTravelDays = Math.max(2, totalDays - destinationStayDays);
-    const adjustedReturnDays = Math.min(returnDays, remainingTravelDays - 1);
+    const adjustedReturnDays = Math.min(naturalTravelDays, Math.max(1, Math.floor(remainingTravelDays / 2)));
     const onwardDays = Math.max(1, remainingTravelDays - adjustedReturnDays);
 
     return {
@@ -274,9 +273,23 @@ function buildTripPhases(totalDays, preferredArrivalDay, routeDistanceKm, transp
     };
   }
 
-  const defaultArrivalDay = Math.min(totalDays - returnDays, Math.max(2, naturalTravelDays));
-  const arrivalDay = Math.min(totalDays - returnDays, preferredArrivalDay || defaultArrivalDay);
-  const onwardDays = Math.max(1, arrivalDay);
+  // Ensure destination stay days are prioritized for typical vacation trips
+  let onwardDays = 1;
+  let returnDays = 1;
+
+  if (totalDays >= 6 && routeDistanceKm > 800) {
+    onwardDays = Math.min(2, Math.max(1, naturalTravelDays));
+    returnDays = Math.min(2, Math.max(1, naturalTravelDays));
+  } else if (totalDays >= 8 && routeDistanceKm > 1200) {
+    onwardDays = Math.min(3, naturalTravelDays);
+    returnDays = Math.min(3, naturalTravelDays);
+  }
+
+  if (preferredArrivalDay && preferredArrivalDay < totalDays) {
+    onwardDays = Math.min(preferredArrivalDay, Math.max(1, totalDays - 2));
+  }
+
+  // Destination stay gets the majority of the trip days
   const destinationStayDays = Math.max(0, totalDays - onwardDays - returnDays);
 
   return {
@@ -2659,13 +2672,24 @@ function generateRoundTripDayPlans({
       plan += `**Fuel/Transit:** ${service.fuelStopPlan || 'Use a major fuel stop or transit hub before continuing'}\n`;
       plan += `**Accommodation:** ${service.accommodationPlan || `Stay at ${accommodationDetails.type}`}\n`;
 
+      const journeyActivities = dayStops.length > 0
+        ? dayStops.map((s) => serializeRoadTripAttraction(s, destination))
+        : [{
+            name: `${phaseName}: Scenic transit from ${from} towards ${to}`,
+            rawName: `Transit from ${from} to ${to}`,
+            category: 'travel',
+            cost: 0,
+            timeFit: 1,
+            description: `Comfortable travel along the route corridor with planned rest stops.`
+          }];
+
       dayPlans.push({
         day: dayNumber,
         date: formatDate(addDays(startDate, dayNumber - 1)),
         phase: phaseName,
         plan,
         weatherPlan: buildDailyWeatherPlan(dayStops[0]?.climateRecommendation),
-        activities: [],
+        activities: journeyActivities,
         stops: dayStops,
         restaurants: [service.restaurantPlan].filter(Boolean),
         fuelStops: [service.fuelStopPlan].filter(Boolean),
