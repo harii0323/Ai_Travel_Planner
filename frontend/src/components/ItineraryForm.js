@@ -283,15 +283,15 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
     setForm((prev) => ({ ...prev, rentalVehicle: null, rentalBooking: null }));
 
     const searchParams = {
-      pickupLocation: form.rentalDetails.pickupLocation || form.startLocation || 'Bangalore',
-      dropoffLocation: form.rentalDetails.dropoffLocation || form.destination || form.startLocation || 'Bangalore',
-      pickupDate: form.rentalDetails.pickupDate || toDateInputValue(form.startDate || new Date(Date.now() + 86400000 * 2)),
-      pickupTime: form.rentalDetails.pickupTime || '09:00',
-      returnDate: form.rentalDetails.returnDate || toDateInputValue(form.endDate || new Date(Date.now() + 86400000 * 5)),
-      returnTime: form.rentalDetails.returnTime || '18:00',
-      vehicleCategory: form.rentalDetails.vehicleCategory || 'compact',
+      pickupLocation: form.rentalDetails?.pickupLocation || form.startLocation || 'Bangalore',
+      dropoffLocation: form.rentalDetails?.dropoffLocation || form.destination || form.startLocation || 'Bangalore',
+      pickupDate: form.rentalDetails?.pickupDate || toDateInputValue(form.startDate || new Date(Date.now() + 86400000 * 2)),
+      pickupTime: form.rentalDetails?.pickupTime || '09:00',
+      returnDate: form.rentalDetails?.returnDate || toDateInputValue(form.endDate || new Date(Date.now() + 86400000 * 5)),
+      returnTime: form.rentalDetails?.returnTime || '18:00',
+      vehicleCategory: form.rentalDetails?.vehicleCategory || 'compact',
       passengers: form.numberOfTravelers || 2,
-      travelDistanceKm: form.rentalDetails.travelDistanceKm || undefined
+      travelDistanceKm: form.rentalDetails?.travelDistanceKm || undefined
     };
 
     try {

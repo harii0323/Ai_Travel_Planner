@@ -2167,7 +2167,7 @@ function buildReason(place){
     return reasons.join(", ");
 
 }
-function rankPlaces(places){
+function rankRoutePlaces(places){
 
     return places
 
@@ -3220,54 +3220,22 @@ async function planTrip({
 
     );
 
-    const toll=
+    const toll = estimateToll(route.distance);
 
-    estimateToll(
-
-        route.distance
-
-    );
-
-    return{
-
+    return {
         route,
-
         itinerary,
-
-        fuelCost:fuel,
-
-        tollCost:toll,
-
-        totalTripCost:
-
-        fuel+toll
-
+        fuelCost: fuel,
+        tollCost: toll,
+        totalTripCost: fuel + toll
     };
-
 }
-const user={
 
-    travelType:"family",
-
-    interests:[
-
-        "waterfall",
-
-        "wildlife",
-
-        "hill_station"
-
-    ]
-
-};
 function hasGoogleMapsAPI() {
-
     const hasKey = !!GOOGLE_MAPS_API_KEY;
-
     console.log(
         `🔑 Google Maps API Key Check: ${hasKey ? "✅ Present" : "❌ Missing"}`
     );
-
     return hasKey;
 }
 
