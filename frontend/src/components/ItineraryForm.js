@@ -89,10 +89,28 @@ const COMPANION_ITEMS = [
 ];
 
 const BUDGET_PRESETS = [
-  { label: 'Backpacker (~₹3k)', amount: 3500 },
-  { label: 'Student Standard (~₹7k)', amount: 7500 },
-  { label: 'Comfort Explorer (~₹14k)', amount: 14000 },
-  { label: 'Premium (~₹25k)', amount: 25000 }
+  { label: 'Budget (~₹7.5k)', amount: 7500 },
+  { label: 'Standard (~₹15k)', amount: 15000 },
+  { label: 'Comfort (~₹30k)', amount: 30000 },
+  { label: 'Road Trip (~₹50k)', amount: 50000 }
+];
+
+const POPULAR_VEHICLES = [
+  { id: 'maruti-swift-petrol', name: 'Maruti Suzuki Swift (Petrol - 22.4 km/L)', type: 'car', fuelType: 'petrol', mileage: '22.4' },
+  { id: 'maruti-baleno-petrol', name: 'Maruti Suzuki Baleno (Petrol - 22.3 km/L)', type: 'car', fuelType: 'petrol', mileage: '22.3' },
+  { id: 'hyundai-creta-petrol', name: 'Hyundai Creta (Petrol - 14.5 km/L)', type: 'car', fuelType: 'petrol', mileage: '14.5' },
+  { id: 'hyundai-creta-diesel', name: 'Hyundai Creta (Diesel - 19.1 km/L)', type: 'car', fuelType: 'diesel', mileage: '19.1' },
+  { id: 'honda-city-petrol', name: 'Honda City (Petrol - 17.8 km/L)', type: 'car', fuelType: 'petrol', mileage: '17.8' },
+  { id: 'toyota-innova-crysta-diesel', name: 'Toyota Innova Crysta (Diesel - 13.5 km/L)', type: 'car', fuelType: 'diesel', mileage: '13.5' },
+  { id: 'toyota-fortuner-diesel', name: 'Toyota Fortuner (Diesel - 10.5 km/L)', type: 'car', fuelType: 'diesel', mileage: '10.5' },
+  { id: 'mahindra-scorpio-n-diesel', name: 'Mahindra Scorpio-N (Diesel - 14.0 km/L)', type: 'car', fuelType: 'diesel', mileage: '14.0' },
+  { id: 'maruti-ertiga-cng', name: 'Maruti Suzuki Ertiga (CNG - 26.1 km/kg)', type: 'car', fuelType: 'cng', mileage: '26.1' },
+  { id: 'tata-nexon-ev', name: '⚡ Tata Nexon EV Long Range (EV - 6.2 km/kWh, 310 km range)', type: 'car', fuelType: 'electric', mileage: '6.2' },
+  { id: 'tata-punch-ev', name: '⚡ Tata Punch EV (EV - 6.8 km/kWh, 270 km range)', type: 'car', fuelType: 'electric', mileage: '6.8' },
+  { id: 'mg-zs-ev', name: '⚡ MG ZS EV (EV - 6.0 km/kWh, 340 km range)', type: 'car', fuelType: 'electric', mileage: '6.0' },
+  { id: 'royal-enfield-classic-350', name: 'Royal Enfield Classic 350 (Petrol - 35.0 km/L)', type: 'bike', fuelType: 'petrol', mileage: '35.0' },
+  { id: 'hero-splendor-plus', name: 'Hero Splendor Plus (Petrol - 65.0 km/L)', type: 'bike', fuelType: 'petrol', mileage: '65.0' },
+  { id: 'ola-s1-pro-ev', name: '⚡ Ola S1 Pro (EV Scooter - 35.0 km/kWh)', type: 'bike', fuelType: 'electric', mileage: '35.0' }
 ];
 
 const toDateInputValue = (date) => date ? date.toISOString().split('T')[0] : '';
@@ -113,23 +131,24 @@ const buildDefaultRentalDetails = (form) => ({
 function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [form, setForm] = useState({
-    budget: '6000',
+    budget: '15000',
     startDate: new Date(Date.now() + 86400000 * 3), // 3 days from now
     endDate: new Date(Date.now() + 86400000 * 7),   // 7 days from now (4 days trip)
-    startLocation: 'Mumbai',
-    destination: '',
+    startLocation: 'Hyderabad',
+    destination: 'Kerala',
     activities: 'nature, food, adventure',
     preferredPlaceType: '',
     travelStyle: 'balanced',
-    accommodation: 'hostel',
-    transport: 'train',
+    accommodation: 'budgetHotel',
+    transport: 'ownTransport',
     destinationArrivalDay: '',
     destinationArrivalDate: null,
     travelCompanionType: userPreferences?.companionType || 'friends',
-    numberOfTravelers: 2,
+    numberOfTravelers: 4,
     vehicleType: 'car',
-    fuelType: 'petrol',
-    vehicleMileage: '18',
+    vehicleModel: 'toyota-innova-crysta-diesel',
+    fuelType: 'diesel',
+    vehicleMileage: '13.5',
     rentalDetails: {
       pickupLocation: 'Mumbai',
       dropoffLocation: '',
@@ -255,6 +274,27 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
     setForm((prev) => ({ ...prev, [name]: value }));
     if (errors[name]) {
       setErrors((prev) => ({ ...prev, [name]: '' }));
+    }
+  };
+
+  const handleVehicleModelSelect = (e) => {
+    const selectedId = e.target.value;
+    if (!selectedId) {
+      setForm((prev) => ({ ...prev, vehicleModel: '' }));
+      return;
+    }
+    const matched = POPULAR_VEHICLES.find((v) => v.id === selectedId);
+    if (matched) {
+      setForm((prev) => ({
+        ...prev,
+        vehicleModel: matched.id,
+        vehicleType: matched.type,
+        fuelType: matched.fuelType,
+        vehicleMileage: matched.mileage
+      }));
+      if (errors.vehicleMileage) {
+        setErrors((prev) => ({ ...prev, vehicleMileage: '' }));
+      }
     }
   };
 
@@ -706,7 +746,7 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
                 <Bed size={22} color="#38bdf8" />
                 Stay & Transportation
               </h3>
-              <p>Choose where to sleep and how to get around. Student discounts automatically apply to estimates.</p>
+              <p>Choose your stay type and vehicle. Real-world fuel, tolls, room tariffs, and local transit costs are calculated dynamically.</p>
             </div>
 
             <div className="form-group">
@@ -766,16 +806,47 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
               </div>
             </div>
 
-            {/* Own Transport Dynamic Calculator */}
+            {/* Own Transport Real-World Dynamic Calculator */}
             {form.transport === 'ownTransport' && (
               <div className="vehicle-calculator-box">
                 <div className="vehicle-calculator-header">
                   <Fuel size={18} color="#14b8a6" />
-                  <span>Vehicle Fuel & Toll Calculator</span>
+                  <span>Real-World Vehicle Fuel, EV Charging & Toll Calculator</span>
                 </div>
+
+                <div className="form-group" style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Select Vehicle Model (Auto-fills mileage & specs)</span>
+                    <span style={{ fontSize: '11px', color: 'var(--brand, #c26d38)', fontWeight: 500 }}>Auto-fill then modify anytime</span>
+                  </label>
+                  <select
+                    name="vehicleModel"
+                    value={form.vehicleModel || ''}
+                    onChange={handleVehicleModelSelect}
+                    style={{ background: 'var(--surface-soft, rgba(255,255,255,0.06))', fontWeight: 500 }}
+                  >
+                    <option value="">-- Choose a Vehicle (or enter custom specs below) --</option>
+                    <optgroup label="Popular Cars (Petrol / Diesel / CNG)">
+                      {POPULAR_VEHICLES.filter(v => v.type === 'car' && v.fuelType !== 'electric').map(v => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Electric Vehicles (EV Cars & Scooters)">
+                      {POPULAR_VEHICLES.filter(v => v.fuelType === 'electric').map(v => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Two-Wheelers / Motorcycles">
+                      {POPULAR_VEHICLES.filter(v => v.type === 'bike' && v.fuelType !== 'electric').map(v => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
+
                 <div className="form-grid-3">
                   <div className="form-group">
-                    <label>Vehicle Type</label>
+                    <label>Vehicle Category</label>
                     <select
                       name="vehicleType"
                       value={form.vehicleType}
@@ -793,22 +864,25 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
                       value={form.fuelType}
                       onChange={handleChange}
                     >
-                      <option value="petrol">Petrol (~₹100/L)</option>
-                      <option value="diesel">Diesel (~₹90/L)</option>
-                      <option value="electric">Electric EV (~₹8/kWh)</option>
+                      <option value="petrol">Petrol (~₹101/L)</option>
+                      <option value="diesel">Diesel (~₹91/L)</option>
+                      <option value="cng">CNG (~₹81/kg)</option>
+                      <option value="electric">⚡ Electric EV (kWh)</option>
                     </select>
                   </div>
 
                   <div className="form-group">
-                    <label>Vehicle Mileage (km/L or km/kWh)</label>
+                    <label>
+                      {form.fuelType === 'electric' ? 'EV Efficiency (km/kWh)' : 'Mileage (km/L or km/kg)'}
+                    </label>
                     <input
                       type="number"
                       name="vehicleMileage"
-                      placeholder="e.g. 18"
+                      placeholder={form.fuelType === 'electric' ? 'e.g. 6.2' : 'e.g. 18'}
                       value={form.vehicleMileage}
                       onChange={handleChange}
                       min="1"
-                      step="0.5"
+                      step="0.1"
                     />
                     {errors.vehicleMileage && (
                       <span className="error-badge">
@@ -817,6 +891,20 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
                     )}
                   </div>
                 </div>
+
+                {form.fuelType === 'electric' && (
+                  <div style={{
+                    marginTop: '12px',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    background: 'rgba(16, 185, 129, 0.12)',
+                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                    fontSize: '12px',
+                    color: '#6ee7b7'
+                  }}>
+                    ⚡ <strong>EV Smart Route Integration:</strong> System will compute energy required (kWh), recommend highway fast charging stops every 220–280 km, and calculate costs at real highway DC fast charging tariffs (~₹21/kWh) and hotel overnight charging.
+                  </div>
+                )}
               </div>
             )}
 

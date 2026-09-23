@@ -156,6 +156,15 @@ router.post('/dynamic-plan', authenticate, async (req, res) => {
   }
 });
 
+// GET /api/itinerary/vehicles - Fetch catalog of popular Indian vehicle models
+router.get('/vehicles', (req, res) => {
+  const { VEHICLE_CATALOG } = require('../data/vehicleModels');
+  res.json({
+    success: true,
+    vehicles: VEHICLE_CATALOG
+  });
+});
+
 // GET /api/itinerary/realtime-prices - Fetch live market pricing data for destination & fuel
 router.get('/realtime-prices', async (req, res) => {
   try {
@@ -165,15 +174,15 @@ router.get('/realtime-prices', async (req, res) => {
       getLiveAccommodationRate,
       getLiveTollRate,
       getLivePublicTransitRates,
-      getLiveMealCost
+      getDestinationFoodPlan
     } = require('../services/realTimePricingService');
 
     const fuelInfo = getLiveFuelPrice(origin, fuelType);
     const hostelRate = getLiveAccommodationRate(destination, 'hostel', travelDate);
     const hotelRate = getLiveAccommodationRate(destination, 'budgetHotel', travelDate);
-    const meals = getLiveMealCost(destination, 'moderate', 1, 1);
+    const meals = getDestinationFoodPlan(destination, 'standard', 1, 1);
     const tolls = getLiveTollRate(origin, destination, 500, transportMode);
-    const transit = getLivePublicTransitRates(500, transportMode, 1, true);
+    const transit = getLivePublicTransitRates(500, transportMode, 1);
 
     res.json({
       success: true,

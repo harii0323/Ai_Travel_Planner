@@ -219,7 +219,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
             {getTimeGreeting()}, {user?.name?.split(' ')[0] || 'Explorer'}! ✈️
           </h1>
           <p>
-            Where is your curiosity leading you next? Create budget-optimized student itineraries with smart weather routing in seconds.
+            Where is your curiosity leading you next? Create real-time cost-calculated itineraries with route optimization in seconds.
           </p>
         </div>
         <div className="dashboard-hero-actions">
@@ -433,9 +433,9 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
               <div className="tip-accordion-item">
                 <div className="tip-header">
                   <Zap size={14} />
-                  <span>Student ID Discounts</span>
+                  <span>Advance Booking & FASTag</span>
                 </div>
-                <p>Carry a college ID or ISIC card to get up to 30% off museum entries, trains, and monuments.</p>
+                <p>Book verified stays in advance and use FASTag on national highway expressways for streamlined travel.</p>
               </div>
 
               <div className="tip-accordion-item">

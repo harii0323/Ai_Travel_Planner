@@ -57,16 +57,16 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
           </div>
 
           <div className="auth-hero-middle">
-            <h2>Plan Student Trips Without the Guesswork</h2>
-            <p>Generate smart, budget-conscious travel plans with intelligent weather routing, transport optimization, and real student discounts.</p>
+            <h2>Plan Trips with Real-World Costs</h2>
+            <p>Generate intelligent travel plans with dynamic fuel and toll calculations, real-world hotel benchmarks, and optimized route itineraries.</p>
             <ul className="auth-perks-list">
               <li>
                 <CheckCircle2 size={16} />
-                <span>Personalized itineraries for solo & group trips</span>
+                <span>Personalized itineraries for solo, friends, and family trips</span>
               </li>
               <li>
                 <CheckCircle2 size={16} />
-                <span>Automatic student discounts on transit & stays</span>
+                <span>Real-world location-based fuel, toll & stay cost calculations</span>
               </li>
               <li>
                 <CheckCircle2 size={16} />

@@ -88,8 +88,8 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
           </div>
 
           <div className="auth-hero-middle">
-            <h2>Join Thousands of Student Explorers</h2>
-            <p>Unlock custom AI travel routes, split group budgets, and discover hidden gems suited for your wallet.</p>
+            <h2>Join Thousands of Travelers Across India</h2>
+            <p>Unlock custom AI travel routes, calculate accurate road-trip costs, and discover iconic destinations with ease.</p>
             <ul className="auth-perks-list">
               <li>
                 <CheckCircle2 size={16} />
@@ -107,7 +107,7 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
           </div>
 
           <div className="auth-quote-box">
-            <p>⚡ 100% Free for students & independent budget travelers.</p>
+            <p>⚡ 100% Free for solo travelers, friends, and family explorers.</p>
           </div>
         </div>
 

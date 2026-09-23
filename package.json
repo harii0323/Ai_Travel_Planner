@@ -1,5 +1,24 @@
 {
   "dependencies": {
     "winget": "^0.0.1"
-  }
+  },
+  "name": "ai_travel_planner",
+  "version": "1.0.0",
+  "description": "An intelligent, budget-optimized travel itinerary generator designed specifically for students with limited budgets. This full-stack application creates personalized, cost-effective travel plans based on user preferences, locations, and financial constraints.",
+  "main": "EXAMPLES.js",
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/harii0323/Ai_Travel_Planner.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/harii0323/Ai_Travel_Planner/issues"
+  },
+  "homepage": "https://github.com/harii0323/Ai_Travel_Planner#readme"
 }

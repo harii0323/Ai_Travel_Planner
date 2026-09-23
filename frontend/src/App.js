@@ -236,7 +236,7 @@ function App() {
               <h1 className="brand-title">
                 VISTA <span className="brand-badge">AI</span>
               </h1>
-              <p className="brand-tagline">Smart student travel & budget planner</p>
+              <p className="brand-tagline">AI Travel Planner & Real-Time Cost Calculator</p>
             </div>
           </div>
 
@@ -327,7 +327,7 @@ function App() {
               <p>
                 {selectedItineraryId
                   ? 'Fine-tune your places, adjust timing, and export your ready-to-go travel schedule.'
-                  : 'Tell us your budget, vibe, and dates. VISTA will craft a smart, weather-optimized, student-friendly route with realistic costs.'}
+                  : 'Tell us your budget, vehicle, companions, and dates. VISTA will calculate real-world travel costs with fuel, tolls, and optimized routing.'}
               </p>
             </header>
 
@@ -348,7 +348,7 @@ function App() {
                     </div>
                   </div>
                   <h3>Designing your custom itinerary...</h3>
-                  <p>Analyzing routes, checking seasonal weather patterns, calculating student budgets, and curating top attractions.</p>
+                  <p>Analyzing routes, calculating real-world fuel & tolls, pricing stays and local food, and checking seasonal weather.</p>
                   <div className="loading-progress-steps">
                     <span className="loading-step-chip active">
                       <MapPin size={13} /> Route mapping
@@ -431,9 +431,9 @@ function App() {
             <Sparkles size={16} color="#14b8a6" />
             <span>VISTA AI Travel Planner</span>
           </div>
-          <p>Plan smart. Travel farther. Built for budget-conscious students & adventurers.</p>
+          <p>Plan smart. Travel farther. Real-world route cost calculation and intelligent itinerary optimization.</p>
           <p className="disclaimer">
-            Note: All estimated costs, routes, and weather suggestions are AI-generated based on current averages and student perks.
+            Note: All estimated costs, tolls, and routes are calculated from real-world benchmarks (NHAI FASTag, IOCL/BPCL fuel tariffs, verified hotel benchmarks, and regional menus).
           </p>
         </div>
       </footer>

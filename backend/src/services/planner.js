@@ -18,13 +18,20 @@ const {
 
 const {
   getLiveFuelPrice,
-  getLiveAccommodationRate,
+  calculateEVChargingPlan,
   getLiveTollRate,
-  getLivePublicTransitRates,
-  getLiveMealCost,
+  getLocalTransportationDetails,
+  getLiveAccommodationRate,
+  getDestinationFoodPlan,
   getLiveAttractionFee,
+  getLivePublicTransitRates,
   computeRealTimeTripCost
 } = require('./realTimePricingService');
+
+const {
+  VEHICLE_CATALOG,
+  getVehicleById
+} = require('../data/vehicleModels');
 
 const {
   discoverAllRouteCandidates,
@@ -477,28 +484,24 @@ async function estimateRouteDistance(startLocation, destination, intermediateSto
   }
 }
 
-function estimateTransportCost(mode, distance, isStudent = false) {
-  const liveTransit = getLivePublicTransitRates(distance, mode, 1, isStudent);
+function estimateTransportCost(mode, distance) {
+  const liveTransit = getLivePublicTransitRates(distance, mode, 1);
   return {
     mode: mode,
-    baseCost: liveTransit.baseFarePerPerson,
-    discountedCost: liveTransit.netFarePerPerson,
-    studentDiscount: liveTransit.studentDiscountPercent ? `${liveTransit.studentDiscountPercent}%` : "N/A",
+    farePerPerson: liveTransit.farePerPerson,
     distance: distance,
-    isStudent: isStudent
+    source: liveTransit.source
   };
 }
 
 // Calculate transportation cost for public transport using live dynamic slabs
-function calculatePublicTransportCost(transportMode, distance, numTravelers, isStudent = true) {
-  const liveTransit = getLivePublicTransitRates(distance, transportMode, numTravelers, isStudent);
+function calculatePublicTransportCost(transportMode, distance, numTravelers) {
+  const liveTransit = getLivePublicTransitRates(distance, transportMode, numTravelers);
 
   return {
     mode: transportMode,
     serviceClass: liveTransit.serviceClass,
-    baseCostPerPerson: liveTransit.baseFarePerPerson,
-    studentDiscount: liveTransit.studentDiscountPercent ? `${liveTransit.studentDiscountPercent}%` : "N/A",
-    netCostPerPerson: liveTransit.netFarePerPerson,
+    farePerPerson: liveTransit.farePerPerson,
     totalCost: liveTransit.totalTripTransitCost,
     numTravelers: numTravelers,
     distance: distance,
@@ -506,117 +509,151 @@ function calculatePublicTransportCost(transportMode, distance, numTravelers, isS
   };
 }
 
-// Calculate transportation cost for own vehicle using live city fuel rates and NHAI tolls
-function calculateOwnVehicleCost(vehicleType, fuelType, mileage, totalDistance, numTravelers, origin = "Mumbai", destination = "Goa") {
-  const efficiency = vehicleEfficiency[vehicleType]?.[fuelType] || vehicleEfficiency.car.petrol;
-  const actualMileage = Number(mileage) || efficiency.avgMileage;
+// Calculate transportation cost for own vehicle using live city fuel rates, EV charging specs, and NHAI tolls
+function calculateOwnVehicleCost(vehicleType, fuelType, mileage, totalDistance, numTravelers, origin = "Hyderabad", destination = "Kerala", vehicleModel = null) {
+  const isEV = String(fuelType).toLowerCase().includes('electric') || String(fuelType).toLowerCase().includes('ev');
+
+  if (isEV) {
+    const evPlan = calculateEVChargingPlan({
+      distanceKm: totalDistance,
+      vehicleModel,
+      origin,
+      destination
+    });
+    const liveToll = getLiveTollRate(origin, destination, totalDistance, vehicleType);
+    const totalTransportCost = evPlan.totalChargingCost + liveToll.totalToll;
+
+    return {
+      vehicleType,
+      vehicleModel,
+      fuelType: 'electric',
+      isEV: true,
+      mileage: evPlan.mileageKmPerKwh,
+      chargingCost: evPlan.totalChargingCost,
+      evPlan,
+      tollCost: liveToll.totalToll,
+      tollSource: liveToll.source,
+      totalCost: totalTransportCost,
+      perPersonCost: Math.round(totalTransportCost / Math.max(1, numTravelers)),
+      numTravelers,
+      distance: totalDistance,
+      source: evPlan.source
+    };
+  }
+
+  // Conventional Fuel (Petrol / Diesel / CNG)
+  const originFuel = getLiveFuelPrice(origin, fuelType);
+  const destFuel = getLiveFuelPrice(destination, fuelType);
+  const avgFuelPrice = Math.round(((originFuel.price + destFuel.price) / 2) * 100) / 100;
+
+  const actualMileage = Number(mileage) || (vehicleType === 'bike' ? 40 : 14);
   const fuelRequired = Math.round((totalDistance / actualMileage) * 10) / 10;
+  const fuelCost = Math.round(fuelRequired * avgFuelPrice);
 
-  // Real-time live fuel price based on origin city / state
-  const liveFuel = getLiveFuelPrice(origin, fuelType);
-  const fuelCost = Math.round(fuelRequired * liveFuel.price);
-
-  // Real-time Fastag toll charges based on route corridor
   const liveToll = getLiveTollRate(origin, destination, totalDistance, vehicleType);
   const tollCost = liveToll.totalToll;
-
   const totalTransportCost = fuelCost + tollCost;
 
   return {
     vehicleType,
+    vehicleModel,
     fuelType,
+    isEV: false,
     mileage: actualMileage,
     fuelRequired,
-    fuelPricePerUnit: liveFuel.price,
-    fuelUnit: liveFuel.unit,
+    originFuelPrice: originFuel.price,
+    destinationFuelPrice: destFuel.price,
+    fuelPricePerUnit: avgFuelPrice,
+    fuelUnit: originFuel.unit,
     fuelCost,
-    fuelSource: liveFuel.source,
+    fuelSource: `${originFuel.source} (Route Average)`,
     tollCost,
     tollSource: liveToll.source,
+    tollPlazasCount: liveToll.tollPlazasCount,
+    corridorName: liveToll.corridorName,
     totalCost: totalTransportCost,
     perPersonCost: Math.round(totalTransportCost / Math.max(1, numTravelers)),
-    numTravelers: numTravelers,
+    numTravelers,
     distance: totalDistance
   };
 }
 
 // Get toll charges based on route
-function getTollCharges(distance) {
+function getTollCharges(distance, vehicleType = 'car') {
+  if (vehicleType === 'bike') return 0;
   return Math.round(distance * 1.65);
 }
 
-// Calculate food cost using live city cost-of-living index
-function calculateFoodCost(numTravelers, numDays, budgetCategory = "moderate", destination = "Goa") {
-  const liveMeals = getLiveMealCost(destination, budgetCategory, numDays, numTravelers);
+// Calculate destination-based food cost
+function calculateFoodCost(numTravelers, numDays, budgetCategory = "standard", destination = "Kerala") {
+  const foodPlan = getDestinationFoodPlan(destination, budgetCategory, numDays, numTravelers);
 
   return {
-    perPersonPerDay: liveMeals.perPersonPerDay,
-    totalCost: liveMeals.totalFoodCost,
-    numTravelers: numTravelers,
-    numDays: numDays,
-    cityTier: liveMeals.cityTier,
-    breakdown: {
-      breakfast: liveMeals.breakfast,
-      lunch: liveMeals.lunch,
-      dinner: liveMeals.dinner
-    },
-    source: liveMeals.source
+    perPersonPerDay: foodPlan.dailyCostPerPerson,
+    totalCost: foodPlan.totalTripFoodCost,
+    numTravelers,
+    numDays,
+    regionName: foodPlan.regionName,
+    breakdown: foodPlan.mealBreakdown,
+    famousDishes: foodPlan.famousLocalDishes,
+    source: foodPlan.source
   };
 }
 
-// Calculate accommodation cost with destination & seasonality multipliers
+// Calculate accommodation cost based on real market rates and room requirements
 function calculateAccommodationCost(destination, accommodationType, numNights, numTravelers, travelDate = new Date()) {
   const liveAccom = getLiveAccommodationRate(destination, accommodationType, travelDate, numTravelers);
-  const costPerNight = liveAccom.pricePerNight;
-  const totalCost = costPerNight * Math.max(1, numNights) * numTravelers;
 
   return {
     type: accommodationType,
     label: liveAccom.label,
-    costPerNight: costPerNight,
+    costPerNight: liveAccom.pricePerNight,
     priceRange: liveAccom.priceRange,
+    roomsNeeded: liveAccom.roomsNeeded,
+    isPerBedType: liveAccom.isPerBedType,
     demandStatus: liveAccom.demandStatus,
     numNights: Math.max(1, numNights),
-    totalCost: totalCost,
-    numTravelers: numTravelers,
+    totalCost: liveAccom.nightlyTotalForGroup * Math.max(1, numNights),
+    numTravelers,
     source: liveAccom.source
   };
 }
 
-// Calculate activity and entry costs
+// Calculate activity and entry costs using verified ticketing database
 function calculateActivityCosts(activities, numTravelers) {
   let totalCost = 0;
   const activityBreakdown = [];
 
   for (const activity of activities) {
-    const costPerPerson = activity.cost || 0;
-    const totalActivityCost = costPerPerson * numTravelers;
-    totalCost += totalActivityCost;
+    const feeInfo = getLiveAttractionFee(activity.name || activity.rawName || '', activity.cost || 0);
+    const itemTotal = feeInfo.fee * numTravelers;
+    totalCost += itemTotal;
 
     activityBreakdown.push({
       name: activity.name,
-      category: activity.category,
-      costPerPerson: costPerPerson,
-      totalCost: Math.round(totalActivityCost * 100) / 100,
-      numTravelers: numTravelers
+      category: feeInfo.category,
+      activityType: feeInfo.activityType,
+      costPerPerson: feeInfo.fee,
+      totalCost: itemTotal,
+      numTravelers,
+      isVerified: feeInfo.isVerified,
+      source: feeInfo.source
     });
   }
 
   return {
-    totalCost: Math.round(totalCost * 100) / 100,
+    totalCost,
     breakdown: activityBreakdown,
-    numTravelers: numTravelers
+    numTravelers
   };
 }
 
-// Get recommended activities based on preferences
-function getRecommendedActivities(preferences, budget, numDays) {
+// Get recommended activities
+function getRecommendedActivities(preferences, targetCategoryCount = 6, numDays = 3) {
   const activities = [];
-  const preferredCategories = preferences.split(",").map(p => p.trim().toLowerCase()).filter(p => p);
+  const preferredCategories = String(preferences || '').split(",").map(p => p.trim().toLowerCase()).filter(Boolean);
   
-  let remainingBudget = budget;
   const activitiesPerDay = {};
-
   for (let day = 1; day <= numDays; day++) {
     activitiesPerDay[day] = [];
   }
@@ -625,31 +662,6 @@ function getRecommendedActivities(preferences, budget, numDays) {
   for (const category of preferredCategories) {
     if (activityDb[category]) {
       for (const activity of activityDb[category]) {
-        if (activity.cost <= remainingBudget && currentDay <= numDays) {
-          activities.push({
-            ...activity,
-            estimatedDay: currentDay,
-            applicable: true
-          });
-          activitiesPerDay[currentDay].push(activity);
-          remainingBudget -= activity.cost;
-          currentDay = (currentDay % numDays) + 1;
-        }
-      }
-    }
-  }
-
-  if (activities.length === 0) {
-    const freeActivities = [
-      { name: "Local market exploration", cost: 0, category: "cultural" },
-      { name: "Beach time", cost: 0, category: "nature" },
-      { name: "Hiking", cost: 0, category: "adventure" },
-      { name: "Street food tour", cost: 200, category: "food" }
-    ];
-
-    let currentDay = 1;
-    for (const activity of freeActivities) {
-      if (currentDay <= numDays) {
         activities.push({
           ...activity,
           estimatedDay: currentDay,
@@ -661,26 +673,50 @@ function getRecommendedActivities(preferences, budget, numDays) {
     }
   }
 
+  if (activities.length === 0) {
+    const defaultActivities = [
+      { name: "Local Heritage & Market Exploration", cost: 0, category: "cultural" },
+      { name: "Scenic Sunset Point / Waterfront", cost: 0, category: "nature" },
+      { name: "Regional Food Discovery Walk", cost: 100, category: "food" },
+      { name: "Major Sightseeing Landmark", cost: 50, category: "cultural" }
+    ];
+
+    let currentDay = 1;
+    for (const activity of defaultActivities) {
+      activities.push({
+        ...activity,
+        estimatedDay: currentDay,
+        applicable: true
+      });
+      activitiesPerDay[currentDay].push(activity);
+      currentDay = (currentDay % numDays) + 1;
+    }
+  }
+
   return { activities, activitiesPerDay };
 }
 
-// Get accommodation recommendations
-function getAccommodationRecommendations(type, numDays, budget, numTravelers = 1) {
-  const accommodation = accommodationDb[type] || accommodationDb.hostel;
-  const costPerNight = Math.min(accommodation.avgPrice, budget / numDays / numTravelers);
-  const totalAccommodationCost = costPerNight * numDays * numTravelers;
+// Get accommodation recommendations based on real market rates
+function getAccommodationRecommendations(type, numDays, numTravelers = 1, destination = 'Kerala', travelDate = new Date()) {
+  const liveAccom = getLiveAccommodationRate(destination, type || 'budgetHotel', travelDate, numTravelers);
+  const numNights = Math.max(1, numDays - 1);
+  const totalAccommodationCost = liveAccom.nightlyTotalForGroup * numNights;
 
   return {
-    type,
-    description: accommodation.description,
-    costPerNight: Math.round(costPerNight * 100) / 100,
-    totalCost: Math.round(totalAccommodationCost * 100) / 100,
+    type: type || 'budgetHotel',
+    label: liveAccom.label,
+    costPerNight: liveAccom.pricePerNight,
+    roomsNeeded: liveAccom.roomsNeeded,
+    priceRange: liveAccom.priceRange,
+    demandStatus: liveAccom.demandStatus,
+    numNights,
+    totalCost: totalAccommodationCost,
+    source: liveAccom.source,
     suggestions: [
-      `Book 3-7 days in advance for better rates`,
-      `Join hostel loyalty programs for discounts`,
-      `Check student hostel networks for additional discounts`,
-      `Consider homestays for cultural experience and savings`,
-      `Use apps like Booking.com, Hostelworld for student deals`
+      `Real market rate: ${liveAccom.priceRange.min} - ${liveAccom.priceRange.max} / night`,
+      `Accommodating ${numTravelers} traveler(s) in ${liveAccom.roomsNeeded} ${liveAccom.isPerBedType ? 'bed(s)' : 'room(s)'}`,
+      `Demand: ${liveAccom.demandStatus}`,
+      `Book verified properties near transport or attraction hubs for lower intra-city cab fares`
     ]
   };
 }
@@ -863,21 +899,15 @@ function estimateFoodCosts(numDays, budget, numTravelers = 1) {
 // Generate money-saving tips
 function generateMoneyTips(destination, numDays, transportMode, accommodation) {
   return [
-    '✓ Book accommodation in advance for 10-20% discounts',
-    '✓ Use student ID for museum and attraction discounts (10-30%)',
-    '✓ Travel during low season to save 15-40%',
-    '✓ Use public transport instead of taxis (save 50-70%)',
-    '✓ Eat where locals eat, not tourist restaurants',
-    '✓ Free attractions: parks, beaches, temples, market walks',
-    '✓ Book flights to nearby cities and take buses',
-    '✓ Join free walking tours led by locals',
-    '✓ Use transport passes for unlimited daily travel',
-    `✓ Research student discounts for ${destination} attractions`,
-    '✓ Travel with friends to share accommodation costs',
-    '✓ Book activities online in advance for better rates',
-    '✓ Use budget apps to track daily spending',
-    '✓ Avoid peak tourist season for best prices',
-    '✓ Use public WiFi for communication instead of international plans'
+    '✓ Book verified accommodations in advance for 10-20% lower rates',
+    '✓ Use FASTag automatic lanes on national highways to ensure standard NHAI toll rates',
+    '✓ Travel during shoulder season (Feb-March or Oct-Nov) to save 15-30% on stays',
+    '✓ Use local water ferries or public city transit instead of private tourist taxis',
+    '✓ Savor authentic regional cuisine at local heritage eateries for better taste and lower cost',
+    '✓ Prioritize free scenic viewpoints, public promenades, and cultural temples',
+    '✓ Carpool with companions to divide fuel and toll expenses evenly',
+    '✓ Check official state tourism portals for verified entry ticketing hours and combined passes',
+    '✓ For EVs, plan overnight destination AC charging at hotels to minimize DC fast charging costs'
   ];
 }
 
@@ -1021,21 +1051,98 @@ function generateBudgetAdjustmentOptions(budget, estimatedCosts, routePlan, numD
   return options;
 }
 
-// Allocate budget across different categories
-function allocateBudget(totalBudget, numDays) {
-  // Allocate budget percentages (excluding transport which is estimated separately)
-  // Accommodation: 35%, Food: 25%, Activities: 25%, Miscellaneous: 15%
-  const accommodationPercent = 0.35;
-  const foodPercent = 0.25;
-  const activitiesPercent = 0.25;
-  const miscellaneousPercent = 0.15;
+/**
+ * Generates three realistic versions of the trip (Budget, Standard, Premium)
+ * calculated from actual estimated prices, NOT arbitrary percentages.
+ */
+function generateRealWorldTripTiers({
+  destination = 'Kerala',
+  numDays = 7,
+  numTravelers = 4,
+  transportCostDetails = {},
+  totalDistance = 3000,
+  scheduledPlaces = [],
+  startDate = new Date()
+}) {
+  const numNights = Math.max(1, numDays - 1);
+  const baseTransport = transportCostDetails.totalCost || 0;
 
-  return {
-    accommodation: Math.round(totalBudget * accommodationPercent),
-    food: Math.round(totalBudget * foodPercent),
-    activities: Math.round(totalBudget * activitiesPercent),
-    miscellaneous: Math.round(totalBudget * miscellaneousPercent)
-  };
+  // 1. Budget Option (Hostel / Pod, Local street food / thalis, Local buses / public transit, Free & low-cost tickets)
+  const budgetStay = getLiveAccommodationRate(destination, 'hostel', startDate, numTravelers);
+  const budgetStayTotal = budgetStay.nightlyTotalForGroup * numNights;
+  const budgetFood = getDestinationFoodPlan(destination, 'budget', numDays, numTravelers);
+  const budgetLocalTransport = getLocalTransportationDetails(destination, numTravelers, 'public');
+  const budgetLocalTransitTotal = Math.round(budgetLocalTransport.estimatedDailyCostPerPerson * 0.6) * numDays * numTravelers;
+  const budgetActivitiesTotal = Math.round((scheduledPlaces.length || 4) * 30 * numTravelers);
+  const budgetTotal = baseTransport + budgetStayTotal + budgetFood.totalTripFoodCost + budgetLocalTransitTotal + budgetActivitiesTotal;
+
+  // 2. Standard Option (Clean budget hotel / homestay, Mixed dining, Auto / Taxi, Verified attractions)
+  const standardStay = getLiveAccommodationRate(destination, 'budgetHotel', startDate, numTravelers);
+  const standardStayTotal = standardStay.nightlyTotalForGroup * numNights;
+  const standardFood = getDestinationFoodPlan(destination, 'standard', numDays, numTravelers);
+  const standardLocalTransport = getLocalTransportationDetails(destination, numTravelers, 'own');
+  const standardLocalTransitTotal = standardLocalTransport.estimatedDailyCostPerPerson * numDays * numTravelers;
+  const standardActivitiesTotal = scheduledPlaces.reduce((sum, p) => sum + (getLiveAttractionFee(p.name).fee * numTravelers), 0) || (350 * numTravelers);
+  const standardTotal = baseTransport + standardStayTotal + standardFood.totalTripFoodCost + standardLocalTransitTotal + standardActivitiesTotal;
+
+  // 3. Premium Option (Resort / Guest House, Premium restaurants, Private local cab / Shikara, All paid activities)
+  const premiumStay = getLiveAccommodationRate(destination, 'guesthouse', startDate, numTravelers);
+  const premiumStayTotal = premiumStay.nightlyTotalForGroup * numNights;
+  const premiumFood = getDestinationFoodPlan(destination, 'premium', numDays, numTravelers);
+  const premiumLocalTransitTotal = Math.round(standardLocalTransport.estimatedDailyCostPerPerson * 1.8) * numDays * numTravelers;
+  const premiumActivitiesTotal = Math.round(standardActivitiesTotal * 1.7);
+  const premiumTotal = baseTransport + premiumStayTotal + premiumFood.totalTripFoodCost + premiumLocalTransitTotal + premiumActivitiesTotal;
+
+  return [
+    {
+      tier: 'Budget Option',
+      label: 'Value Explorer',
+      description: 'Hostels & verified dorms, authentic local thali eateries, public local transit & essential sights',
+      totalCost: budgetTotal,
+      perPersonCost: Math.round(budgetTotal / Math.max(1, numTravelers)),
+      breakdown: {
+        transport: baseTransport,
+        stay: budgetStayTotal,
+        food: budgetFood.totalTripFoodCost,
+        localTransit: budgetLocalTransitTotal,
+        activities: budgetActivitiesTotal
+      },
+      stayType: budgetStay.label,
+      foodType: 'Local eateries & street food'
+    },
+    {
+      tier: 'Standard Option',
+      label: 'Comfort Journey (Recommended)',
+      description: 'Comfortable private rooms, regional specialty restaurants, mixed auto/shuttle transit, verified sightseeing',
+      totalCost: standardTotal,
+      perPersonCost: Math.round(standardTotal / Math.max(1, numTravelers)),
+      breakdown: {
+        transport: baseTransport,
+        stay: standardStayTotal,
+        food: standardFood.totalTripFoodCost,
+        localTransit: standardLocalTransitTotal,
+        activities: standardActivitiesTotal
+      },
+      stayType: standardStay.label,
+      foodType: 'Regional sit-down restaurants & cafes'
+    },
+    {
+      tier: 'Premium Option',
+      label: 'Luxury & Leisure',
+      description: '3-star boutique resorts / heritage villas, fine regional dining, private cabs & complete paid excursions',
+      totalCost: premiumTotal,
+      perPersonCost: Math.round(premiumTotal / Math.max(1, numTravelers)),
+      breakdown: {
+        transport: baseTransport,
+        stay: premiumStayTotal,
+        food: premiumFood.totalTripFoodCost,
+        localTransit: premiumLocalTransitTotal,
+        activities: premiumActivitiesTotal
+      },
+      stayType: premiumStay.label,
+      foodType: 'Heritage restaurants & multi-course dining'
+    }
+  ];
 }
 
 function calculateStraightLineDistanceKm(pointA, pointB) {
@@ -2925,9 +3032,6 @@ async function generateItinerary(data) {
       scoreWeights: scoreWeights || recommendationWeights
     };
 
-    // Allocate budget
-    const budgetAllocation = allocateBudget(parsedBudget, numDays);
-
     // Generate complete round-trip route with onward, destination-stay, and return phases
     const routePlan = await generateRoundTripRoutePlan({
       startLocation: startLocation || destination,
@@ -2940,17 +3044,16 @@ async function generateItinerary(data) {
       numberOfTravelers,
       preferredArrivalDay,
       preferredStayDays,
-      accommodationType: accommodation || 'hostel',
+      accommodationType: accommodation || 'budgetHotel',
       vehicleType: effectiveVehicleType,
       plannerOptions
     });
 
-    // Calculate transport costs based on type
+    // 1. Calculate Real Transport Costs (Fuel / EV Charging + Tolls / Public Transit)
     let transportCostDetails;
     let transportCost = 0;
 
     if ((transportType === 'own' && effectiveVehicleType) || isSelfDriveRental) {
-      // Calculate cost for own vehicle
       transportCostDetails = calculateOwnVehicleCost(
         effectiveVehicleType,
         effectiveFuelType || 'petrol',
@@ -2958,7 +3061,8 @@ async function generateItinerary(data) {
         routePlan.totalDistance,
         numberOfTravelers,
         startLocation || destination,
-        destination
+        destination,
+        data.vehicleModel || null
       );
       if (isSelfDriveRental && rentalVehicle) {
         const rentalCost = Number(rentalVehicle.estimatedTotalCost || rentalVehicle.pricePerDay || 0);
@@ -2973,7 +3077,6 @@ async function generateItinerary(data) {
       }
       transportCost = transportCostDetails.totalCost;
     } else {
-      // Calculate cost for public transport
       transportCostDetails = calculatePublicTransportCost(
         effectiveTransportMode || 'bus',
         routePlan.totalDistance,
@@ -2982,60 +3085,83 @@ async function generateItinerary(data) {
       transportCost = transportCostDetails.totalCost;
     }
 
-    // Get accommodation recommendations
+    // 2. Real Destination Local Transportation (Water ferries, Shikara boats, Jeeps, Autos where own car is impractical)
+    const localTransitDetails = getLocalTransportationDetails(destination, numberOfTravelers, transportType);
+    const localTransportCost = localTransitDetails.estimatedDailyCostPerPerson * numDays * numberOfTravelers;
+
+    // 3. Real Market Accommodation Cost (Room requirement based on traveler count)
     const accommodationDetails = getAccommodationRecommendations(
-      accommodation || 'hostel',
+      accommodation || 'budgetHotel',
       numDays,
-      budgetAllocation.accommodation,
-      numberOfTravelers
+      numberOfTravelers,
+      destination,
+      startDate
     );
 
-    // Get food costs (scaled by number of travelers)
-    const foodDetails = estimateFoodCosts(numDays, budgetAllocation.food, numberOfTravelers);
+    // 4. Real Destination-Specific Food Cost (Local dishes, meal prices)
+    const budgetCategory = data.travelStyle === 'budget' ? 'budget' : (data.travelStyle === 'luxury' || data.travelStyle === 'premium') ? 'premium' : 'standard';
+    const foodDetails = calculateFoodCost(numberOfTravelers, numDays, budgetCategory, destination);
 
-    // Get activities
-    const { activities: recommendedActivities, activitiesPerDay } = getRecommendedActivities(
+    // 5. Real Attraction Entry Tickets & Activity Fees
+    const { activities: recommendedActivities } = getRecommendedActivities(
       activitiesPreference || 'cultural,nature,adventure',
-      budgetAllocation.activities,
+      6,
       numDays
     );
 
-    // Calculate total activities cost
-    const activitiesTotalCost = recommendedActivities.reduce((sum, activity) => sum + activity.cost, 0);
+    // Evaluate ticket costs across all scheduled corridor stops and planned activities
+    const allStopsForTicketing = [...(routePlan.intermediateStops || []), ...recommendedActivities];
+    const activityPricing = calculateActivityCosts(allStopsForTicketing, numberOfTravelers);
+    const activitiesTotalCost = activityPricing.totalCost;
 
-    // Calculate estimated costs
+    // 6. Complete Realistic Grand Total (Sum of actual calculated costs, NOT percentage distributions)
     const estimatedCosts = {
       mainTransport: transportCost,
+      fuelCost: transportCostDetails.fuelCost || transportCostDetails.chargingCost || 0,
+      tollCost: transportCostDetails.tollCost || 0,
+      localTransport: localTransportCost,
       accommodation: accommodationDetails.totalCost,
-      food: foodDetails.tripTotal,
+      food: foodDetails.totalCost,
       activities: activitiesTotalCost,
-      miscellaneous: budgetAllocation.miscellaneous,
+      miscellaneous: 0,
       total: Math.round((
         transportCost +
+        localTransportCost +
         accommodationDetails.totalCost +
-        foodDetails.tripTotal +
-        activitiesTotalCost +
-        budgetAllocation.miscellaneous
+        foodDetails.totalCost +
+        activitiesTotalCost
       ) * 100) / 100
     };
 
-    // Check budget status and generate alternatives
+    // 7. Check User Budget as a Constraint (NOT artificially reduced)
     const isOverBudget = estimatedCosts.total > parsedBudget;
-    const isSlightlyOver = isOverBudget && estimatedCosts.total <= parsedBudget * 1.2;
-    const isSignificantlyOver = estimatedCosts.total > parsedBudget * 1.2;
+    const budgetGap = Math.round(estimatedCosts.total - parsedBudget);
+    const isSignificantlyOver = estimatedCosts.total > parsedBudget * 1.25;
+    const isBudgetInsufficientForBase = transportCost > parsedBudget;
 
     let budgetMessage = '';
-    let alternatives = [];
-
-    if (isSignificantlyOver) {
-      // Suggest alternative destinations
-      budgetMessage = `Your current budget may not be sufficient for this trip. Here are better destinations within your budget.`;
-      alternatives = generateAlternativeDestinations(parsedBudget, destination, numDays, activitiesPreference);
-    } else if (isSlightlyOver) {
-      // Suggest reducing some elements
-      budgetMessage = `Your budget is slightly lower than required. You can either skip a few places or increase your budget slightly to enjoy the complete experience.`;
-      alternatives = generateBudgetAdjustmentOptions(parsedBudget, estimatedCosts, routePlan, numDays);
+    if (isBudgetInsufficientForBase) {
+      budgetMessage = `Your budget (₹${parsedBudget.toLocaleString('en-IN')}) is insufficient even to cover the mandatory road trip fuel and toll expenses (₹${transportCost.toLocaleString('en-IN')}). The minimum realistic trip cost is ₹${estimatedCosts.total.toLocaleString('en-IN')}.`;
+    } else if (isSignificantlyOver) {
+      budgetMessage = `Your estimated realistic trip cost is ₹${estimatedCosts.total.toLocaleString('en-IN')}, exceeding your budget by ₹${budgetGap.toLocaleString('en-IN')}. Top drivers: ${transportCost > accommodationDetails.totalCost ? `Travel Fuel & Tolls (₹${transportCost.toLocaleString('en-IN')})` : `Accommodation (₹${accommodationDetails.totalCost.toLocaleString('en-IN')})`}. See our calculated Budget Option below.`;
+    } else if (isOverBudget) {
+      budgetMessage = `Trip cost is slightly above budget by ₹${budgetGap.toLocaleString('en-IN')}. Switching to hostel dorms or reducing paid activities can bridge this gap comfortably.`;
+    } else {
+      budgetMessage = `Trip cost is well within your budget! You have ₹${(parsedBudget - estimatedCosts.total).toLocaleString('en-IN')} remaining buffer.`;
     }
+
+    // 8. Generate 3 Realistic Trip Options (Budget, Standard, Premium) calculated from actual itemized rates
+    const realTripTiers = generateRealWorldTripTiers({
+      destination,
+      numDays,
+      numTravelers: numberOfTravelers,
+      transportCostDetails,
+      totalDistance: routePlan.totalDistance,
+      scheduledPlaces: routePlan.intermediateStops,
+      startDate
+    });
+
+    const alternatives = realTripTiers;
 
     const destinationStayPlan = await buildDestinationStayPlan(
       destination,
@@ -3289,32 +3415,41 @@ async function generateItinerary(data) {
           cost: transportCost,
           details: transportCostDetails
         },
+        localTransport: {
+          cost: localTransportCost,
+          details: localTransitDetails
+        },
         food: {
-          dailyCost: foodDetails.dailyTotal,
-          totalCost: foodDetails.tripTotal,
+          dailyCost: foodDetails.dailyCostPerPerson,
+          totalCost: foodDetails.totalCost,
           breakdown: foodDetails
         },
         accommodation: {
           type: accommodationDetails.type,
           costPerNight: accommodationDetails.costPerNight,
+          roomsNeeded: accommodationDetails.roomsNeeded,
           totalCost: accommodationDetails.totalCost
         },
         activities: {
           totalCost: activitiesTotalCost,
-          breakdown: recommendedActivities.slice(0, 5)
+          breakdown: activityPricing.breakdown
         },
         totalEstimatedCost: estimatedCosts.total,
         originalBudget: parsedBudget,
-        remainingBudget: Math.max(0, parsedBudget - estimatedCosts.total)
+        remainingBudget: Math.max(0, parsedBudget - estimatedCosts.total),
+        costPerPerson: Math.round(estimatedCosts.total / Math.max(1, numberOfTravelers))
       },
 
       estimatedCosts,
       transportation: {
         mode: isSelfDriveRental ? 'Self-Drive Rental Car' : effectiveTransportMode || 'bus',
         vehicleType: effectiveVehicleType,
+        vehicleModel: data.vehicleModel || null,
         distance: routePlan.totalDistance,
-        fuelCost: transportCostDetails.fuelCost,
-        tollCost: transportCostDetails.tollCost,
+        fuelCost: transportCostDetails.fuelCost || transportCostDetails.chargingCost || 0,
+        tollCost: transportCostDetails.tollCost || 0,
+        isEV: transportCostDetails.isEV || false,
+        evPlan: transportCostDetails.evPlan || null,
         rentalVehicle: rentalVehicle || null,
         rentalBooking: rentalBooking || null,
         rentalDetails: rentalDetails || null,
@@ -3329,36 +3464,67 @@ async function generateItinerary(data) {
       },
       rentalVehicle: rentalVehicle || null,
       rentalBooking: rentalBooking || null,
+
+      // 📊 Transparent Real-World Cost Breakdown (11 key dimensions)
       costBreakdown: {
+        totalDistanceKm: routePlan.totalDistance,
         transport: {
           type: isSelfDriveRental ? 'Self-Drive Rental Car' : transportType === 'own' ? `${effectiveVehicleType} (${effectiveFuelType})` : effectiveTransportMode || 'bus',
           cost: transportCost,
+          fuelCost: transportCostDetails.fuelCost || transportCostDetails.chargingCost || 0,
+          tollCost: transportCostDetails.tollCost || 0,
           details: transportCostDetails
+        },
+        localTransport: {
+          cost: localTransportCost,
+          details: localTransitDetails
         },
         accommodation: accommodationDetails,
         food: foodDetails,
-        activities: recommendedActivities.slice(0, 5),
-        miscellaneous: { amount: budgetAllocation.miscellaneous }
+        activities: {
+          totalCost: activitiesTotalCost,
+          items: activityPricing.breakdown
+        },
+        lineItemSummary: {
+          totalDistance: `${routePlan.totalDistance} km`,
+          fuelCost: transportCostDetails.fuelCost || transportCostDetails.chargingCost || 0,
+          tollCost: transportCostDetails.tollCost || 0,
+          localTransportation: localTransportCost,
+          accommodation: accommodationDetails.totalCost,
+          food: foodDetails.totalCost,
+          entryTicketsAndActivities: activitiesTotalCost,
+          estimatedTotalTripCost: estimatedCosts.total,
+          costPerPerson: Math.round(estimatedCosts.total / Math.max(1, numberOfTravelers)),
+          remainingBudget: Math.max(0, parsedBudget - estimatedCosts.total),
+          withinBudget: estimatedCosts.total <= parsedBudget
+        },
+        dataSources: [
+          transportCostDetails.source || 'State Petroleum Matrix & NHAI Fastag',
+          localTransitDetails.source || 'Regional Transport Syndicate',
+          accommodationDetails.source || 'Aggregated Real-World Hotel Rates',
+          foodDetails.source || 'Local Restaurant & Menu Tariffs'
+        ]
       },
 
-      // ⚠ Budget Suggestions
+      // ⚠ Budget Suggestions & 3 Real-World Calculated Tiers
       budgetSuggestions: {
         status: isOverBudget ? 'OVER_BUDGET' : 'WITHIN_BUDGET',
         message: budgetMessage,
-        alternatives: alternatives,
-        adjustments: isSlightlyOver ? generateBudgetAdjustmentOptions(parsedBudget, estimatedCosts, routePlan, numDays) : []
+        alternatives: realTripTiers,
+        adjustments: isOverBudget ? generateBudgetAdjustmentOptions(parsedBudget, estimatedCosts, routePlan, numDays) : []
       },
 
       // Additional metadata
       metadata: {
         routeSource: routePlan.routeSource,
         apiUsed: hasGoogleMapsAPI() ? 'Google Maps APIs' : 'Local Database',
-        generatedAt: new Date().toISOString()
+        generatedAt: new Date().toISOString(),
+        pricingEngine: 'Real-World Dynamic Travel Cost Engine 2026'
       },
 
       moneyTips: tips,
       accommodationSuggestions: accommodationDetails.suggestions,
-      foodRecommendations: foodDetails.recommendations
+      foodRecommendations: foodDetails.famousDishes?.map(d => `${d.name} (${d.priceRange})`) || []
     };
 
     return itinerary;
