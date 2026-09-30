@@ -9,18 +9,45 @@ const { connectDB, isConnected } = require('./config/database');
 const app = express();
 
 const getAllowedOrigins = () => {
-  const configuredOrigins = process.env.FRONTEND_URL || 'http://localhost:3000';
-  return configuredOrigins.split(',').map(origin => origin.trim()).filter(Boolean);
+  const configuredOrigins = process.env.FRONTEND_URL || '';
+  const list = configuredOrigins.split(',').map(origin => origin.trim()).filter(Boolean);
+  return [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+    ...list
+  ];
 };
 
-// CORS configuration
+// CORS configuration supporting localhost, 127.0.0.1, and configured origins
 const corsOptions = {
-  origin: getAllowedOrigins(),
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+
+    const allowed = getAllowedOrigins();
+    if (
+      allowed.includes(origin) ||
+      /^http:\/\/localhost(:\d+)?$/.test(origin) ||
+      /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)
+    ) {
+      return callback(null, true);
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Not allowed by CORS: ${origin}`));
+  },
   credentials: true,
   optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || '10mb' }));
 app.use(express.urlencoded({
   extended: true,

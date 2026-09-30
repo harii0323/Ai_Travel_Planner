@@ -3,31 +3,41 @@
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-3d);
   overflow: hidden;
+  transform-style: preserve-3d;
+  transition: box-shadow 0.4s ease;
 }
 
-/* Multi-Step Progress Tracker */
+.planner-form-card:hover {
+  box-shadow: var(--shadow-3d-hover);
+}
+
+/* 3D Multi-Step Progress Tracker */
 .form-step-tracker {
   display: flex;
-  background: var(--surface-soft);
+  background: rgba(242, 236, 225, 0.7);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--surface-border);
   overflow-x: auto;
+  perspective: 600px;
 }
 
 .step-tab {
   flex: 1;
   min-width: 170px;
-  padding: 16px 20px;
+  padding: 18px 20px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   color: var(--muted);
   background: transparent;
   cursor: pointer;
   border-right: 1px solid var(--surface-border);
-  transition: var(--transition);
+  transition: var(--transition-3d);
   text-align: left;
+  transform-style: preserve-3d;
+  position: relative;
 }
 
 .step-tab:last-child {
@@ -35,24 +45,29 @@
 }
 
 .step-tab:hover {
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.8);
   color: var(--ink-heading);
+  transform: translateY(-1px) translateZ(4px);
 }
 
 .step-tab.active {
   background: #ffffff;
   color: var(--brand-dark);
   border-bottom: 3px solid var(--brand);
+  transform: translateY(-2px) translateZ(8px);
+  box-shadow: 0 4px 12px rgba(100, 70, 40, 0.08);
 }
 
 .step-tab.completed .step-number {
   background: var(--success);
   color: #fff;
+  box-shadow: 0 2px 8px rgba(45, 122, 80, 0.3);
 }
 
+/* 3D Coin Step Number */
 .step-number {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: rgba(140, 110, 80, 0.12);
   color: var(--muted);
@@ -61,13 +76,16 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  transition: var(--transition);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.4s ease;
+  transform-style: preserve-3d;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
 .step-tab.active .step-number {
   background: var(--brand-gradient);
   color: #fff;
-  box-shadow: 0 0 12px var(--brand-glow);
+  box-shadow: 0 0 16px var(--brand-glow), 0 4px 10px rgba(194, 109, 56, 0.35);
+  transform: scale(1.15) translateZ(8px);
 }
 
 .step-info {
@@ -87,10 +105,11 @@
 
 /* Form Container */
 .form-step-content {
-  padding: 32px 36px;
+  padding: 36px 40px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 32px;
+  perspective: 1000px;
 }
 
 .step-header {
@@ -99,7 +118,7 @@
 
 .step-header h3 {
   color: var(--ink-heading);
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 800;
   display: flex;
   align-items: center;
@@ -117,13 +136,13 @@
 .form-grid-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  gap: 22px;
 }
 
 .form-grid-3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: 18px;
 }
 
 .form-group {
@@ -131,6 +150,7 @@
   flex-direction: column;
   gap: 8px;
   position: relative;
+  transform-style: preserve-3d;
 }
 
 .form-group label {
@@ -152,6 +172,7 @@
   position: relative;
   display: flex;
   align-items: center;
+  transform-style: preserve-3d;
 }
 
 .input-icon {
@@ -159,19 +180,28 @@
   left: 14px;
   color: var(--muted);
   pointer-events: none;
+  transform: translateZ(8px);
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.input-with-icon input:focus ~ .input-icon,
+.input-with-icon:focus-within .input-icon {
+  color: var(--brand);
+  transform: translateZ(12px) scale(1.1);
 }
 
 .form-group input,
 .form-group select {
   width: 100%;
-  min-height: 48px;
+  min-height: 50px;
   padding: 0 16px;
   background: var(--surface-soft);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius);
   color: var(--ink);
   font-size: 14px;
-  transition: var(--transition);
+  transition: var(--transition-3d);
+  box-shadow: inset 0 1px 2px rgba(100, 70, 40, 0.04);
 }
 
 .input-with-icon input,
@@ -184,8 +214,9 @@
 .react-datepicker__input-container input:focus {
   outline: none;
   border-color: var(--brand-light);
-  box-shadow: 0 0 0 4px var(--brand-glow);
+  box-shadow: 0 6px 18px rgba(194, 109, 56, 0.15), 0 0 0 3px var(--brand-glow);
   background: #ffffff;
+  transform: translateY(-2px) translateZ(4px);
 }
 
 .form-group input.input-error,
@@ -215,14 +246,14 @@
 
 .react-datepicker__input-container input {
   width: 100%;
-  min-height: 48px;
+  min-height: 50px;
   padding: 0 16px 0 42px;
   background: var(--surface-soft);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius);
   color: var(--ink);
   font-size: 14px;
-  transition: var(--transition);
+  transition: var(--transition-3d);
 }
 
 /* Preset Destination Chips */
@@ -244,67 +275,82 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
+  padding: 5px 12px;
   background: var(--surface-soft);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-pill);
   font-size: 12px;
   color: var(--ink);
   cursor: pointer;
-  transition: var(--transition);
+  transition: var(--transition-3d);
+  transform-style: preserve-3d;
 }
 
 .quick-chip:hover {
   background: #ffffff;
   border-color: var(--brand-light);
   color: var(--brand-dark);
+  transform: translateY(-2px) translateZ(4px);
+  box-shadow: 0 4px 10px rgba(100, 70, 40, 0.08);
 }
 
-/* Interactive Activities Grid */
+/* 3D Interactive Activities Grid */
 .activities-selection-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px;
+  perspective: 800px;
 }
 
 .activity-chip-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 14px;
+  padding: 14px 16px;
   background: var(--surface-soft);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius);
   cursor: pointer;
-  transition: var(--transition);
+  transition: var(--transition-3d);
   user-select: none;
+  transform-style: preserve-3d;
 }
 
 .activity-chip-card:hover {
   border-color: var(--surface-border-hover);
   background: #ffffff;
+  transform: perspective(600px) rotateX(4deg) translateY(-4px);
+  box-shadow: 0 8px 20px rgba(100, 70, 40, 0.1);
 }
 
 .activity-chip-card.selected {
   border-color: var(--brand-light);
   background: #ffffff;
-  box-shadow: 0 4px 14px var(--brand-glow);
+  box-shadow: 0 6px 20px var(--brand-glow);
+  transform: perspective(600px) translateY(-3px) translateZ(8px);
 }
 
 .activity-chip-icon {
-  font-size: 20px;
+  font-size: 22px;
   flex-shrink: 0;
+  transform: translateZ(12px);
+  transition: transform 0.3s ease;
+}
+
+.activity-chip-card:hover .activity-chip-icon {
+  transform: translateZ(20px) scale(1.15);
 }
 
 .activity-chip-label {
   display: flex;
   flex-direction: column;
   flex: 1;
+  transform: translateZ(8px);
 }
 
 .activity-chip-label strong {
   color: var(--ink-heading);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -317,93 +363,110 @@
   color: var(--brand-dark);
 }
 
-/* Visual Option Cards (Transport, Accommodation, Companions) */
+/* 3D Visual Option Cards (Transport, Accommodation, Companions) */
 .options-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  perspective: 900px;
 }
 
 .option-select-card {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  padding: 16px;
+  padding: 18px;
   background: var(--surface-soft);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius);
   cursor: pointer;
-  transition: var(--transition);
+  transition: var(--transition-3d);
   position: relative;
   text-align: left;
+  transform-style: preserve-3d;
 }
 
 .option-select-card:hover {
   border-color: var(--surface-border-hover);
   background: #ffffff;
-  transform: translateY(-2px);
+  transform: perspective(700px) rotateX(4deg) translateY(-5px);
+  box-shadow: 0 10px 24px rgba(100, 70, 40, 0.12);
 }
 
 .option-select-card.selected {
   border-color: var(--brand-light);
   background: #ffffff;
-  box-shadow: 0 4px 16px var(--brand-glow);
+  box-shadow: 0 8px 24px var(--brand-glow);
+  transform: perspective(700px) translateY(-4px) translateZ(10px);
 }
 
 .option-card-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: 12px;
+  margin-bottom: 10px;
   width: 100%;
+  transform: translateZ(14px);
 }
 
 .option-card-icon {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius-sm);
   background: rgba(140, 110, 80, 0.12);
   display: grid;
   place-items: center;
   color: var(--brand);
+  transform: translateZ(10px);
+  transition: transform 0.3s ease, background 0.3s ease;
+}
+
+.option-select-card:hover .option-card-icon {
+  transform: translateZ(22px) scale(1.1);
 }
 
 .option-select-card.selected .option-card-icon {
   background: var(--brand-gradient);
   color: #fff;
+  box-shadow: 0 2px 8px var(--brand-glow);
 }
 
 .option-card-title {
   color: var(--ink-heading);
   font-size: 14px;
   font-weight: 800;
+  transform: translateZ(8px);
 }
 
 .option-card-subtitle {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+  transform: translateZ(6px);
 }
 
 .option-card-badge {
-  margin-top: 8px;
+  margin-top: 10px;
   font-size: 11px;
   font-weight: 700;
   color: var(--accent);
-  padding: 2px 8px;
+  padding: 3px 10px;
   background: var(--accent-soft);
   border-radius: var(--radius-pill);
+  transform: translateZ(10px);
 }
 
-/* Own Vehicle Live Calculator Box */
+/* 3D Own Vehicle Cockpit Calculator Box */
 .vehicle-calculator-box {
-  padding: 20px;
+  padding: 24px;
   background: linear-gradient(135deg, #f7f0e4 0%, #fdf8f0 100%);
-  border: 1px solid rgba(194, 109, 56, 0.3);
+  border: 1px solid rgba(194, 109, 56, 0.35);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
+  transform-style: preserve-3d;
 }
 
 .vehicle-calculator-header {
@@ -411,28 +474,30 @@
   align-items: center;
   gap: 8px;
   color: var(--ink-heading);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 800;
+  transform: translateZ(10px);
 }
 
 .rental-workflow-box {
-  padding: 20px;
+  padding: 24px;
   background: #f8fbff;
   border: 1px solid rgba(20, 184, 166, 0.28);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
+  box-shadow: var(--shadow-sm);
 }
 
 .compact-grid {
-  gap: 10px;
+  gap: 12px;
 }
 
 .rental-actions-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
@@ -440,7 +505,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 700;
@@ -467,10 +532,12 @@
   text-decoration: none;
 }
 
+/* 3D Rental Vehicles Grid */
 .rental-vehicles-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 14px;
+  perspective: 900px;
 }
 
 .rental-vehicle-card {
@@ -481,31 +548,41 @@
   border-radius: var(--radius);
   cursor: pointer;
   text-align: left;
-  transition: var(--transition);
+  transform-style: preserve-3d;
+  transition: var(--transition-3d);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
 }
 
 .rental-vehicle-card:hover {
   border-color: var(--brand-light);
-  transform: translateY(-2px);
+  transform: perspective(600px) rotateX(4deg) translateY(-6px);
+  box-shadow: 0 12px 28px rgba(100, 70, 40, 0.14);
 }
 
 .rental-vehicle-card.selected {
   border-color: var(--brand);
-  box-shadow: 0 4px 16px var(--brand-glow);
+  box-shadow: 0 8px 24px var(--brand-glow);
+  transform: perspective(600px) translateY(-4px) translateZ(8px);
 }
 
 .rental-vehicle-card img {
   width: 100%;
-  height: 130px;
+  height: 140px;
   object-fit: cover;
   display: block;
+  transition: transform 0.4s ease;
+}
+
+.rental-vehicle-card:hover img {
+  transform: scale(1.05);
 }
 
 .rental-vehicle-body {
-  padding: 12px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  transform: translateZ(8px);
 }
 
 .rental-vehicle-title-row {
@@ -517,15 +594,15 @@
 
 .rental-vehicle-title-row strong {
   color: var(--ink-heading);
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .rental-vehicle-title-row span {
   color: var(--success);
   background: var(--success-soft);
   border-radius: var(--radius-pill);
-  padding: 2px 7px;
-  font-size: 10px;
+  padding: 3px 8px;
+  font-size: 11px;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -561,10 +638,10 @@
 
 .rental-vehicle-price strong {
   color: var(--brand-dark);
-  font-size: 14px;
+  font-size: 15px;
 }
 
-/* Group Size Numeric Stepper */
+/* 3D Stepper */
 .stepper-container {
   display: flex;
   align-items: center;
@@ -572,13 +649,14 @@
   background: var(--surface-soft);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius);
-  padding: 6px 12px;
+  padding: 6px 14px;
   width: fit-content;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .stepper-btn {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: var(--radius-sm);
   background: #ffffff;
   color: var(--ink-heading);
@@ -588,13 +666,20 @@
   cursor: pointer;
   font-size: 18px;
   font-weight: 800;
-  transition: var(--transition);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  transition: var(--transition-3d);
 }
 
 .stepper-btn:hover:not(:disabled) {
   background: var(--brand);
   color: #fff;
   border-color: var(--brand);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px var(--brand-glow);
+}
+
+.stepper-btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .stepper-btn:disabled {
@@ -603,14 +688,14 @@
 }
 
 .stepper-value {
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 800;
   color: var(--ink-heading);
-  min-width: 32px;
+  min-width: 34px;
   text-align: center;
 }
 
-/* Budget Tier Presets & Live Slider */
+/* Budget Tier Presets */
 .budget-tier-chips {
   display: flex;
   gap: 10px;
@@ -619,7 +704,7 @@
 }
 
 .budget-tier-chip {
-  padding: 6px 12px;
+  padding: 7px 14px;
   background: var(--surface-soft);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-pill);
@@ -627,18 +712,22 @@
   font-weight: 700;
   color: var(--muted);
   cursor: pointer;
-  transition: var(--transition);
+  transition: var(--transition-3d);
 }
 
 .budget-tier-chip:hover {
   border-color: var(--brand-light);
   color: var(--brand-dark);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(100, 70, 40, 0.08);
 }
 
 .budget-tier-chip.active {
   background: var(--brand-gradient);
   border-color: var(--brand-light);
   color: #ffffff;
+  box-shadow: 0 4px 14px var(--brand-glow);
+  transform: translateY(-2px);
 }
 
 /* Live Trip Estimation Preview Bar */
@@ -646,12 +735,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  background: rgba(194, 109, 56, 0.10);
-  border: 1px solid rgba(194, 109, 56, 0.25);
+  padding: 18px 24px;
+  background: rgba(194, 109, 56, 0.12);
+  border: 1px solid rgba(194, 109, 56, 0.3);
   border-radius: var(--radius);
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 14px;
+  box-shadow: 0 4px 14px rgba(194, 109, 56, 0.08);
 }
 
 .preview-stat {
@@ -666,84 +756,65 @@
 }
 
 .preview-stat strong {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
   color: var(--brand-dark);
 }
 
 /* Step Navigation Footer */
 .form-step-footer {
-  padding: 20px 36px;
+  padding: 22px 40px;
   background: var(--surface-soft);
   border-top: 1px solid var(--surface-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 14px;
-}
-
-@media (max-width: 640px) {
-  .form-step-content {
-    padding: 20px;
-  }
-  .form-step-footer {
-    padding: 16px 20px;
-  }
-  .form-grid-2,
-  .form-grid-3 {
-    grid-template-columns: 1fr;
-  }
-  .rental-actions-row .btn-secondary,
-  .rental-actions-row .btn-primary {
-    width: 100%;
-    justify-content: center;
-  }
-  .trip-preview-bar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+  gap: 16px;
 }
 
 /* =========================================================================
- * A6 CARS RESERVATION & PAYMENT MODAL STYLING
+ * 3D PAYMENT / RESERVATION MODAL
  * ========================================================================= */
-
 .payment-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(28, 20, 14, 0.7);
-  backdrop-filter: blur(6px);
+  background: rgba(28, 20, 14, 0.72);
+  backdrop-filter: blur(8px);
   display: grid;
   place-items: center;
   z-index: 9999;
-  padding: 16px;
+  padding: 20px;
   overflow-y: auto;
+  perspective: 1000px;
 }
 
 .payment-modal-card {
   background: var(--surface-card, #ffffff);
   border: 1px solid var(--surface-border, #e8dfd3);
-  border-radius: var(--radius, 16px);
+  border-radius: var(--radius-lg, 20px);
   width: 100%;
-  max-width: 580px;
-  box-shadow: 0 24px 64px rgba(28, 20, 14, 0.25);
+  max-width: 600px;
+  box-shadow: 
+    0 32px 70px rgba(28, 20, 14, 0.35),
+    0 10px 24px rgba(0, 0, 0, 0.1);
   overflow: hidden;
-  animation: modalSlideUp 0.25s ease-out;
+  transform-style: preserve-3d;
+  animation: modal3DIn 0.38s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-@keyframes modalSlideUp {
+@keyframes modal3DIn {
   from {
     opacity: 0;
-    transform: translateY(20px) scale(0.98);
+    transform: perspective(900px) rotateX(15deg) translateY(40px) scale(0.94);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: perspective(900px) rotateX(0deg) translateY(0) scale(1);
   }
 }
 
 .payment-modal-header {
-  padding: 18px 24px;
+  padding: 20px 26px;
   background: var(--surface-soft, #f7f3eb);
   border-bottom: 1px solid var(--surface-border, #e8dfd3);
   display: flex;
@@ -753,7 +824,7 @@
 
 .payment-modal-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 800;
   color: var(--ink-heading, #1c140e);
   display: flex;
@@ -766,42 +837,44 @@
   border: none;
   color: var(--muted, #685b51);
   cursor: pointer;
-  padding: 4px;
+  padding: 6px;
   display: grid;
   place-items: center;
   border-radius: 6px;
-  transition: var(--transition, 0.2s);
+  transition: transform 0.2s ease, color 0.2s ease;
 }
 
 .payment-close-btn:hover {
   background: rgba(0, 0, 0, 0.06);
   color: var(--ink-heading, #1c140e);
+  transform: scale(1.15);
 }
 
 .payment-modal-body {
-  padding: 24px;
+  padding: 26px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  max-height: 78vh;
+  gap: 20px;
+  max-height: 76vh;
   overflow-y: auto;
 }
 
 .payment-vehicle-summary {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
+  gap: 16px;
+  padding: 14px 18px;
   background: var(--surface-soft, #f7f3eb);
   border: 1px solid var(--surface-border, #e8dfd3);
   border-radius: var(--radius-sm, 10px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 .payment-vehicle-summary img {
-  width: 72px;
-  height: 52px;
+  width: 76px;
+  height: 56px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .payment-vehicle-info {
@@ -810,7 +883,7 @@
 
 .payment-vehicle-info strong {
   display: block;
-  font-size: 14px;
+  font-size: 15px;
   color: var(--ink-heading, #1c140e);
 }
 
@@ -819,20 +892,20 @@
   color: var(--muted, #685b51);
 }
 
-/* Plan Selector (Deposit vs Full) */
+/* Plan Selector */
 .payment-plan-selector {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 14px;
 }
 
 .payment-plan-card {
   border: 1.5px solid var(--surface-border, #e8dfd3);
   border-radius: var(--radius-sm, 10px);
-  padding: 12px 14px;
+  padding: 14px 16px;
   cursor: pointer;
   background: #ffffff;
-  transition: var(--transition, 0.2s);
+  transition: var(--transition-3d);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -840,11 +913,14 @@
 
 .payment-plan-card:hover {
   border-color: var(--brand-light, #d97736);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(100, 70, 40, 0.08);
 }
 
 .payment-plan-card.active {
   border-color: var(--brand, #c26d38);
   background: rgba(194, 109, 56, 0.06);
+  box-shadow: 0 0 12px var(--brand-glow);
 }
 
 .payment-plan-title {
@@ -857,7 +933,7 @@
 }
 
 .payment-plan-amount {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 800;
   color: var(--brand-dark, #a35324);
 }
@@ -878,7 +954,7 @@
 
 .payment-method-tab {
   flex: 1;
-  padding: 8px 10px;
+  padding: 9px 12px;
   font-size: 12px;
   font-weight: 700;
   border-radius: var(--radius-sm, 8px);
@@ -890,13 +966,20 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  transition: var(--transition, 0.2s);
+  transition: var(--transition-3d);
+}
+
+.payment-method-tab:hover {
+  background: #ffffff;
+  color: var(--ink-heading);
+  transform: translateY(-1px);
 }
 
 .payment-method-tab.active {
   background: var(--brand, #c26d38);
   border-color: var(--brand, #c26d38);
   color: #ffffff;
+  box-shadow: 0 4px 12px var(--brand-glow);
 }
 
 /* QR Code Section */
@@ -904,20 +987,25 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 16px;
+  gap: 14px;
+  padding: 20px;
   background: var(--surface-soft, #f7f3eb);
   border: 1px dashed var(--brand-light, #d97736);
-  border-radius: var(--radius-sm, 10px);
+  border-radius: var(--radius, 14px);
 }
 
 .qr-box {
   background: #ffffff;
-  padding: 12px;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  padding: 14px;
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
   display: grid;
   place-items: center;
+  transition: transform 0.3s ease;
+}
+
+.qr-box:hover {
+  transform: scale(1.04);
 }
 
 .qr-merchant-info {
@@ -928,50 +1016,221 @@
 
 .qr-merchant-info strong {
   display: block;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--ink-heading, #1c140e);
 }
 
-/* Success Card */
-.payment-success-card {
-  text-align: center;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
+/* Preference Weight Tuning Drawer & Sliders */
+.preference-toggle-btn {
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--surface-soft, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--surface-border, rgba(140, 110, 80, 0.2));
+  border-radius: 10px;
+  color: var(--brand, #c26d38);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  margin-top: 10px;
 }
 
-.payment-success-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
-  display: grid;
-  place-items: center;
+.preference-toggle-btn:hover {
+  background: var(--surface-border, rgba(140, 110, 80, 0.15));
+  border-color: var(--brand, #c26d38);
+  transform: translateY(-1px);
 }
 
-.payment-receipt-grid {
-  width: 100%;
-  background: var(--surface-soft, #f7f3eb);
-  border: 1px solid var(--surface-border, #e8dfd3);
-  border-radius: var(--radius-sm, 8px);
-  padding: 14px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  text-align: left;
+.preference-sliders-box {
+  margin-top: 14px;
+  padding: 18px 20px;
+  background: var(--surface-soft, #faf8f5);
+  border: 1px solid var(--surface-border, #e5dcd3);
+  border-radius: 14px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
+  animation: fadeInDown 0.3s ease;
 }
 
-.payment-receipt-grid div span {
-  display: block;
-  font-size: 11px;
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.preference-sliders-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  gap: 12px;
+}
+
+.preference-sliders-header h4 {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--ink-heading, #1c140e);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preference-sliders-header p {
+  margin: 0;
+  font-size: 12px;
   color: var(--muted, #685b51);
 }
 
-.payment-receipt-grid div strong {
-  font-size: 13px;
-  color: var(--ink-heading, #1c140e);
+.preference-preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 
+.preference-preset-chip {
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: #ffffff;
+  border: 1px solid var(--surface-border, #e5dcd3);
+  color: var(--ink, #382c23);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.preference-preset-chip:hover {
+  border-color: var(--brand, #c26d38);
+  color: var(--brand, #c26d38);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(194, 109, 56, 0.15);
+}
+
+.preference-sliders-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px 18px;
+}
+
+.preference-slider-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid var(--surface-border, #eae2d9);
+  border-radius: 10px;
+  transition: all 0.2s ease;
+}
+
+.preference-slider-item:hover {
+  border-color: var(--brand-light, #d97736);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+.preference-slider-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.preference-dim-name {
+  font-weight: 700;
+  color: var(--ink-heading, #1c140e);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preference-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+.preference-badge.high {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+}
+
+.preference-badge.medium {
+  background: #fffbeb;
+  color: #d97706;
+  border: 1px solid #fde68a;
+}
+
+.preference-badge.low {
+  background: #f3f4f6;
+  color: #6b7280;
+  border: 1px solid #e5e7eb;
+}
+
+.preference-range-input {
+  width: 100%;
+  accent-color: var(--brand, #c26d38);
+  cursor: pointer;
+  height: 6px;
+}
+
+/* Quick Avoid Suggestions */
+.avoid-suggestions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.avoid-suggestion-label {
+  font-size: 11px;
+  color: var(--muted, #685b51);
+  font-weight: 600;
+}
+
+.avoid-chip {
+  background: #ffffff;
+  border: 1px dashed var(--surface-border, #d1c7bc);
+  border-radius: 14px;
+  padding: 3px 9px;
+  font-size: 11px;
+  color: var(--ink, #382c23);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.avoid-chip:hover {
+  background: #fee2e2;
+  border-color: #ef4444;
+  color: #b91c1c;
+}
+
+/* Responsive Media Queries */
+@media (max-width: 640px) {
+  .form-step-content {
+    padding: 24px 20px;
+  }
+  .form-step-footer {
+    padding: 16px 20px;
+  }
+  .form-grid-2,
+  .form-grid-3 {
+    grid-template-columns: 1fr;
+  }
+  .options-cards-grid {
+    grid-template-columns: 1fr;
+  }
+  .trip-preview-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .payment-plan-selector {
+    grid-template-columns: 1fr;
+  }
+}

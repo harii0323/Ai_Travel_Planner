@@ -17,6 +17,7 @@ yarn-error.log*
 build/
 dist/
 .dist/
+frontend/build/
 
 # Test coverage
 coverage/
@@ -27,3 +28,7 @@ coverage/
 
 # Vercel
 .vercel/
+
+# OS / Editor temporary files
+.DS_Store
+Thumbs.db

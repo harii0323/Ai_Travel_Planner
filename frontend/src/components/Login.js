@@ -9,9 +9,9 @@ import {
   EyeOff,
   Sparkles,
   ArrowRight,
-  ShieldCheck,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  KeyRound
 } from 'lucide-react';
 
 function Login({ onLoginSuccess, onSwitchToRegister }) {
@@ -24,12 +24,21 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanPassword = password || '';
+
+    if (!cleanEmail || !cleanPassword) {
+      setError('Please provide both email and password.');
+      return;
+    }
+
     setLoading(true);
 
     try {
       const response = await api.post('/api/auth/login', {
-        email,
-        password
+        email: cleanEmail,
+        password: cleanPassword
       });
 
       if (response.data.success) {
@@ -38,10 +47,20 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
         onLoginSuccess(response.data.user, response.data.token);
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Invalid email or password. Please try again.');
+      const msg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.message ? err.message : 'Invalid email or password. Please try again.');
+      setError(msg);
     } finally {
       setLoading(false);
     }
+  };
+
+  const fillDemoAccount = () => {
+    setEmail('ravi@example.com');
+    setPassword('password123');
+    setError('');
   };
 
   return (
@@ -130,6 +149,7 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
                   type="button"
                   className="password-toggle-btn"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label="Toggle password visibility"
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
@@ -139,6 +159,28 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
             <button type="submit" className="btn-primary" disabled={loading} style={{ minHeight: '48px', fontSize: '15px' }}>
               <span>{loading ? 'Authenticating...' : 'Sign In'}</span>
               <ArrowRight size={16} />
+            </button>
+
+            <button
+              type="button"
+              onClick={fillDemoAccount}
+              style={{
+                background: 'transparent',
+                border: '1px dashed #cbd5e1',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                color: '#64748b',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                fontSize: '13px',
+                marginTop: '10px'
+              }}
+            >
+              <KeyRound size={14} />
+              <span>Fill Demo Credentials (ravi@example.com)</span>
             </button>
           </form>
 

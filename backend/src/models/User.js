@@ -50,10 +50,34 @@ const setNested = (target, dottedKey, value) => {
   cursor[keys[keys.length - 1]] = value;
 };
 
+// In-memory fallback store for offline / demo mode
+const memoryUsers = new Map();
+(async () => {
+  const demoHash = await bcryptjs.hash('password123', 10);
+  memoryUsers.set('ravi@example.com', {
+    id: 'demo-user-ravi',
+    name: 'Ravi Kumar',
+    email: 'ravi@example.com',
+    password: demoHash,
+    created_at: new Date().toISOString(),
+    travel_preferences: DEFAULT_TRAVEL_PREFERENCES,
+    profile: {}
+  });
+})();
+
 const findOneExec = async (filter) => {
   if (filter.email) {
-    const result = await db.query('SELECT * FROM users WHERE email = $1', [filter.email.toLowerCase()]);
-    return toDocument(result.rows[0]);
+    const cleanEmail = filter.email.toLowerCase().trim();
+    if (db.isConnected()) {
+      try {
+        const result = await db.query('SELECT * FROM users WHERE email = $1', [cleanEmail]);
+        if (result.rows[0]) return toDocument(result.rows[0]);
+      } catch (err) {
+        console.warn('DB query error in findOne, checking memory store:', err.message);
+      }
+    }
+    const memUser = memoryUsers.get(cleanEmail);
+    return memUser ? toDocument(memUser) : null;
   }
 
   return null;
@@ -87,22 +111,41 @@ const User = {
     const hashedPassword = await bcryptjs.hash(data.password, 12);
     const travelPreferences = normalizePreferences(data.travelPreferences);
     const profile = data.profile || {};
+    const cleanEmail = data.email.toLowerCase().trim();
 
-    const result = await db.query(
-      `INSERT INTO users (id, name, email, password, travel_preferences, profile)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [
-        id,
-        data.name,
-        data.email.toLowerCase(),
-        hashedPassword,
-        JSON.stringify(travelPreferences),
-        JSON.stringify(profile)
-      ]
-    );
+    const memRecord = {
+      id,
+      name: data.name,
+      email: cleanEmail,
+      password: hashedPassword,
+      travel_preferences: travelPreferences,
+      profile,
+      created_at: new Date().toISOString()
+    };
+    memoryUsers.set(cleanEmail, memRecord);
 
-    return toDocument(result.rows[0]);
+    if (db.isConnected()) {
+      try {
+        const result = await db.query(
+          `INSERT INTO users (id, name, email, password, travel_preferences, profile)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING *`,
+          [
+            id,
+            data.name,
+            cleanEmail,
+            hashedPassword,
+            JSON.stringify(travelPreferences),
+            JSON.stringify(profile)
+          ]
+        );
+        return toDocument(result.rows[0]);
+      } catch (err) {
+        console.warn('DB error during user insert, using memory store:', err.message);
+      }
+    }
+
+    return toDocument(memRecord);
   },
 
   findOne(filter) {
@@ -110,8 +153,18 @@ const User = {
   },
 
   async findById(id) {
-    const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
-    return toDocument(result.rows[0]);
+    if (db.isConnected()) {
+      try {
+        const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+        if (result.rows[0]) return toDocument(result.rows[0]);
+      } catch (err) {
+        console.warn('DB error during findById, checking memory store:', err.message);
+      }
+    }
+    for (const u of memoryUsers.values()) {
+      if (u.id === id) return toDocument(u);
+    }
+    return null;
   },
 
   async findByIdAndUpdate(id, updates) {

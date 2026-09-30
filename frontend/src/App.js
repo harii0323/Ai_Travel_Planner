@@ -7,6 +7,8 @@ import History from './components/History';
 import Profile from './components/Profile';
 import ItineraryForm from './components/ItineraryForm';
 import ItineraryDisplay from './components/ItineraryDisplay';
+import SmartPlanningLoader from './components/SmartPlanningLoader';
+import CarpoolModal from './components/CarpoolModal';
 import { 
   LayoutDashboard, 
   Compass, 
@@ -19,7 +21,13 @@ import {
   Info, 
   X,
   MapPin,
-  PlaneTakeoff
+  PlaneTakeoff,
+  Car,
+  Users,
+  Map,
+  Search,
+  Menu,
+  ChevronRight
 } from 'lucide-react';
 import './App.css';
 
@@ -42,6 +50,39 @@ function App() {
 
   // Global Toasts State
   const [toasts, setToasts] = useState([]);
+
+  // Responsive & Interactive Nav State (Requirement #21)
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isCarpoolModalOpen, setIsCarpoolModalOpen] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const navigateAndScroll = (page, anchorId = null) => {
+    setIsMobileMenuOpen(false);
+    if (currentPage !== page) {
+      setCurrentPage(page);
+      if (anchorId) {
+        setTimeout(() => {
+          const el = document.getElementById(anchorId);
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        }, 150);
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } else if (anchorId) {
+      const el = document.getElementById(anchorId);
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   const addToast = (message, type = 'success') => {
     const id = Date.now() + Math.random();
@@ -217,10 +258,10 @@ function App() {
   // Render Authenticated App
   return (
     <div className="App">
-      {/* Modern Glass Navigation Bar */}
-      <nav className="app-navbar">
+      {/* Modern Sticky Glass Navigation Bar with Scroll Blur & Shadow (Req #21) */}
+      <nav className={`app-navbar ${isScrolled ? 'navbar-scrolled' : ''}`}>
         <div className="navbar-content">
-          <div className="navbar-brand" onClick={() => setCurrentPage('dashboard')}>
+          <div className="navbar-brand" onClick={() => navigateAndScroll('dashboard')}>
             <div className="brand-logo-wrap">
               <img 
                 className="brand-logo" 
@@ -240,53 +281,79 @@ function App() {
             </div>
           </div>
 
+          {/* Desktop Navigation Links (Req #21) */}
           <div className="navbar-menu">
             <button
               className={`nav-item ${currentPage === 'dashboard' ? 'active' : ''}`}
-              onClick={() => {
-                setCurrentPage('dashboard');
-                setItinerary(null);
-              }}
+              onClick={() => navigateAndScroll('dashboard', 'destinations')}
             >
-              <LayoutDashboard size={17} />
-              <span>Dashboard</span>
+              <Search size={16} />
+              <span>Explore</span>
             </button>
             <button
-              className={`nav-item ${currentPage === 'planner' ? 'active' : ''}`}
+              className={`nav-item ${currentPage === 'planner' && !itinerary ? 'active' : ''}`}
               onClick={() => {
-                setCurrentPage('planner');
-                setItinerary(null);
                 setSelectedItineraryId(null);
+                setItinerary(null);
                 setPlannerPreset(null);
+                navigateAndScroll('planner');
               }}
             >
-              <Compass size={17} />
+              <Compass size={16} />
               <span>Plan Trip</span>
             </button>
             <button
-              className={`nav-item ${currentPage === 'history' ? 'active' : ''}`}
+              className={`nav-item ${currentPage === 'planner' && itinerary ? 'active' : ''}`}
               onClick={() => {
-                setCurrentPage('history');
+                if (itinerary) {
+                  navigateAndScroll('planner');
+                } else {
+                  addToast('Create a trip first or load one from My Trips!', 'info');
+                  navigateAndScroll('planner');
+                }
               }}
             >
-              <HistoryIcon size={17} />
-              <span>History</span>
+              <Map size={16} />
+              <span>Itinerary</span>
+            </button>
+            <button
+              className="nav-item"
+              onClick={() => navigateAndScroll('dashboard', 'car-rental-section')}
+            >
+              <Car size={16} />
+              <span>Cars</span>
+            </button>
+            <button
+              className="nav-item"
+              onClick={() => {
+                setIsMobileMenuOpen(false);
+                setIsCarpoolModalOpen(true);
+              }}
+            >
+              <Users size={16} />
+              <span>Carpool</span>
+            </button>
+            <button
+              className={`nav-item ${currentPage === 'history' ? 'active' : ''}`}
+              onClick={() => navigateAndScroll('history')}
+            >
+              <HistoryIcon size={16} />
+              <span>My Trips</span>
             </button>
             <button
               className={`nav-item ${currentPage === 'profile' ? 'active' : ''}`}
-              onClick={() => {
-                setCurrentPage('profile');
-              }}
+              onClick={() => navigateAndScroll('profile')}
             >
-              <UserIcon size={17} />
+              <UserIcon size={16} />
               <span>Profile</span>
             </button>
           </div>
 
+          {/* User Status & Mobile Toggle */}
           <div className="navbar-user">
             <div 
               className="user-chip" 
-              onClick={() => setCurrentPage('profile')}
+              onClick={() => navigateAndScroll('profile')}
               title="View profile & travel style"
             >
               <div className="user-avatar">{userInitials}</div>
@@ -296,8 +363,117 @@ function App() {
               <LogOut size={15} />
               <span>Logout</span>
             </button>
+            <button 
+              className="btn-mobile-toggle" 
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              aria-label="Toggle navigation drawer"
+            >
+              {isMobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+            </button>
           </div>
         </div>
+
+        {/* Polished Animated Mobile Drawer Navigation (Req #21) */}
+        {isMobileMenuOpen && (
+          <div className="mobile-nav-drawer">
+            <div className="mobile-nav-backdrop" onClick={() => setIsMobileMenuOpen(false)} />
+            <div className="mobile-nav-pane">
+              <div className="mobile-nav-header">
+                <div className="user-chip" onClick={() => navigateAndScroll('profile')}>
+                  <div className="user-avatar">{userInitials}</div>
+                  <div className="mobile-user-meta">
+                    <span className="user-greeting">{user?.name || 'Traveler'}</span>
+                    <span className="user-subtext">{user?.email || 'Explorer Account'}</span>
+                  </div>
+                </div>
+                <button className="mobile-nav-close" onClick={() => setIsMobileMenuOpen(false)}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="mobile-nav-links">
+                <button
+                  className={`mobile-nav-item ${currentPage === 'dashboard' ? 'active' : ''}`}
+                  onClick={() => navigateAndScroll('dashboard', 'destinations')}
+                >
+                  <div className="nav-item-icon-wrap"><Search size={18} /></div>
+                  <span>Explore Destinations</span>
+                  <ChevronRight size={16} className="nav-arrow" />
+                </button>
+                <button
+                  className={`mobile-nav-item ${currentPage === 'planner' && !itinerary ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedItineraryId(null);
+                    setItinerary(null);
+                    setPlannerPreset(null);
+                    navigateAndScroll('planner');
+                  }}
+                >
+                  <div className="nav-item-icon-wrap"><Compass size={18} /></div>
+                  <span>Plan Trip</span>
+                  <ChevronRight size={16} className="nav-arrow" />
+                </button>
+                <button
+                  className={`mobile-nav-item ${currentPage === 'planner' && itinerary ? 'active' : ''}`}
+                  onClick={() => {
+                    if (itinerary) {
+                      navigateAndScroll('planner');
+                    } else {
+                      addToast('Create a trip first or load one from My Trips!', 'info');
+                      navigateAndScroll('planner');
+                    }
+                  }}
+                >
+                  <div className="nav-item-icon-wrap"><Map size={18} /></div>
+                  <span>Itinerary</span>
+                  <ChevronRight size={16} className="nav-arrow" />
+                </button>
+                <button
+                  className="mobile-nav-item"
+                  onClick={() => navigateAndScroll('dashboard', 'car-rental-section')}
+                >
+                  <div className="nav-item-icon-wrap"><Car size={18} /></div>
+                  <span>Car Rental (A6 Cars)</span>
+                  <ChevronRight size={16} className="nav-arrow" />
+                </button>
+                <button
+                  className="mobile-nav-item"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    setIsCarpoolModalOpen(true);
+                  }}
+                >
+                  <div className="nav-item-icon-wrap"><Users size={18} /></div>
+                  <span>Carpool & Ride Sharing</span>
+                  <ChevronRight size={16} className="nav-arrow" />
+                </button>
+                <button
+                  className={`mobile-nav-item ${currentPage === 'history' ? 'active' : ''}`}
+                  onClick={() => navigateAndScroll('history')}
+                >
+                  <div className="nav-item-icon-wrap"><HistoryIcon size={18} /></div>
+                  <span>My Trips</span>
+                  <ChevronRight size={16} className="nav-arrow" />
+                </button>
+                <button
+                  className={`mobile-nav-item ${currentPage === 'profile' ? 'active' : ''}`}
+                  onClick={() => navigateAndScroll('profile')}
+                >
+                  <div className="nav-item-icon-wrap"><UserIcon size={18} /></div>
+                  <span>Profile & Preferences</span>
+                  <ChevronRight size={16} className="nav-arrow" />
+                </button>
+              </div>
+
+              <div className="mobile-nav-footer">
+                <button className="btn-logout-full" onClick={handleLogout}>
+                  <LogOut size={16} />
+                  <span>Log Out of VISTA</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Main Content */}
@@ -341,26 +517,10 @@ function App() {
               )}
 
               {loading && (
-                <div className="loading-container">
-                  <div className="ai-pulse-ring">
-                    <div className="ai-pulse-icon">
-                      <Sparkles size={24} />
-                    </div>
-                  </div>
-                  <h3>Designing your custom itinerary...</h3>
-                  <p>Analyzing routes, calculating real-world fuel & tolls, pricing stays and local food, and checking seasonal weather.</p>
-                  <div className="loading-progress-steps">
-                    <span className="loading-step-chip active">
-                      <MapPin size={13} /> Route mapping
-                    </span>
-                    <span className="loading-step-chip active">
-                      <Sparkles size={13} /> Weather sync
-                    </span>
-                    <span className="loading-step-chip active">
-                      <PlaneTakeoff size={13} /> Budget optimization
-                    </span>
-                  </div>
-                </div>
+                <SmartPlanningLoader 
+                  destination={plannerPreset?.destination || 'your destination'} 
+                  days={plannerPreset?.days || 5} 
+                />
               )}
 
               {error && (
@@ -379,6 +539,7 @@ function App() {
               {itinerary && !loading && (
                 <ItineraryDisplay 
                   data={itinerary} 
+                  details={itinerary?.details}
                   addToast={addToast}
                   onEditAnother={() => {
                     setSelectedItineraryId(null);
@@ -423,6 +584,15 @@ function App() {
           </div>
         ))}
       </div>
+
+      {/* Global Carpooling Network Modal (Requirement #19) */}
+      {isCarpoolModalOpen && (
+        <CarpoolModal
+          isOpen={isCarpoolModalOpen}
+          onClose={() => setIsCarpoolModalOpen(false)}
+          addToast={addToast}
+        />
+      )}
 
       {/* Modern Footer */}
       <footer className="app-footer">

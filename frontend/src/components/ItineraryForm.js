@@ -46,20 +46,77 @@ import {
   ShieldCheck,
   X,
   RefreshCw,
-  Smartphone
+  Smartphone,
+  SlidersHorizontal
 } from 'lucide-react';
 
 const ACTIVITY_ITEMS = [
-  { id: 'adventure', label: 'Adventure', icon: '🧗', desc: 'Hiking, Kayaking, Rafting' },
-  { id: 'cultural', label: 'Cultural', icon: '🏛️', desc: 'Temples, Heritage, Museums' },
-  { id: 'food', label: 'Food & Dining', icon: '🍲', desc: 'Street food, Cafes, Markets' },
-  { id: 'nature', label: 'Nature & Scenic', icon: '🌴', desc: 'Beaches, Waterfalls, Lakes' },
-  { id: 'trekking', label: 'Trekking', icon: '🥾', desc: 'Summit trails, Forest hikes' },
-  { id: 'camping', label: 'Camping', icon: '⛺', desc: 'Bonfires, Stargazing, Tents' },
-  { id: 'wildlife', label: 'Wildlife & Safari', icon: '🐅', desc: 'National parks, Sanctuaries' },
-  { id: 'photography', label: 'Photography', icon: '📸', desc: 'Viewpoints, Sunsets, Vistas' },
-  { id: 'snow', label: 'Snow Destinations', icon: '❄️', desc: 'Snow sports, Glacier views' },
-  { id: 'relaxation', label: 'Chill & Relax', icon: '☕', desc: 'Resorts, Spa, Sunset cafes' }
+  { id: 'nature', label: 'Nature & Greenery', icon: '🌿', desc: 'Lakes, valleys, botanical parks & forests' },
+  { id: 'photography', label: 'Photography & Vistas', icon: '📸', desc: 'Panoramic viewpoints, sunrise & sunsets' },
+  { id: 'beach', label: 'Beaches & Coastal', icon: '🏖️', desc: 'Golden shores, coves, sea walks & lighthouses' },
+  { id: 'mountain', label: 'Mountains & Hills', icon: '🏔️', desc: 'High-altitude ridges, ghat passes & misty peaks' },
+  { id: 'waterfall', label: 'Waterfalls & Cascades', icon: '🌊', desc: 'Forest cascades, plunge pools & rapids' },
+  { id: 'wildlife', label: 'Wildlife & Safari', icon: '🐅', desc: 'National parks, tiger reserves & sanctuaries' },
+  { id: 'temple', label: 'Temples & Spiritual', icon: '🛕', desc: 'Ancient shrines, sacred ghats & ashrams' },
+  { id: 'historical', label: 'Historical & Forts', icon: '🏰', desc: 'UNESCO monuments, ancient forts & palaces' },
+  { id: 'cultural', label: 'Cultural & Arts', icon: '🎭', desc: 'Traditional dance, craft villages & folklore' },
+  { id: 'trekking', label: 'Trekking & Hiking', icon: '🥾', desc: 'Summit trails, ridge hikes & forest walks' },
+  { id: 'adventure', label: 'Adventure Sports', icon: '🧗', desc: 'Kayaking, rafting, paragliding & zipline' },
+  { id: 'shopping', label: 'Shopping & Bazaars', icon: '🛍️', desc: 'Spice markets, handicrafts & silk bazaars' },
+  { id: 'nightlife', label: 'Nightlife & Evening', icon: '🍸', desc: 'Night markets, seaside shacks & acoustic cafes' },
+  { id: 'family', label: 'Family Activities', icon: '👨‍👩‍👧‍👦', desc: 'Gardens, theme parks & all-ages attractions' },
+  { id: 'relaxation', label: 'Chill & Wellness', icon: '🧘', desc: 'Ayurvedic spas, quiet resorts & calm backwaters' },
+  { id: 'local_experience', label: 'Local Experiences', icon: '🛶', desc: 'Houseboats, village tours & spice plantations' },
+  { id: 'famous_food', label: 'Famous & Local Food', icon: '🍲', desc: 'Regional culinary icons, street food & cafes' }
+];
+
+const PREFERENCE_PRESETS = [
+  {
+    name: '🌿 Nature & Vistas',
+    desc: 'High nature, photography & waterfalls',
+    weights: {
+      nature: 0.95, photography: 0.95, waterfall: 0.90, mountain: 0.85, beach: 0.80,
+      trekking: 0.75, wildlife: 0.70, relaxation: 0.70, local_experience: 0.65, famous_food: 0.70,
+      adventure: 0.60, cultural: 0.40, historical: 0.35, temple: 0.30, family: 0.50, shopping: 0.20, nightlife: 0.20
+    }
+  },
+  {
+    name: '🛕 Spiritual & Heritage',
+    desc: 'Temples, forts & local cultural roots',
+    weights: {
+      temple: 0.95, historical: 0.90, cultural: 0.90, local_experience: 0.85, famous_food: 0.80,
+      photography: 0.75, relaxation: 0.70, nature: 0.65, family: 0.65, shopping: 0.50,
+      mountain: 0.40, waterfall: 0.35, wildlife: 0.30, beach: 0.30, trekking: 0.25, adventure: 0.20, nightlife: 0.15
+    }
+  },
+  {
+    name: '🏖️ Coastal & Foodie',
+    desc: 'Beaches, coastal cuisine & chill vibes',
+    weights: {
+      beach: 0.95, famous_food: 0.95, relaxation: 0.90, local_experience: 0.85, photography: 0.85,
+      nightlife: 0.65, nature: 0.60, shopping: 0.50, family: 0.50, adventure: 0.50,
+      waterfall: 0.40, cultural: 0.35, mountain: 0.30, historical: 0.30, temple: 0.25, wildlife: 0.25, trekking: 0.20
+    }
+  },
+  {
+    name: '🧗 Thrills & Wild',
+    desc: 'Adventure, treks & national parks',
+    weights: {
+      adventure: 0.95, wildlife: 0.95, trekking: 0.90, nature: 0.90, waterfall: 0.85,
+      photography: 0.80, mountain: 0.80, local_experience: 0.60, famous_food: 0.65, relaxation: 0.45,
+      family: 0.35, shopping: 0.20, cultural: 0.25, historical: 0.25, temple: 0.20, beach: 0.35, nightlife: 0.25
+    }
+  },
+  {
+    name: '⚖️ Balanced Mix',
+    desc: 'Harmonious coverage across all travel vibes',
+    weights: {
+      nature: 0.70, photography: 0.70, beach: 0.65, mountain: 0.65, waterfall: 0.65,
+      wildlife: 0.60, temple: 0.55, historical: 0.60, cultural: 0.60, trekking: 0.55,
+      adventure: 0.60, shopping: 0.45, nightlife: 0.40, family: 0.55, relaxation: 0.70,
+      local_experience: 0.75, famous_food: 0.75
+    }
+  }
 ];
 
 const ACCOMMODATION_ITEMS = [
@@ -130,15 +187,38 @@ const buildDefaultRentalDetails = (form) => ({
 
 function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
   const [currentStep, setCurrentStep] = useState(1);
+  const [preferenceWeights, setPreferenceWeights] = useState({
+    nature: 0.90,
+    photography: 0.90,
+    beach: 0.80,
+    mountain: 0.70,
+    waterfall: 0.75,
+    wildlife: 0.60,
+    temple: 0.50,
+    historical: 0.60,
+    cultural: 0.65,
+    trekking: 0.60,
+    adventure: 0.70,
+    shopping: 0.20,
+    nightlife: 0.30,
+    family: 0.50,
+    relaxation: 0.75,
+    local_experience: 0.85,
+    famous_food: 0.85
+  });
+  const [showWeightSliders, setShowWeightSliders] = useState(false);
   const [form, setForm] = useState({
     budget: '15000',
     startDate: new Date(Date.now() + 86400000 * 3), // 3 days from now
     endDate: new Date(Date.now() + 86400000 * 7),   // 7 days from now (4 days trip)
     startLocation: 'Hyderabad',
     destination: 'Kerala',
-    activities: 'nature, food, adventure',
+    activities: 'nature, photography, beach, famous_food, local_experience',
     preferredPlaceType: '',
     travelStyle: 'balanced',
+    travelPace: 'balanced',
+    foodPreference: 'local_famous',
+    placesToAvoid: '',
     accommodation: 'budgetHotel',
     transport: 'ownTransport',
     destinationArrivalDay: '',
@@ -433,12 +513,48 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
   const handleActivityToggle = (id) => {
     const activeList = form.activities ? form.activities.split(',').map((a) => a.trim()).filter(Boolean) : [];
     const idx = activeList.indexOf(id);
+    let nextList = [...activeList];
+    let nextWeights = { ...preferenceWeights };
+
     if (idx > -1) {
-      activeList.splice(idx, 1);
+      nextList.splice(idx, 1);
+      nextWeights[id] = 0.20;
     } else {
-      activeList.push(id);
+      nextList.push(id);
+      nextWeights[id] = 0.90;
     }
+    setPreferenceWeights(nextWeights);
+    setForm((prev) => ({ ...prev, activities: nextList.join(', ') }));
+  };
+
+  const handleWeightSliderChange = (dim, val) => {
+    const num = Math.round(parseFloat(val) * 100) / 100;
+    setPreferenceWeights((prev) => ({ ...prev, [dim]: num }));
+
+    const activeList = form.activities ? form.activities.split(',').map((a) => a.trim()).filter(Boolean) : [];
+    if (num >= 0.50 && !activeList.includes(dim)) {
+      activeList.push(dim);
+      setForm((prev) => ({ ...prev, activities: activeList.join(', ') }));
+    } else if (num < 0.30 && activeList.includes(dim)) {
+      const filtered = activeList.filter((a) => a !== dim);
+      setForm((prev) => ({ ...prev, activities: filtered.join(', ') }));
+    }
+  };
+
+  const handleApplyPreset = (preset) => {
+    setPreferenceWeights(preset.weights);
+    const activeList = Object.entries(preset.weights)
+      .filter(([_, val]) => val >= 0.60)
+      .map(([k]) => k);
     setForm((prev) => ({ ...prev, activities: activeList.join(', ') }));
+  };
+
+  const handleAddAvoidSuggestion = (suggestion) => {
+    const current = form.placesToAvoid ? form.placesToAvoid.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    if (!current.includes(suggestion)) {
+      current.push(suggestion);
+      setForm((prev) => ({ ...prev, placesToAvoid: current.join(', ') }));
+    }
   };
 
   const isActivitySelected = (id) => {
@@ -464,7 +580,20 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
         travelDates: `${form.startDate.toISOString().split('T')[0]} to ${form.endDate.toISOString().split('T')[0]}`,
         destinationArrivalDate: form.destinationArrivalDate
           ? form.destinationArrivalDate.toISOString().split('T')[0]
-          : ''
+          : '',
+        travelPace: form.travelPace || form.travelStyle || 'balanced',
+        foodPreference: form.foodPreference || 'local_famous',
+        placesToAvoid: form.placesToAvoid || '',
+        avoid: form.placesToAvoid || '',
+        preferences: {
+          ...preferenceWeights,
+          dimensions: preferenceWeights,
+          weights: preferenceWeights,
+          travelPace: form.travelPace || form.travelStyle || 'balanced',
+          foodPreference: form.foodPreference || 'local_famous',
+          placesToAvoid: form.placesToAvoid || '',
+          activities: form.activities
+        }
       };
       await onSubmit(formattedForm);
     } finally {
@@ -687,16 +816,17 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
             <div className="step-header">
               <h3>
                 <Sparkles size={22} color="#f59e0b" />
-                Choose Your Vibe & Activities
+                Vibe, Preferences & Experience Profile
               </h3>
-              <p>Select what excites you most. The AI will curate personalized recommendations and weather-safe timing.</p>
+              <p>Select what excites you across 17 travel dimensions. Weights dynamically steer route corridor discovery, POI affinity, time-window scoring, and return trip gap-filling.</p>
             </div>
 
             <div className="form-group">
-              <label>What do you love doing? (Select all that apply)</label>
+              <label>17 Experience Dimensions (Click to toggle priority)</label>
               <div className="activities-selection-grid">
                 {ACTIVITY_ITEMS.map((item) => {
                   const selected = isActivitySelected(item.id);
+                  const currentWeight = preferenceWeights[item.id] !== undefined ? preferenceWeights[item.id] : 0.20;
                   return (
                     <div
                       key={item.id}
@@ -708,30 +838,178 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
                         <strong>{item.label}</strong>
                         <span>{item.desc}</span>
                       </div>
-                      {selected && <Check size={16} color="#14b8a6" />}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: '8px',
+                          background: selected ? 'rgba(20, 184, 166, 0.15)' : 'rgba(0,0,0,0.04)',
+                          color: selected ? '#0d9488' : '#888'
+                        }}>
+                          {Math.round(currentWeight * 100)}%
+                        </span>
+                        {selected && <Check size={16} color="#14b8a6" />}
+                      </div>
                     </div>
                   );
                 })}
               </div>
+
+              {/* Preference Weight Tuning Drawer Toggle */}
+              <div>
+                <button
+                  type="button"
+                  className="preference-toggle-btn"
+                  onClick={() => setShowWeightSliders(!showWeightSliders)}
+                >
+                  <SlidersHorizontal size={15} />
+                  <span>{showWeightSliders ? '▲ Collapse Preference Weight Tuning' : '🎚️ Fine-Tune Exact Preference Weights (0.00 – 1.00)'}</span>
+                </button>
+              </div>
+
+              {/* Expandable Sliders & Presets Box */}
+              {showWeightSliders && (
+                <div className="preference-sliders-box">
+                  <div className="preference-sliders-header">
+                    <div>
+                      <h4>
+                        <SlidersHorizontal size={16} color="#c26d38" />
+                        <span>Dynamic Multi-Category Preference Tuning</span>
+                      </h4>
+                      <p>Adjust exact affinity weights [0.00 to 1.00]. Higher weights bias POI ranking, corridor discovery, and return-trip experience gap-filling.</p>
+                    </div>
+                  </div>
+
+                  <div className="preference-preset-chips">
+                    <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 700, alignSelf: 'center', marginRight: '4px' }}>
+                      Apply Preset:
+                    </span>
+                    {PREFERENCE_PRESETS.map((p) => (
+                      <button
+                        key={p.name}
+                        type="button"
+                        className="preference-preset-chip"
+                        onClick={() => handleApplyPreset(p)}
+                        title={p.desc}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="preference-sliders-grid">
+                    {ACTIVITY_ITEMS.map((item) => {
+                      const val = preferenceWeights[item.id] !== undefined ? preferenceWeights[item.id] : 0.20;
+                      const priorityClass = val >= 0.75 ? 'high' : val >= 0.40 ? 'medium' : 'low';
+                      const priorityLabel = val >= 0.75 ? 'High Priority' : val >= 0.40 ? 'Moderate' : 'Low / Optional';
+                      return (
+                        <div key={item.id} className="preference-slider-item">
+                          <div className="preference-slider-label-row">
+                            <span className="preference-dim-name">
+                              <span>{item.icon}</span>
+                              <span>{item.label}</span>
+                            </span>
+                            <span className={`preference-badge ${priorityClass}`}>
+                              {priorityLabel} ({val.toFixed(2)})
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.0"
+                            max="1.0"
+                            step="0.05"
+                            value={val}
+                            onChange={(e) => handleWeightSliderChange(item.id, e.target.value)}
+                            className="preference-range-input"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="form-group" style={{ marginTop: '14px' }}>
-              <label>Travel Pace & Style</label>
+            {/* Travel Pace & Daily Flow */}
+            <div className="form-group" style={{ marginTop: '18px' }}>
+              <label>Travel Pace & Daily Flow</label>
               <div className="options-cards-grid">
                 {[
-                  { id: 'balanced', label: 'Balanced Pace', desc: 'Mix of sights, local food & leisure' },
-                  { id: 'relaxed', label: 'Slow & Relaxed', desc: 'Unhurried mornings, cafes & viewpoints' },
-                  { id: 'adventure', label: 'Action Packed', desc: 'Maximum treks, thrills & sports' },
-                  { id: 'sightseeing', label: 'Sightseeing Heavy', desc: 'Cover top landmarks & photo spots' }
+                  { id: 'balanced', label: 'Balanced Rhythm', desc: '3–4 places/day, optimal sightseeing, meal breaks & rest' },
+                  { id: 'relaxed', label: 'Slow & Relaxed', desc: '2–3 places/day, unhurried mornings, cafes & viewpoints' },
+                  { id: 'adventure', label: 'Action Packed', desc: '4–5 places/day, high-energy coverage & outdoor activities' },
+                  { id: 'sightseeing', label: 'Scenic / Photo Tour', desc: 'Optimized for golden hour vistas, sunrise/sunset & landmarks' }
                 ].map((style) => (
                   <div
                     key={style.id}
-                    className={`option-select-card ${form.travelStyle === style.id ? 'selected' : ''}`}
-                    onClick={() => setForm((prev) => ({ ...prev, travelStyle: style.id }))}
+                    className={`option-select-card ${(form.travelPace || form.travelStyle) === style.id ? 'selected' : ''}`}
+                    onClick={() => setForm((prev) => ({ ...prev, travelStyle: style.id, travelPace: style.id }))}
                   >
                     <span className="option-card-title">{style.label}</span>
                     <span className="option-card-subtitle">{style.desc}</span>
                   </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Food Preferences */}
+            <div className="form-group" style={{ marginTop: '18px' }}>
+              <label>Food & Culinary Preference (Destination-Specific)</label>
+              <div className="options-cards-grid">
+                {[
+                  { id: 'local_famous', icon: '🍲', label: 'Famous Local Specialties', desc: 'Iconic regional dishes & heritage food spots' },
+                  { id: 'vegetarian', icon: '🥗', label: 'Pure Veg / Jain Options', desc: 'Verified vegetarian eateries & highway dhabas' },
+                  { id: 'street_food', icon: '🍢', label: 'Authentic Street Food', desc: 'Bustling food streets, night bazaars & tea stalls' },
+                  { id: 'seafood', icon: '🦐', label: 'Fresh Coastal Seafood', desc: 'Catch of the day, coastal curry & fish thali' },
+                  { id: 'fine_dining', icon: '🥂', label: 'Fine Dining & Cafes', desc: 'Scenic view dining, heritage estates & cafes' }
+                ].map((food) => (
+                  <div
+                    key={food.id}
+                    className={`option-select-card ${form.foodPreference === food.id ? 'selected' : ''}`}
+                    onClick={() => setForm((prev) => ({ ...prev, foodPreference: food.id }))}
+                  >
+                    <div className="option-card-header">
+                      <div className="option-card-icon" style={{ fontSize: '20px' }}>
+                        {food.icon}
+                      </div>
+                      <span className="option-card-title">{food.label}</span>
+                    </div>
+                    <span className="option-card-subtitle">{food.desc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Places or Areas to Avoid */}
+            <div className="form-group" style={{ marginTop: '18px' }}>
+              <label>
+                Places or Areas to Avoid (Optional)
+                <span className="label-hint">Comma-separated locations or preferences to skip</span>
+              </label>
+              <input
+                type="text"
+                name="placesToAvoid"
+                placeholder="e.g., Commercial tourist traps, steep unpaved roads, heavy traffic areas"
+                value={form.placesToAvoid}
+                onChange={handleChange}
+              />
+              <div className="avoid-suggestions-row">
+                <span className="avoid-suggestion-label">Quick suggestions:</span>
+                {[
+                  'Overcrowded tourist traps',
+                  'Steep unpaved roads',
+                  'Heavy traffic centers',
+                  'Night driving routes'
+                ].map((sugg) => (
+                  <button
+                    key={sugg}
+                    type="button"
+                    className="avoid-chip"
+                    onClick={() => handleAddAvoidSuggestion(sugg)}
+                  >
+                    + {sugg}
+                  </button>
                 ))}
               </div>
             </div>

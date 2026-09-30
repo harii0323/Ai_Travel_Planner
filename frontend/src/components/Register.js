@@ -10,8 +10,6 @@ import {
   EyeOff,
   Sparkles,
   ArrowRight,
-  GraduationCap,
-  Users,
   CheckCircle2,
   AlertCircle
 } from 'lucide-react';
@@ -22,8 +20,6 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
     email: '',
     password: '',
     confirmPassword: '',
-    age: '',
-    studentId: '',
     companionType: 'solo'
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -42,13 +38,23 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
     e.preventDefault();
     setError('');
 
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match');
+    const cleanName = (formData.name || '').trim();
+    const cleanEmail = (formData.email || '').trim().toLowerCase();
+    const cleanPassword = formData.password || '';
+    const cleanConfirm = formData.confirmPassword || '';
+
+    if (!cleanName || !cleanEmail || !cleanPassword) {
+      setError('Please fill in all required fields (Name, Email, Password).');
       return;
     }
 
-    if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters');
+    if (cleanPassword !== cleanConfirm) {
+      setError('Passwords do not match. Please verify your passwords.');
+      return;
+    }
+
+    if (cleanPassword.length < 6) {
+      setError('Password must be at least 6 characters long.');
       return;
     }
 
@@ -56,11 +62,12 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
 
     try {
       const response = await api.post('/api/auth/register', {
-        name: formData.name,
-        email: formData.email,
-        password: formData.password,
-        passwordConfirm: formData.confirmPassword,
-        travelCompanionType: formData.companionType
+        name: cleanName,
+        email: cleanEmail,
+        password: cleanPassword,
+        passwordConfirm: cleanConfirm,
+        confirmPassword: cleanConfirm,
+        travelCompanionType: formData.companionType || 'solo'
       });
 
       if (response.data.success) {
@@ -69,7 +76,11 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
         onRegisterSuccess(response.data.user, response.data.token);
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Registration failed. Please try again.');
+      const msg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        (err.message ? err.message : 'Registration failed. Please try again.');
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -157,36 +168,23 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
                   value={formData.email}
                   onChange={handleChange}
                   required
-                  placeholder="student@university.edu"
+                  placeholder="traveler@example.com"
                 />
               </div>
             </div>
 
-            <div className="form-grid-2">
-              <div className="form-group">
-                <label>Default Travel Style</label>
-                <select
-                  name="companionType"
-                  value={formData.companionType}
-                  onChange={handleChange}
-                >
-                  <option value="solo">Solo Traveler</option>
-                  <option value="couple">Couple</option>
-                  <option value="friends">Friends Squad</option>
-                  <option value="family">Family</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Student ID (Optional)</label>
-                <input
-                  type="text"
-                  name="studentId"
-                  value={formData.studentId}
-                  onChange={handleChange}
-                  placeholder="For discounts"
-                />
-              </div>
+            <div className="form-group">
+              <label>Default Travel Style</label>
+              <select
+                name="companionType"
+                value={formData.companionType}
+                onChange={handleChange}
+              >
+                <option value="solo">Solo Traveler</option>
+                <option value="couple">Couple</option>
+                <option value="friends">Friends Squad</option>
+                <option value="family">Family</option>
+              </select>
             </div>
 
             <div className="form-grid-2">
@@ -221,6 +219,7 @@ function Register({ onRegisterSuccess, onSwitchToLogin }) {
                     type="button"
                     className="password-toggle-btn"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label="Toggle password visibility"
                   >
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>

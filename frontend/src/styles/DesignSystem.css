@@ -1,0 +1,169 @@
+/* =========================================================================
+   VISTA AI TRAVEL PLATFORM — MODERN DESIGN SYSTEM
+   Tokens, Typography, Color Palette, Shadows, Glassmorphism & Animations
+   ========================================================================= */
+
+:root {
+  /* Brand Warm Terracotta, Golden Amber & Earth Accents */
+  --brand-50: #fdf8f4;
+  --brand-100: #faebd9;
+  --brand-200: #f5d3b0;
+  --brand-300: #eeb27c;
+  --brand-400: #e58d4a;
+  --brand-500: #c26d38;
+  --brand-600: #b15627;
+  --brand-700: #92401d;
+  --brand-800: #763319;
+  --brand-900: #622b17;
+  
+  --brand-primary: #c26d38;
+  --brand-hover: #d97736;
+  --brand-glow: rgba(194, 109, 56, 0.28);
+  --brand-gradient: linear-gradient(135deg, #c26d38 0%, #d97736 50%, #e08b45 100%);
+  --brand-gradient-subtle: linear-gradient(135deg, rgba(194, 109, 56, 0.12) 0%, rgba(217, 119, 54, 0.05) 100%);
+
+  /* Secondary & Nature Accent (Emerald & Azure) */
+  --emerald-500: #10b981;
+  --emerald-soft: rgba(16, 185, 129, 0.14);
+  --emerald-gradient: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  
+  --azure-500: #0284c7;
+  --azure-soft: rgba(2, 132, 199, 0.14);
+  --azure-gradient: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%);
+
+  --amber-500: #f59e0b;
+  --amber-soft: rgba(245, 158, 11, 0.14);
+  --amber-gradient: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
+
+  --rose-500: #ef4444;
+  --rose-soft: rgba(239, 68, 68, 0.12);
+
+  /* Surface & Background Hierarchy */
+  --bg-main: #fbf8f3;
+  --bg-gradient: radial-gradient(circle at 12% 14%, rgba(217, 119, 54, 0.08) 0%, transparent 45%),
+                 radial-gradient(circle at 88% 10%, rgba(217, 160, 60, 0.09) 0%, transparent 45%),
+                 radial-gradient(circle at 50% 92%, rgba(180, 130, 80, 0.07) 0%, transparent 50%),
+                 #f7f2e9;
+  --surface-card: #ffffff;
+  --surface-glass: rgba(255, 255, 255, 0.88);
+  --surface-glass-heavy: rgba(255, 255, 255, 0.94);
+  --surface-soft: #f4eee2;
+  --surface-border: rgba(180, 150, 120, 0.22);
+  --surface-border-hover: rgba(194, 109, 56, 0.45);
+
+  /* Typography / Ink */
+  --ink-heading: #1c140e;
+  --ink-body: #332820;
+  --ink-muted: #786b60;
+  --ink-subtle: #a4978b;
+
+  /* Elevation Shadows */
+  --shadow-xs: 0 1px 3px rgba(100, 70, 40, 0.05);
+  --shadow-sm: 0 4px 12px rgba(100, 70, 40, 0.06);
+  --shadow-md: 0 10px 24px -4px rgba(100, 70, 40, 0.09), 0 2px 6px -1px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 20px 42px -8px rgba(100, 70, 40, 0.14), 0 4px 12px -2px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 30px 60px -12px rgba(100, 70, 40, 0.22), 0 8px 20px -4px rgba(0, 0, 0, 0.08);
+  --shadow-glow: 0 0 30px rgba(194, 109, 56, 0.25);
+
+  /* Border Radii */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 30px;
+  --radius-pill: 9999px;
+
+  /* Motion & Timing System */
+  --ease-fast: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 180ms;
+  --duration-normal: 300ms;
+  --duration-slow: 550ms;
+}
+
+/* =========================================================================
+   ANIMATED KEYFRAMES & SHIMMER
+   ========================================================================= */
+@keyframes floatGentle {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-7px); }
+  100% { transform: translateY(0px); }
+}
+
+@keyframes pulseGlow {
+  0% { box-shadow: 0 0 12px var(--brand-glow); }
+  50% { box-shadow: 0 0 28px rgba(194, 109, 56, 0.45); }
+  100% { box-shadow: 0 0 12px var(--brand-glow); }
+}
+
+@keyframes shimmerPass {
+  0% { left: -100%; }
+  100% { left: 140%; }
+}
+
+@keyframes slideFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =========================================================================
+   REUSABLE UTILITY CLASSES
+   ========================================================================= */
+.glass-panel {
+  background: var(--surface-glass);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid var(--surface-border);
+  box-shadow: var(--shadow-md);
+}
+
+.hover-lift {
+  transition: transform var(--duration-fast) var(--ease-smooth),
+              box-shadow var(--duration-fast) var(--ease-smooth);
+}
+.hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.pill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.pill-badge-brand {
+  background: rgba(194, 109, 56, 0.14);
+  color: var(--brand-700);
+  border: 1px solid rgba(194, 109, 56, 0.28);
+}
+
+.pill-badge-emerald {
+  background: var(--emerald-soft);
+  color: #047857;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+.pill-badge-azure {
+  background: var(--azure-soft);
+  color: #0369a1;
+  border: 1px solid rgba(2, 132, 199, 0.28);
+}
+
+.pill-badge-amber {
+  background: var(--amber-soft);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}

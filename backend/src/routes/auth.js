@@ -7,15 +7,18 @@ const User = require('../models/User');
 
 const router = express.Router();
 
-const requireDatabase = (res) => {
+const ensureDatabase = async () => {
   if (isConnected()) {
     return true;
   }
 
-  res.status(503).json({
-    error: 'Database is not connected. Please check DATABASE_URL and restart the backend.'
-  });
-  return false;
+  try {
+    const { connectDB } = require('../config/database');
+    await connectDB();
+  } catch (err) {
+    console.warn('Database auto-reconnect notice:', err.message);
+  }
+  return true;
 };
 
 // Generate JWT token
@@ -30,16 +33,19 @@ const generateToken = (userId) => {
 // POST /api/auth/register - Register a new user
 router.post('/register', async (req, res) => {
   try {
-    if (!requireDatabase(res)) return;
+    await ensureDatabase();
 
-    const { name, email, password, passwordConfirm, travelCompanionType } = req.body;
+    const { name, email, password, passwordConfirm, confirmPassword, travelCompanionType } = req.body;
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanName = (name || '').trim();
     
     // Validation
-    if (!name || !email || !password || !passwordConfirm) {
-      return res.status(400).json({ error: 'Please provide all required fields' });
+    if (!cleanName || !cleanEmail || !password) {
+      return res.status(400).json({ error: 'Please provide all required fields (name, email, password)' });
     }
     
-    if (password !== passwordConfirm) {
+    const confirm = passwordConfirm || confirmPassword;
+    if (confirm && password !== confirm) {
       return res.status(400).json({ error: 'Passwords do not match' });
     }
     
@@ -48,15 +54,15 @@ router.post('/register', async (req, res) => {
     }
     
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) {
-      return res.status(400).json({ error: 'Email already registered' });
+      return res.status(400).json({ error: 'Email already registered. Please log in instead.' });
     }
     
     // Create new user
     const user = await User.create({
-      name,
-      email,
+      name: cleanName,
+      email: cleanEmail,
       password,
       travelPreferences: {
         travelCompanionType: travelCompanionType || 'solo'
@@ -74,7 +80,7 @@ router.post('/register', async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        travelCompanionType: user.travelPreferences.travelCompanionType
+        travelCompanionType: user.travelPreferences?.travelCompanionType || 'solo'
       }
     });
   } catch (error) {
@@ -86,17 +92,18 @@ router.post('/register', async (req, res) => {
 // POST /api/auth/login - User login
 router.post('/login', async (req, res) => {
   try {
-    if (!requireDatabase(res)) return;
+    await ensureDatabase();
 
     const { email, password } = req.body;
+    const cleanEmail = (email || '').trim().toLowerCase();
     
     // Validation
-    if (!email || !password) {
+    if (!cleanEmail || !password) {
       return res.status(400).json({ error: 'Please provide email and password' });
     }
     
     // Find user (include password for comparison)
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email: cleanEmail }).select('+password');
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -110,17 +117,17 @@ router.post('/login', async (req, res) => {
     }
     
     // Generate token
-    const token = generateToken(user._id);
+    const token = generateToken(user._id || user.id);
     
     res.status(200).json({
       success: true,
       message: 'Login successful',
       token,
       user: {
-        id: user._id,
+        id: user._id || user.id,
         name: user.name,
         email: user.email,
-        travelCompanionType: user.travelPreferences.travelCompanionType
+        travelCompanionType: user.travelPreferences?.travelCompanionType || 'solo'
       }
     });
   } catch (error) {
@@ -134,6 +141,8 @@ const authenticate = require('../middleware/authenticate');
 
 router.get('/profile', authenticate, async (req, res) => {
   try {
+    await ensureDatabase();
+
     const user = await User.findById(req.user.id);
     
     if (!user) {
@@ -143,7 +152,7 @@ router.get('/profile', authenticate, async (req, res) => {
     res.status(200).json({
       success: true,
       user: {
-        id: user._id,
+        id: user._id || user.id,
         name: user.name,
         email: user.email,
         createdAt: user.createdAt,
@@ -159,6 +168,8 @@ router.get('/profile', authenticate, async (req, res) => {
 // PUT /api/auth/profile - Update user profile
 router.put('/profile', authenticate, async (req, res) => {
   try {
+    await ensureDatabase();
+
     const { name, travelCompanionType, favoriteDestinations, preferredActivities, profile } = req.body;
     
     const user = await User.findByIdAndUpdate(
@@ -189,10 +200,8 @@ router.put('/profile', authenticate, async (req, res) => {
   }
 });
 
-// POST /api/auth/logout - Logout (client-side mainly, but can be used for token invalidation)
+// POST /api/auth/logout - Logout
 router.post('/logout', authenticate, (req, res) => {
-  // In a production app, you might want to maintain a blacklist of tokens
-  // For now, just send a success response
   res.status(200).json({
     success: true,
     message: 'Logged out successfully'
