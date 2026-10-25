@@ -33,7 +33,7 @@ Install these Jenkins tools/plugins on the build agent:
 Create these Jenkins secret text credentials:
 
 - `ai-travel-frontend-url`
-- `ai-travel-mongodb-uri`
+- `ai-travel-postgres-url`
 - `ai-travel-jwt-secret`
 - `ai-travel-google-maps-api-key`
 
