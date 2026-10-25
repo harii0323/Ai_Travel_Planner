@@ -61,6 +61,9 @@ router.post('/payment/process', authenticate, async (req, res) => {
 router.get('/booking/:bookingId', authenticate, async (req, res) => {
   try {
     const booking = await carRentalService.getBooking(req.params.bookingId);
+    if (!booking || booking.userId !== req.user.id) {
+      return res.status(404).json({ success: false, error: 'Booking not found' });
+    }
     res.json({ success: true, booking });
   } catch (err) {
     handleRentalError(res, err);

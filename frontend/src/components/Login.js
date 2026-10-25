@@ -95,7 +95,7 @@ function Login({ onLoginSuccess, onSwitchToRegister }) {
           </div>
 
           <div className="auth-quote-box">
-            <p>"VISTA makes budget planning so straightforward. Saved ₹4,000 on my Goa roadtrip!"</p>
+            <p>Calculations reference official NHAI FASTag rates, current state fuel tariffs, and verified hotel benchmarks.</p>
           </div>
         </div>
 

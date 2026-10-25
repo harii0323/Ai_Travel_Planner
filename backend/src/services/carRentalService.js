@@ -2,13 +2,74 @@ const axios = require('axios');
 
 const BACKEND_API_URL = process.env.CAR_RENTAL_API_URL || 'https://a6cars-backend-ylx7.onrender.com';
 const A6_CARS_PORTAL_URL = process.env.CAR_RENTAL_FRONTEND_URL || 'https://a6cars-frontend-zv4g.onrender.com';
-const REQUEST_TIMEOUT_MS = Number(process.env.CAR_RENTAL_TIMEOUT_MS || 15000);
+const REQUEST_TIMEOUT_MS = Number(process.env.CAR_RENTAL_TIMEOUT_MS || 3000);
+
+// Circuit breaker state to prevent thread exhaustion when external service is sleeping/down
+let circuitBreakerOpenUntil = 0;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 60000; // 1 minute cooldown after consecutive failure
+
+// Transaction deduplication store to prevent replay attacks
+const processedTransactions = new Set();
+
+function isPrivateOrLocalIp(ip) {
+  if (!ip || typeof ip !== 'string') return true;
+  // Loopback and unspecified addresses
+  if (ip === '127.0.0.1' || ip === '::1' || ip === '0.0.0.0' || ip.startsWith('127.')) return true;
+  // RFC 1918 10.0.0.0/8
+  if (ip.startsWith('10.')) return true;
+  // RFC 1918 172.16.0.0/12
+  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)) return true;
+  // RFC 1918 192.168.0.0/16
+  if (ip.startsWith('192.168.')) return true;
+  // Link-local / AWS / GCP / Azure metadata 169.254.0.0/16
+  if (ip.startsWith('169.254.')) return true;
+  // IPv6 unique local / link-local
+  if (ip.startsWith('fc00:') || ip.startsWith('fd00:') || ip.startsWith('fe80:')) return true;
+  return false;
+}
+
+function validateExternalUrl(urlString) {
+  try {
+    const parsed = new URL(urlString);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    
+    // Forbidden domain and metadata names
+    const forbiddenHostnames = [
+      'localhost',
+      'metadata.google.internal',
+      'instance-data',
+      'metadata',
+      'local'
+    ];
+    if (forbiddenHostnames.includes(hostname) || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
+      return false;
+    }
+
+    // Decimal or hex integer representations of IP
+    if (/^\d+$/.test(hostname)) return false;
+    if (/^0x[0-9a-fA-F]+$/.test(hostname)) return false;
+
+    if (isPrivateOrLocalIp(hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // In-memory bookings store for planner sessions
 const activeBookingsStore = new Map();
 
 // Session caching for A6 Cars backend authentication
 let cachedA6Session = null;
+
+function sanitizeBookingForClient(booking) {
+  if (!booking || typeof booking !== 'object') return null;
+  const safe = { ...booking };
+  delete safe.authToken;
+  delete safe.customerId;
+  return safe;
+}
 
 const CATEGORIES = {
   economy: { rank: 1, seats: 4, luggage: 2, defaultPrice: 1500 },
@@ -48,17 +109,26 @@ async function getA6Session(userDetails = {}) {
     return cachedA6Session;
   }
 
-  const email = userDetails.email || 'travelplanner@a6cars.com';
-  const password = userDetails.password || 'Password@123';
+  // If circuit breaker is open or offline, use isolated mock session
+  if (Date.now() < circuitBreakerOpenUntil || !validateExternalUrl(BACKEND_API_URL)) {
+    return { token: null, customerId: 13, email: 'user@example.com', name: 'Travel Planner User' };
+  }
+
+  const email = process.env.CAR_RENTAL_SERVICE_EMAIL || userDetails.email || 'traveler@vistatravel.app';
+  const password = process.env.CAR_RENTAL_SERVICE_PASSWORD || userDetails.password || null;
   const name = userDetails.name || 'Travel Planner User';
   const phone = userDetails.phone || '9876543210';
 
-  // Try login first
+  if (!password) {
+    return { token: null, customerId: 13, email, name };
+  }
+
+  // Try login first with short timeout
   try {
     const loginRes = await axios.post(
       `${BACKEND_API_URL.replace(/\/$/, '')}/api/login`,
       { email, password },
-      { timeout: 8000 }
+      { timeout: 3000 }
     );
     if (loginRes.data && loginRes.data.token) {
       cachedA6Session = {
@@ -71,26 +141,8 @@ async function getA6Session(userDetails = {}) {
       return cachedA6Session;
     }
   } catch (loginErr) {
-    // If login fails, register a new account
-    try {
-      const regRes = await axios.post(
-        `${BACKEND_API_URL.replace(/\/$/, '')}/api/register`,
-        { name, email, password, phone },
-        { timeout: 8000 }
-      );
-      if (regRes.data && regRes.data.token) {
-        cachedA6Session = {
-          token: regRes.data.token,
-          customerId: regRes.data.customer_id || regRes.data.customerId || 13,
-          name: regRes.data.name || name,
-          email: regRes.data.email || email,
-          acquiredAt: Date.now()
-        };
-        return cachedA6Session;
-      }
-    } catch (regErr) {
-      console.warn(`[A6CarsService] A6 session error: ${regErr.message}`);
-    }
+    circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+    console.warn(`[A6CarsService] A6 session unavailable, circuit breaker open: ${loginErr.message}`);
   }
 
   return cachedA6Session || { token: null, customerId: 13, email, name };
@@ -168,12 +220,16 @@ function isDateOverlapping(reqStart, reqEnd, bookedStart, bookedEnd) {
 }
 
 async function fetchCarBookedDates(carId) {
+  if (Date.now() < circuitBreakerOpenUntil || !validateExternalUrl(BACKEND_API_URL)) {
+    return [];
+  }
   try {
     const response = await axios.get(`${BACKEND_API_URL.replace(/\/$/, '')}/api/bookings/${carId}`, {
-      timeout: 4000
+      timeout: 2000
     });
     return Array.isArray(response.data) ? response.data : [];
   } catch (err) {
+    circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
     return [];
   }
 }
@@ -296,19 +352,24 @@ async function searchAvailableCars(search) {
   let rawCars = [];
   let isLive = false;
 
-  try {
-    const response = await axios.get(`${BACKEND_API_URL.replace(/\/$/, '')}/api/cars`, {
-      timeout: REQUEST_TIMEOUT_MS,
-      headers: { Accept: 'application/json' }
-    });
+  if (Date.now() < circuitBreakerOpenUntil || !validateExternalUrl(BACKEND_API_URL)) {
+    rawCars = A6_CARS_FALLBACK;
+  } else {
+    try {
+      const response = await axios.get(`${BACKEND_API_URL.replace(/\/$/, '')}/api/cars`, {
+        timeout: REQUEST_TIMEOUT_MS,
+        headers: { Accept: 'application/json' }
+      });
 
-    if (Array.isArray(response.data) && response.data.length > 0) {
-      rawCars = response.data;
-      isLive = true;
-      console.log(`✅ [A6CarsService] Loaded ${rawCars.length} live cars from A6 Cars database!`);
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        rawCars = response.data;
+        isLive = true;
+        console.log(`✅ [A6CarsService] Loaded ${rawCars.length} live cars from A6 Cars database!`);
+      }
+    } catch (err) {
+      circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+      console.warn(`⚠️ [A6CarsService] A6 Cars backend unreachable: ${err.message} — tripped circuit breaker, using local catalog.`);
     }
-  } catch (err) {
-    console.warn(`⚠️ [A6CarsService] A6 Cars backend unreachable: ${err.message} — using local catalog.`);
   }
 
   if (!rawCars || rawCars.length === 0) {
@@ -352,11 +413,19 @@ async function getVehicle(vehicleId, search = {}) {
   return found || searchResults.vehicles[0];
 }
 
+function validateBookingPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    const error = new Error('Invalid booking payload');
+    error.status = 400;
+    throw error;
+  }
+}
+
 /**
  * Create a booking directly in A6 Cars MongoDB database
  */
 async function createBooking(payload) {
-  assertRentalSearch(payload);
+  validateBookingPayload(payload);
   if (!payload.vehicleId) {
     const error = new Error('Select a rental vehicle before booking.');
     error.status = 400;
@@ -384,39 +453,45 @@ async function createBooking(payload) {
   let a6ReserveAmount = vehicle.reservationDeposit;
   let a6RemainingAmount = vehicle.fullPaymentAmount - vehicle.reservationDeposit;
 
-  try {
-    const bookRes = await axios.post(
-      `${BACKEND_API_URL.replace(/\/$/, '')}/api/book`,
-      {
-        car_id: rawCarId,
-        start_date: payload.pickupDate,
-        end_date: payload.returnDate,
-        payment_plan: paymentPlan
-      },
-      {
-        headers: session.token ? { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' } : {},
-        timeout: 10000
-      }
-    );
+  if (Date.now() >= circuitBreakerOpenUntil && validateExternalUrl(BACKEND_API_URL)) {
+    try {
+      const bookRes = await axios.post(
+        `${BACKEND_API_URL.replace(/\/$/, '')}/api/book`,
+        {
+          car_id: rawCarId,
+          start_date: payload.pickupDate,
+          end_date: payload.returnDate,
+          payment_plan: paymentPlan
+        },
+        {
+          headers: session.token ? { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' } : {},
+          timeout: 2500
+        }
+      );
 
-    if (bookRes.data) {
-      a6BookingId = bookRes.data.booking_id || bookRes.data.id;
-      a6PaymentQr = bookRes.data.payment_qr;
-      a6Total = bookRes.data.total || a6Total;
-      a6AmountDue = bookRes.data.amount_due || a6AmountDue;
-      a6ReserveAmount = bookRes.data.reserve_amount || a6ReserveAmount;
-      a6RemainingAmount = bookRes.data.remaining_amount || a6RemainingAmount;
-      console.log(`✅ [A6CarsService] Real booking #${a6BookingId} created in A6 Cars database for Car #${rawCarId}`);
+      if (bookRes.data) {
+        a6BookingId = bookRes.data.booking_id || bookRes.data.id;
+        a6PaymentQr = bookRes.data.payment_qr;
+        a6Total = bookRes.data.total || a6Total;
+        a6AmountDue = bookRes.data.amount_due || a6AmountDue;
+        a6ReserveAmount = bookRes.data.reserve_amount || a6ReserveAmount;
+        a6RemainingAmount = bookRes.data.remaining_amount || a6RemainingAmount;
+      }
+    } catch (err) {
+      circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+      console.warn(`⚠️ [A6CarsService] A6 booking external call notice: ${err.message}`);
     }
-  } catch (err) {
-    console.warn(`⚠️ [A6CarsService] A6 booking error: ${err.response?.data?.message || err.message}`);
+  }
+
+  if (!a6BookingId) {
     a6BookingId = Math.floor(100 + Math.random() * 900);
   }
 
   const bookingRef = `A6-2026-${a6BookingId}`;
-  const checkoutUrl = `${A6_CARS_PORTAL_URL.replace(/\/$/, '')}/history.html?auth_token=${session.token || ''}&customer_id=${session.customerId || 13}&booking_id=${a6BookingId}`;
+  const checkoutUrl = `${A6_CARS_PORTAL_URL.replace(/\/$/, '')}/history.html?booking_id=${a6BookingId}`;
 
   const booking = {
+    userId: payload.userId || null,
     bookingId: bookingRef,
     referenceId: bookingRef,
     a6BookingId,
@@ -456,14 +531,14 @@ async function createBooking(payload) {
   activeBookingsStore.set(bookingRef, booking);
   activeBookingsStore.set(String(a6BookingId), booking);
 
-  return booking;
+  return sanitizeBookingForClient(booking);
 }
 
 /**
- * Verify payment on A6 Cars backend and confirm booking
+ * Verify payment on A6 Cars backend and confirm booking with anti-tampering & replay protection
  */
 async function processPayment(payload) {
-  const { bookingId, paymentMethod = 'upi', paymentPlan = 'reserve', transactionId } = payload;
+  const { bookingId, paymentMethod = 'upi', paymentPlan = 'reserve', transactionId, userId } = payload;
 
   if (!bookingId) {
     const error = new Error('Booking ID is required for payment processing.');
@@ -473,45 +548,80 @@ async function processPayment(payload) {
 
   let booking = activeBookingsStore.get(bookingId) || activeBookingsStore.get(String(bookingId).replace(/^A6-2026-/, ''));
   if (!booking) {
-    booking = {
-      bookingId,
-      referenceId: bookingId,
-      a6BookingId: Number(String(bookingId).replace(/^A6-2026-/, '')) || 23,
-      provider: 'A6 Cars',
-      status: 'pending_payment',
-      paymentPlan,
-      vehicleName: 'A6 Rental Car',
-      amountDue: payload.amount || 2399,
-      pickupDate: payload.pickupDate || '2026-10-15',
-      returnDate: payload.returnDate || '2026-10-18'
-    };
+    const error = new Error('Booking record not found.');
+    error.status = 404;
+    throw error;
+  }
+
+  if (!booking.userId || (userId && booking.userId !== userId)) {
+    const error = new Error('Not authorized to access or modify this booking.');
+    error.status = 404;
+    throw error;
+  }
+
+  // Price tampering validation
+  const expectedAmount = paymentPlan === 'full' ? booking.fullPaymentAmount : booking.reservationDeposit;
+  if (payload.amount !== undefined && Math.abs(Number(payload.amount) - expectedAmount) > 1) {
+    const error = new Error(`Payment amount mismatch: Expected ₹${expectedAmount}, received ₹${payload.amount}. Price tampering detected.`);
+    error.status = 400;
+    throw error;
+  }
+
+  // Replay protection on transaction IDs (In-Memory + Durable PostgreSQL Store)
+  if (transactionId && processedTransactions.has(transactionId)) {
+    const error = new Error('Payment transaction ID has already been processed. Replay attack blocked.');
+    error.status = 409;
+    throw error;
+  }
+
+  const { query: dbQuery, isConnected: isDbConnected } = require('../config/database');
+  if (transactionId && isDbConnected()) {
+    try {
+      const existingTxn = await dbQuery(
+        'SELECT transaction_id FROM payment_transactions WHERE transaction_id = $1',
+        [transactionId]
+      );
+      if (existingTxn.rows && existingTxn.rows.length > 0) {
+        processedTransactions.add(transactionId);
+        const error = new Error('Payment transaction ID has already been processed. Replay attack blocked.');
+        error.status = 409;
+        throw error;
+      }
+    } catch (err) {
+      if (err.status === 409) throw err;
+      console.warn('Payment transaction lookup warning:', err.message);
+    }
   }
 
   const txnId = transactionId || `TXN-A6-${Math.floor(10000000 + Math.random() * 90000000)}`;
-  const paidAmount = payload.amount || booking.amountDue || booking.reservationDeposit;
+  processedTransactions.add(txnId);
+
+  const paidAmount = expectedAmount;
   const session = await getA6Session(payload);
   const a6BookingNum = booking.a6BookingId || Number(String(bookingId).replace(/^A6-2026-/, '')) || 23;
 
   let a6Verified = false;
-  try {
-    const verifyRes = await axios.post(
-      `${BACKEND_API_URL.replace(/\/$/, '')}/api/verify-payment`,
-      {
-        booking_id: a6BookingNum,
-        payment_reference_id: txnId,
-        customer_id: session.customerId || booking.customerId || 13
-      },
-      {
-        headers: session.token ? { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' } : {},
-        timeout: 10000
+  if (Date.now() >= circuitBreakerOpenUntil && validateExternalUrl(BACKEND_API_URL)) {
+    try {
+      const verifyRes = await axios.post(
+        `${BACKEND_API_URL.replace(/\/$/, '')}/api/verify-payment`,
+        {
+          booking_id: a6BookingNum,
+          payment_reference_id: txnId,
+          customer_id: session.customerId || booking.customerId || 13
+        },
+        {
+          headers: session.token ? { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' } : {},
+          timeout: 2500
+        }
+      );
+      if (verifyRes.data) {
+        a6Verified = true;
       }
-    );
-    if (verifyRes.data) {
-      a6Verified = true;
-      console.log(`✅ [A6CarsService] Payment verified on A6 Cars backend for booking #${a6BookingNum}!`);
+    } catch (err) {
+      circuitBreakerOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+      console.warn(`⚠️ [A6CarsService] A6 payment verification notice: ${err.message}`);
     }
-  } catch (err) {
-    console.warn(`⚠️ [A6CarsService] A6 payment verification notice: ${err.response?.data?.message || err.message}`);
   }
 
   booking.status = 'confirmed';
@@ -523,30 +633,35 @@ async function processPayment(payload) {
   booking.paidAt = new Date().toISOString();
   booking.collectionPin = String(Math.floor(1000 + Math.random() * 9000));
   booking.a6Verified = a6Verified;
-  booking.instructions = `Payment confirmed & recorded in A6 Cars. Show collection PIN (${booking.collectionPin}) at A6 Cars pickup hub.`;
+  booking.instructions = `Payment confirmed & recorded. Show collection PIN (${booking.collectionPin}) at pickup hub.`;
 
   activeBookingsStore.set(bookingId, booking);
   activeBookingsStore.set(String(a6BookingNum), booking);
 
+  // Persist transaction record into database for durability across instance restarts
+  if (isDbConnected()) {
+    try {
+      await dbQuery(
+        `INSERT INTO payment_transactions (transaction_id, booking_id, user_id, amount, payment_method, payment_plan, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (transaction_id) DO NOTHING`,
+        [txnId, String(bookingId), String(booking.userId || userId), paidAmount, paymentMethod, paymentPlan, 'completed']
+      );
+    } catch (dbErr) {
+      console.warn('Payment transaction persistence notice:', dbErr.message);
+    }
+  }
+
   return {
     success: true,
-    message: `${paymentPlan === 'full' ? 'Full booking payment' : 'Reservation advance payment'} successful & verified in A6 Cars!`,
-    booking
+    message: `${paymentPlan === 'full' ? 'Full booking payment' : 'Reservation advance payment'} successful!`,
+    booking: sanitizeBookingForClient(booking)
   };
 }
 
 async function getBooking(bookingId) {
   const booking = activeBookingsStore.get(bookingId) || activeBookingsStore.get(String(bookingId).replace(/^A6-2026-/, ''));
-  if (booking) return booking;
-
-  return {
-    bookingId,
-    referenceId: bookingId,
-    provider: 'A6 Cars',
-    status: 'confirmed',
-    portalUrl: A6_CARS_PORTAL_URL,
-    bookingUrl: `${A6_CARS_PORTAL_URL.replace(/\/$/, '')}/history.html?ref=${bookingId}`
-  };
+  return sanitizeBookingForClient(booking);
 }
 
 module.exports = {
@@ -556,6 +671,7 @@ module.exports = {
   processPayment,
   getBooking,
   rentalDays,
+  validateExternalUrl,
   BACKEND_API_URL,
   A6_CARS_PORTAL_URL
 };

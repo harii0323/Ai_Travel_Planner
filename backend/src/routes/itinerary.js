@@ -6,14 +6,26 @@ const authenticate = require('../middleware/authenticate');
 const Itinerary = require('../models/Itinerary');
 const jwt = require('jsonwebtoken');
 
-const optionalAuthenticate = (req, res, next) => {
+const { isTokenRevoked, getJwtSecret } = require('../middleware/authenticate');
+
+const optionalAuthenticate = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token) {
-      req.user = jwt.verify(token, process.env.JWT_SECRET || 'your_secret_key');
+    const authHeader = req.headers.authorization;
+    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7).trim();
+      if (token && !(await isTokenRevoked(token))) {
+        const secret = getJwtSecret();
+        const decoded = jwt.verify(token, secret, {
+          algorithms: ['HS256']
+        });
+        if (decoded && decoded.id) {
+          req.user = { id: decoded.id, email: decoded.email };
+          req.token = token;
+        }
+      }
     }
   } catch (err) {
-    // Proceed as unauthenticated
+    // Proceed as unauthenticated guest
   }
   next();
 };
@@ -42,13 +54,17 @@ router.post('/optimize-spatiotemporal', optionalAuthenticate, async (req, res) =
       optimization_mode: input.optimization_mode || input.planningMode || 'BALANCED'
     });
 
-    res.json({
-      success: true,
-      data: result
-    });
+    if (!res.headersSent) {
+      res.json({
+        success: true,
+        data: result
+      });
+    }
   } catch (err) {
     console.error('Spatiotemporal optimization error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Spatiotemporal optimization failed' });
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: err.message || 'Spatiotemporal optimization failed' });
+    }
   }
 });
 
@@ -69,13 +85,17 @@ router.post('/rolling-horizon-reoptimize', optionalAuthenticate, async (req, res
       userPreferences: input.userPreferences || []
     });
 
-    res.json({
-      success: true,
-      data: result
-    });
+    if (!res.headersSent) {
+      res.json({
+        success: true,
+        data: result
+      });
+    }
   } catch (err) {
     console.error('Rolling horizon re-optimization error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Rolling-horizon re-optimization failed' });
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: err.message || 'Rolling-horizon re-optimization failed' });
+    }
   }
 });
 
@@ -83,7 +103,7 @@ router.post('/rolling-horizon-reoptimize', optionalAuthenticate, async (req, res
 router.post('/bandit/feedback', optionalAuthenticate, async (req, res) => {
   try {
     const { poiName, category, action, rating } = req.body || {};
-    const userId = req.user?.id || req.body?.userId || 'anonymous';
+    const userId = req.user?.id || 'anonymous';
     const result = contextualBandit.updateFeedback({
       userId,
       poiName,
@@ -93,7 +113,11 @@ router.post('/bandit/feedback', optionalAuthenticate, async (req, res) => {
     });
     res.json({
       success: true,
-      data: result
+      data: {
+        ...result,
+        userId,
+        record: result?.record
+      }
     });
   } catch (err) {
     console.error('Bandit feedback update error:', err);
@@ -120,21 +144,62 @@ router.post('/discover-route-places', optionalAuthenticate, async (req, res) => 
   try {
     const input = req.body || {};
     const result = await discoverAndScheduleRoutePlaces(input);
-    res.json({
-      success: true,
-      data: result
-    });
+    if (!res.headersSent) {
+      res.json({
+        success: true,
+        data: result
+      });
+    }
   } catch (err) {
     console.error('Route place discovery error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Route place discovery failed' });
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: err.message || 'Route place discovery failed' });
+    }
   }
 });
 
-// POST /api/itinerary/generate - Generate a new itinerary
-router.post('/generate', authenticate, async (req, res) => {
+// Helper to sanitize text fields against script injection
+function sanitizeText(val, maxLen = 100, defaultVal = '') {
+  if (!val || typeof val !== 'string') return defaultVal;
+  return val.replace(/<[^>]*>/g, '').trim().slice(0, maxLen) || defaultVal;
+}
+
+// POST /api/itinerary/generate - Generate a new itinerary (supports unauthenticated preview)
+router.post('/generate', optionalAuthenticate, async (req, res) => {
   try {
-    const data = req.body;
-    // expected fields: budget, dates, start, destination, activities, accommodation, transport, travelCompanionType, numberOfTravelers
+    const raw = req.body || {};
+    const days = Math.max(1, Math.min(14, Number(raw.days || raw.totalDays || raw.numDays || 3)));
+    const startD = new Date();
+    startD.setDate(startD.getDate() + 7);
+    const endD = new Date(startD);
+    endD.setDate(endD.getDate() + (days - 1));
+    const fallbackDates = `${startD.toISOString().split('T')[0]} to ${endD.toISOString().split('T')[0]}`;
+
+    // Bound and sanitize numeric inputs
+    const budgetVal = Number(raw.budget || 25000);
+    const safeBudget = Number.isFinite(budgetVal) && budgetVal >= 500 && budgetVal <= 100000000
+      ? budgetVal
+      : 25000;
+
+    const travelersVal = Number(raw.numberOfTravelers || raw.travelers || 1);
+    const safeTravelers = Number.isFinite(travelersVal) && travelersVal >= 1 && travelersVal <= 50
+      ? travelersVal
+      : 1;
+
+    const data = {
+      ...raw,
+      destination: sanitizeText(raw.destination, 100, 'Goa'),
+      budget: safeBudget,
+      start: sanitizeText(raw.start || raw.startLocation || raw.origin, 100, 'Mumbai'),
+      startLocation: sanitizeText(raw.startLocation || raw.start || raw.origin, 100, 'Mumbai'),
+      origin: sanitizeText(raw.origin || raw.startLocation || raw.start, 100, 'Mumbai'),
+      travelDates: raw.travelDates || (raw.dates && raw.dates.includes(' to ') ? raw.dates : fallbackDates),
+      dates: raw.dates || raw.travelDates || fallbackDates,
+      totalDays: days,
+      numberOfTravelers: safeTravelers,
+      travelCompanionType: sanitizeText(raw.travelCompanionType || raw.companionType, 30, 'solo'),
+      transport: sanitizeText(raw.transport || raw.travelMode, 30, 'car')
+    };
 
     // Generate comprehensive route-based place discovery
     let routeDiscovery = null;
@@ -177,6 +242,11 @@ router.post('/generate', authenticate, async (req, res) => {
       console.warn('Spatiotemporal optimization warning:', optErr.message);
     }
     
+    // Pass precomputed route discovery into planner to share candidate pool
+    if (routeDiscovery) {
+      data.precomputedRouteDiscovery = routeDiscovery;
+    }
+
     // Generate itinerary with all data
     const itinerary = await planner.generateItinerary(data);
 
@@ -213,13 +283,17 @@ router.post('/generate', authenticate, async (req, res) => {
       data.numberOfTravelers || 1
     );
     
-    res.json({
-      success: true,
-      itinerary
-    });
+    if (!res.headersSent) {
+      res.json({
+        success: true,
+        itinerary
+      });
+    }
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to generate itinerary' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate itinerary' });
+    }
   }
 });
 
@@ -460,10 +534,14 @@ router.post('/', async (req, res) => {
     const data = req.body;
     // expected fields: budget, dates, start, destination, activities, accommodation, transport
     const itinerary = await planner.generateItinerary(data);
-    res.json(itinerary);
+    if (!res.headersSent) {
+      res.json(itinerary);
+    }
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to generate itinerary' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate itinerary' });
+    }
   }
 });
 

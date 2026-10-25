@@ -283,6 +283,73 @@ function Profile({ user, onProfileUpdate, addToast }) {
           </div>
         </div>
 
+        {/* Data Privacy & Account Deletion (Section 9) */}
+        <div className="profile-section" style={{ borderBottom: 'none', borderTop: '1px solid var(--surface-border, #e2e8f0)', paddingTop: '24px' }}>
+          <h4>
+            <ShieldCheck size={18} color="#10b981" />
+            Data Privacy & Account Controls
+          </h4>
+          <p style={{ fontSize: '13px', color: 'var(--ink-muted, #64748b)', margin: '4px 0 16px' }}>
+            Your account information and saved itineraries are strictly confidential. We never sell personal information or share travel plans with advertisers.
+          </p>
+
+          <div style={{
+            background: 'var(--surface-soft, #f8fafc)',
+            padding: '16px',
+            borderRadius: '12px',
+            border: '1px solid var(--surface-border, #e2e8f0)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}>
+            <div>
+              <strong style={{ display: 'block', fontSize: '14px', color: '#dc2626' }}>
+                Permanently Delete Account
+              </strong>
+              <span style={{ fontSize: '12px', color: 'var(--ink-muted, #64748b)' }}>
+                Purges all account credentials, travel preferences, and saved itineraries. This action cannot be undone.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                const confirmed = window.confirm(
+                  'Are you sure you want to permanently delete your account? All your saved trips, preferences, and account history will be deleted immediately.'
+                );
+                if (confirmed) {
+                  try {
+                    const token = localStorage.getItem('token');
+                    await api.delete('/api/auth/account', {
+                      headers: { Authorization: `Bearer ${token}` }
+                    });
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    delete api.defaults.headers.common['Authorization'];
+                    if (addToast) addToast('Account and saved itineraries deleted.', 'info');
+                    window.location.reload();
+                  } catch (err) {
+                    if (addToast) addToast(err.response?.data?.error || 'Failed to delete account. Please try again.', 'error');
+                  }
+                }
+              }}
+              style={{
+                background: '#fee2e2',
+                color: '#b91c1c',
+                border: '1px solid #fca5a5',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              Delete Account
+            </button>
+          </div>
+        </div>
+
         {/* Profile Action Footer */}
         <div className="profile-actions-footer">
           {!editing ? (

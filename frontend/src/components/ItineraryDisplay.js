@@ -97,7 +97,7 @@ const buildDisplayItinerary = (input) => {
 // Helper to provide realistic schedule times
 const DEFAULT_TIMES = ['08:30 AM', '10:45 AM', '01:30 PM', '04:00 PM', '06:30 PM', '08:30 PM'];
 
-function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline', addToast, onEditAnother }) {
+function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline', addToast, onEditAnother, onRequireAuth }) {
   const [activeTab, setActiveTab] = useState(initialTab); // Default to interactive timeline!
   const [selectedDayTab, setSelectedDayTab] = useState('all'); // 'all' or day number (1, 2, 3...)
   const [expandedDay, setExpandedDay] = useState(1);
@@ -257,6 +257,16 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
     setSaveStatus('saving');
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        setSaveStatus('idle');
+        if (onRequireAuth) {
+          onRequireAuth();
+        } else if (addToast) {
+          addToast('Please sign in or create a free account to save this itinerary to your profile.', 'info');
+        }
+        return;
+      }
+
       const titleParts = [summary.destination, summary.totalDays && `${summary.totalDays} day trip`].filter(Boolean);
       const itineraryData = {
         summary,

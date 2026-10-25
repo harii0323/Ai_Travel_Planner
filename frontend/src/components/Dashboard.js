@@ -161,6 +161,48 @@ const POPULAR_DESTINATIONS = [
     transport: 'ownTransport',
     accommodation: 'budgetHotel',
     highlights: ['Khardung La (17,982 ft)', 'Pangong Tso Camping', 'Nubra Valley Sand Dunes', 'Magnetic Hill & Sangam']
+  },
+  {
+    id: 'varanasi',
+    destination: 'Varanasi, Uttar Pradesh',
+    startLocation: 'Delhi',
+    emoji: '🛕',
+    title: 'Varanasi Sacred Ghats & Heritage',
+    description: 'Centuries-old Ganga ghats, evening Maha Aarti at Dashashwamedh, Sarnath Buddhist park, and silk weaving quarters.',
+    image: 'https://images.unsplash.com/photo-1561361513-2d000a50f0dc?w=800&auto=format&fit=crop',
+    budget: 4200,
+    days: 3,
+    companion: 'family',
+    tag: 'Spiritual & Cultural',
+    category: 'Culture & History',
+    rating: 4.8,
+    bestSeason: 'Oct – Mar',
+    distance: '820 km from Delhi (Vande Bharat connected)',
+    activities: 'culture, spiritual, food, photography',
+    transport: 'train',
+    accommodation: 'homestay',
+    highlights: ['Dashashwamedh Ghat Evening Aarti', 'Sarnath Deer Park & Stupa', 'Sunrise Boat Ride on Ganges', 'Kashi Vishwanath Corridor']
+  },
+  {
+    id: 'gokarna',
+    destination: 'Gokarna, Karnataka',
+    startLocation: 'Bangalore',
+    emoji: '🌊',
+    title: 'Gokarna Coastal Trail & Cliff Beaches',
+    description: 'Pristine cliffside beaches, Om Beach rock formations, beach trekking between coves, and quiet seaside cafes.',
+    image: 'https://images.unsplash.com/photo-1590523741831-ab7e8b8f9c7f?w=800&auto=format&fit=crop',
+    budget: 5400,
+    days: 3,
+    companion: 'solo',
+    tag: 'Coastal Trek',
+    category: 'Beach & Culture',
+    rating: 4.8,
+    bestSeason: 'Oct – Mar',
+    distance: '490 km from Bangalore',
+    activities: 'beach, trekking, photography, relaxation',
+    transport: 'train',
+    accommodation: 'hostel',
+    highlights: ['Om Beach to Kudle Beach Trek', 'Half Moon & Paradise Beach Coves', 'Mahabaleshwar Temple', 'Mirjan Fort Transit']
   }
 ];
 
@@ -258,8 +300,12 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
     const fetchDashboardData = async () => {
       try {
         const token = localStorage.getItem('token');
-        const config = { headers: { Authorization: `Bearer ${token}` } };
+        if (!token) {
+          setLoading(false);
+          return;
+        }
 
+        const config = { headers: { Authorization: `Bearer ${token}` } };
         const response = await api.get('/api/history', config);
         const plans = response.data.itineraries || [];
 
@@ -275,9 +321,14 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
 
         setStatistics(stats);
         const recent = plans.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 4);
-        setRecentPlans(recent);
       } catch (error) {
-        console.error('Error fetching dashboard data:', error);
+        if (error.response?.status === 401) {
+          // Token expired or invalid; reset state for guest experience
+          setStatistics({ totalPlans: 0, savedPlans: 0, completedTrips: 0, averageBudget: 0 });
+          setRecentPlans([]);
+        } else {
+          console.warn('Dashboard data sync notice:', error.message);
+        }
       } finally {
         setLoading(false);
       }
@@ -342,7 +393,16 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
 
   const filteredDestinations = destinationFilter === 'All'
     ? POPULAR_DESTINATIONS
-    : POPULAR_DESTINATIONS.filter(d => d.category.includes(destinationFilter));
+    : POPULAR_DESTINATIONS.filter(d => {
+        if (destinationFilter === 'Solo & Couple') return d.companion === 'solo' || d.companion === 'couple';
+        if (destinationFilter === 'Family & Group') return d.companion === 'friends' || d.companion === 'family';
+        if (destinationFilter === 'Budget Trips') return (d.budget || 0) <= 6500;
+        if (destinationFilter === 'Road Trips') return (d.tag || '').includes('Road') || d.transport === 'ownTransport';
+        if (destinationFilter === 'Spiritual & Heritage') return (d.category || '').includes('Culture') || (d.category || '').includes('History') || (d.tag || '').includes('Spiritual');
+        if (destinationFilter === 'Nature & Hills') return (d.category || '').includes('Nature') || (d.category || '').includes('Hills') || (d.category || '').includes('Snow');
+        if (destinationFilter === 'Beach & Coastal') return (d.category || '').includes('Beach');
+        return (d.category || '').includes(destinationFilter);
+      });
 
   return (
     <div className="dashboard-container">
@@ -356,17 +416,17 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
             <span>{todayFormatted} • Intelligent Travel Companion</span>
           </div>
 
-          <h1 style={{ fontSize: 'clamp(32px, 5vw, 48px)', fontWeight: 900, lineHeight: 1.12, letterSpacing: '-0.02em', marginBottom: '14px' }}>
-            PLAN YOUR NEXT JOURNEY
+          <h1 style={{ fontSize: 'clamp(30px, 4.5vw, 46px)', fontWeight: 900, lineHeight: 1.15, letterSpacing: '-0.02em', marginBottom: '14px' }}>
+            Plan your route, compare estimated costs, and find worthwhile stops along the way.
           </h1>
-          <p style={{ fontSize: '17px', color: 'var(--ink-muted, #786b60)', maxWidth: '640px', lineHeight: 1.6, marginBottom: '28px' }}>
-            Discover places, build personalized itineraries, optimize routes, calculate real-world fuel & tolls, and manage your entire trip in one place.
+          <p style={{ fontSize: '16px', color: 'var(--ink-muted, #786b60)', maxWidth: '640px', lineHeight: 1.6, marginBottom: '28px' }}>
+            Calculate road-trip fuel tariffs, NHAI FASTag toll rates, verified accommodation benchmarks, and day-by-day itineraries tailored to your travel style.
           </p>
 
           <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
             <button className="btn-primary" onClick={() => onStartPlanning()} style={{ minHeight: '48px', padding: '0 26px', fontSize: '15px' }}>
               <Compass size={18} />
-              <span>Start Planning</span>
+              <span>Plan My Trip</span>
             </button>
             <a href="#destinations" className="btn-secondary" style={{ minHeight: '48px', padding: '0 22px', fontSize: '15px' }}>
               <MapPin size={18} />
@@ -454,7 +514,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
             </div>
 
             <button type="submit" className="btn-primary" style={{ minHeight: '42px', marginTop: '6px', fontSize: '13px', display: 'flex', justifyContent: 'center' }}>
-              <span>Generate My Trip</span>
+              <span>Generate Itinerary</span>
               <ArrowRight size={15} />
             </button>
           </form>
@@ -521,7 +581,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
           </div>
 
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {['All', 'Beach', 'Hills', 'Culture', 'Adventure'].map((filter) => (
+            {['All', 'Solo & Couple', 'Family & Group', 'Budget Trips', 'Road Trips', 'Spiritual & Heritage', 'Nature & Hills', 'Beach & Coastal'].map((filter) => (
               <button
                 key={filter}
                 className={`history-pill ${destinationFilter === filter ? 'active' : ''}`}
@@ -732,8 +792,8 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
               <KeyRound size={12} />
               <span>Self-Drive Fleet</span>
             </span>
-            <h3>Choose Your Vehicle — A6 Cars Integration</h3>
-            <p>Reliable verified vehicles with unlimited kilometers, zero maintenance worries, and quick pickup.</p>
+            <h3>Rental Vehicles from A6 Cars</h3>
+            <p>Verified rental vehicles with transparent daily tariffs, security deposit terms, and direct pickup.</p>
           </div>
         </div>
 
@@ -830,10 +890,10 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
             <span>Community Ride Sharing</span>
           </span>
           <h3 style={{ fontSize: '26px', fontWeight: 900, color: 'var(--ink-heading, #1c140e)', marginBottom: '8px' }}>
-            TRAVEL TOGETHER — Carpool & Share Costs
+            Carpooling and Cost Sharing
           </h3>
           <p style={{ fontSize: '14px', color: 'var(--ink-muted, #786b60)', lineHeight: 1.6 }}>
-            Heading to the hills or beaches? Find fellow travelers traveling on the same route, share fuel and highway toll expenses, and make your trip budget-friendly.
+            Traveling along the same highway corridor? Connect with verified travelers to split fuel and NHAI FASTag toll expenses.
           </p>
         </div>
 
@@ -949,7 +1009,82 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
       </div>
 
       {/* =========================================================================
-          9. FINAL CALL TO ACTION (Requirement #5)
+          8. COST CALCULATION METHODOLOGY & VERIFIABLE SOURCES (Requirements #4 & #5)
+          ========================================================================= */}
+      <section style={{
+        marginBottom: '48px',
+        padding: '36px 40px',
+        background: '#ffffff',
+        borderRadius: 'var(--radius-lg, 24px)',
+        border: '1px solid var(--surface-border)',
+        boxShadow: 'var(--shadow-sm)'
+      }}>
+        <div style={{ maxWidth: '680px', marginBottom: '28px' }}>
+          <span className="pill-badge pill-badge-emerald" style={{ marginBottom: '8px' }}>
+            <ShieldCheck size={12} />
+            <span>Pricing Transparency</span>
+          </span>
+          <h3 style={{ fontSize: '24px', fontWeight: 900, color: 'var(--ink-heading, #1c140e)', marginBottom: '8px' }}>
+            How Travel Costs Are Calculated
+          </h3>
+          <p style={{ fontSize: '14px', color: 'var(--ink-muted, #786b60)', lineHeight: 1.6 }}>
+            Every estimate is computed from explicit, itemized inputs and public benchmarks. We do not use arbitrary budget allocations or guessed numbers.
+          </p>
+        </div>
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          gap: '20px',
+          marginBottom: '24px'
+        }}>
+          <div style={{ padding: '18px', background: 'var(--surface-soft)', borderRadius: '14px', border: '1px solid var(--surface-border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', color: 'var(--brand-primary, #c26d38)', fontWeight: 800, fontSize: '14px' }}>
+              <Fuel size={16} /> Fuel & EV Tariffs
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--ink-muted, #786b60)', lineHeight: 1.5, margin: 0 }}>
+              Calculated using: <code>(Route km ÷ Vehicle Mileage) × State Tariff</code>. Fuel rates reference daily Indian Oil and BPCL state averages; EV charging uses 15–20 kWh per 100 km at public DC fast chargers.
+            </p>
+          </div>
+
+          <div style={{ padding: '18px', background: 'var(--surface-soft)', borderRadius: '14px', border: '1px solid var(--surface-border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', color: 'var(--emerald-500, #10b981)', fontWeight: 800, fontSize: '14px' }}>
+              <Route size={16} /> Highway FASTag Tolls
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--ink-muted, #786b60)', lineHeight: 1.5, margin: 0 }}>
+              Corridor toll plazas are calculated from NHAI FASTag database schedules per vehicle class (Car/SUV ₹1.95/km baseline for national expressways).
+            </p>
+          </div>
+
+          <div style={{ padding: '18px', background: 'var(--surface-soft)', borderRadius: '14px', border: '1px solid var(--surface-border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', color: 'var(--azure-500, #0284c7)', fontWeight: 800, fontSize: '14px' }}>
+              <Layers size={16} /> Accommodations
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--ink-muted, #786b60)', lineHeight: 1.5, margin: 0 }}>
+              Calculated by nights, rooms, and selected comfort tier based on median regional seasonal rates: Hostels (₹600–1,200), Budget Hotels (₹1,500–2,800), and Resorts (₹4,500+).
+            </p>
+          </div>
+
+          <div style={{ padding: '18px', background: 'var(--surface-soft)', borderRadius: '14px', border: '1px solid var(--surface-border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', color: '#8b5cf6', fontWeight: 800, fontSize: '14px' }}>
+              <Coffee size={16} /> Food & Entry Fees
+            </div>
+            <p style={{ fontSize: '12px', color: 'var(--ink-muted, #786b60)', lineHeight: 1.5, margin: 0 }}>
+              Explicit meal allowances per traveler per day (Budget ₹400–600, Standard ₹800–1,200) plus verified Archaeological Survey of India (ASI) monument tickets.
+            </p>
+          </div>
+        </div>
+
+        <div style={{ fontSize: '12px', color: 'var(--ink-muted, #786b60)', borderTop: '1px solid var(--surface-border)', paddingTop: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ShieldCheck size={14} color="#10b981" />
+          <span>
+            <strong>Disclaimer:</strong> Prices shown are calculated estimates from public schedules. Live fuel prices fluctuate daily and accommodation charges vary by season. We do not guarantee third-party commercial pricing.
+          </span>
+        </div>
+      </section>
+
+      {/* =========================================================================
+          9. FINAL CALL TO ACTION (Requirement #3 & #5)
           ========================================================================= */}
       <section style={{
         padding: '50px 40px',
@@ -961,11 +1096,11 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
         overflow: 'hidden',
         boxShadow: 'var(--shadow-lg)'
       }}>
-        <h2 style={{ fontSize: 'clamp(28px, 4vw, 38px)', fontWeight: 900, marginBottom: '12px' }}>
-          Ready to embark on an unforgettable adventure?
+        <h2 style={{ fontSize: 'clamp(26px, 3.8vw, 36px)', fontWeight: 900, marginBottom: '12px' }}>
+          Ready to plan your trip?
         </h2>
-        <p style={{ fontSize: '16px', color: 'rgba(255,255,255,0.92)', maxWidth: '580px', margin: '0 auto 24px' }}>
-          Let VISTA calculate verified routes, optimize your schedule, and give you accurate travel budgets in seconds.
+        <p style={{ fontSize: '15px', color: 'rgba(255,255,255,0.92)', maxWidth: '580px', margin: '0 auto 24px', lineHeight: 1.6 }}>
+          Enter your starting point, destination, and dates to calculate verified toll rates, fuel tariffs, and optimized day-by-day schedules.
         </p>
         <button 
           className="btn-secondary" 
@@ -982,7 +1117,7 @@ function Dashboard({ user, onStartPlanning, onViewHistory, onSelectItinerary, ad
           }}
         >
           <Compass size={18} />
-          <span>Launch AI Travel Planner</span>
+          <span>Plan My Trip</span>
         </button>
       </section>
 

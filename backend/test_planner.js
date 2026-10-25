@@ -58,18 +58,14 @@ async function testPlanner() {
       console.log('');
 
       console.log('💵 BUDGET BREAKDOWN:');
-      console.log(`   Transport: ₹${result.budgetBreakdown.transport.cost}`);
-      console.log(`   Food: ₹${result.budgetBreakdown.food.totalCost}`);
-      console.log(`   Accommodation: ₹${result.budgetBreakdown.accommodation.totalCost}`);
-      console.log(`   Activities: ₹${result.budgetBreakdown.activities.totalCost}`);
-      console.log(`   Total Estimated: ₹${result.budgetBreakdown.totalEstimatedCost}`);
-      console.log(`   Original Budget: ₹${result.budgetBreakdown.originalBudget}`);
-      console.log(`   Status: ${result.budgetSuggestions.status}\n`);
-
-      if (result.budgetSuggestions.message) {
-        console.log('⚠️  BUDGET MESSAGE:');
-        console.log(`   ${result.budgetSuggestions.message}\n`);
-      }
+      const bb = result.budgetBreakdown || {};
+      console.log(`   Fuel/Transit: ₹${bb.fuel || 0}`);
+      console.log(`   Food: ₹${bb.food || 0}`);
+      console.log(`   Accommodation: ₹${bb.accommodation || 0}`);
+      console.log(`   Activities: ₹${bb.activities || 0}`);
+      console.log(`   Total Estimated: ₹${bb.totalEstimatedCost || result.estimatedCosts?.total}`);
+      console.log(`   Original Budget: ₹${bb.originalBudget}`);
+      console.log(`   Status: ${bb.budgetStatus || 'COMPUTED'}\n`);
 
       console.log('📅 DAY-WISE ITINERARY:');
       result.dayWiseItinerary.forEach(day => {

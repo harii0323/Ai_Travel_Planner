@@ -7,13 +7,37 @@ dotenv.config();
 
 const { Pool } = require('pg');
 
-const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL || 'postgres://postgres:postgres@localhost:5432/ai_travel_planner';
+const getConnectionString = () => {
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (!url) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('CRITICAL SECURITY ERROR: DATABASE_URL must be set in production!');
+    }
+    return 'postgres://postgres:postgres@localhost:5432/ai_travel_planner';
+  }
+  return url;
+};
+
+const getSslConfig = () => {
+  if (process.env.POSTGRES_SSL === 'true') {
+    if (process.env.POSTGRES_CA_CERT) {
+      return {
+        rejectUnauthorized: true,
+        ca: process.env.POSTGRES_CA_CERT
+      };
+    }
+    return process.env.NODE_ENV === 'production'
+      ? { rejectUnauthorized: true }
+      : { rejectUnauthorized: false };
+  }
+  return undefined;
+};
 
 const pool = new Pool({
-  connectionString,
+  connectionString: getConnectionString(),
   max: parseInt(process.env.POSTGRES_POOL_SIZE || '10', 10),
   connectionTimeoutMillis: parseInt(process.env.POSTGRES_TIMEOUT || '30000', 10),
-  ssl: process.env.POSTGRES_SSL === 'true' ? { rejectUnauthorized: false } : undefined
+  ssl: getSslConfig()
 });
 
 let connected = false;
@@ -102,6 +126,85 @@ const initializeSchema = async () => {
     CREATE INDEX IF NOT EXISTS idx_tourist_places_region ON tourist_places(region);
     CREATE INDEX IF NOT EXISTS idx_place_distances_names ON place_distances(from_name, to_name);
     CREATE INDEX IF NOT EXISTS idx_place_distances_road_distance ON place_distances(estimated_road_distance_km);
+
+    -- Persistent durable tables for token revocation and payment idempotency
+    CREATE TABLE IF NOT EXISTS revoked_tokens (
+      token_hash VARCHAR(64) PRIMARY KEY,
+      user_id TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at);
+
+    CREATE TABLE IF NOT EXISTS payment_transactions (
+      transaction_id VARCHAR(128) PRIMARY KEY,
+      booking_id VARCHAR(64) NOT NULL,
+      user_id VARCHAR(64) NOT NULL,
+      amount NUMERIC NOT NULL,
+      payment_method VARCHAR(32) NOT NULL,
+      payment_plan VARCHAR(32) NOT NULL,
+      status VARCHAR(32) NOT NULL DEFAULT 'completed',
+      idempotency_key VARCHAR(128),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_payment_transactions_booking ON payment_transactions(booking_id);
+    CREATE INDEX IF NOT EXISTS idx_payment_transactions_user ON payment_transactions(user_id);
+
+    -- Enable and Force Row Level Security (RLS) on user-owned tables
+    ALTER TABLE itineraries ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE itineraries FORCE ROW LEVEL SECURITY;
+    ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE users FORCE ROW LEVEL SECURITY;
+
+    -- Strict fail-closed tenant isolation policies
+    DO $$
+    BEGIN
+      DROP POLICY IF EXISTS itineraries_tenant_isolation ON itineraries;
+      CREATE POLICY itineraries_tenant_isolation ON itineraries
+        FOR ALL
+        USING (
+          user_id = NULLIF(current_setting('app.current_user_id', true), '')
+          OR current_setting('app.is_admin', true) = 'true'
+        )
+        WITH CHECK (
+          user_id = NULLIF(current_setting('app.current_user_id', true), '')
+          OR current_setting('app.is_admin', true) = 'true'
+        );
+
+      DROP POLICY IF EXISTS users_insert_policy ON users;
+      CREATE POLICY users_insert_policy ON users
+        FOR INSERT
+        WITH CHECK (true);
+
+      DROP POLICY IF EXISTS users_tenant_isolation ON users;
+      CREATE POLICY users_tenant_isolation ON users
+        FOR SELECT
+        USING (
+          id = NULLIF(current_setting('app.current_user_id', true), '')
+          OR current_setting('app.is_admin', true) = 'true'
+        );
+
+      DROP POLICY IF EXISTS users_modify_isolation ON users;
+      CREATE POLICY users_modify_isolation ON users
+        FOR UPDATE
+        USING (
+          id = NULLIF(current_setting('app.current_user_id', true), '')
+          OR current_setting('app.is_admin', true) = 'true'
+        )
+        WITH CHECK (
+          id = NULLIF(current_setting('app.current_user_id', true), '')
+          OR current_setting('app.is_admin', true) = 'true'
+        );
+
+      DROP POLICY IF EXISTS users_delete_isolation ON users;
+      CREATE POLICY users_delete_isolation ON users
+        FOR DELETE
+        USING (
+          id = NULLIF(current_setting('app.current_user_id', true), '')
+          OR current_setting('app.is_admin', true) = 'true'
+        );
+    END
+    $$;
   `);
 };
 
@@ -125,9 +228,55 @@ const closeDB = async () => {
   await pool.end();
 };
 
+/**
+ * Execute queries within a user-isolated PostgreSQL transaction with Row-Level Security
+ * @param {string} userId
+ * @param {Function} callback (client) => Promise<any>
+ */
+const withUserContext = async (userId, callback) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (userId) {
+      await client.query("SELECT set_config('app.current_user_id', $1, true)", [String(userId)]);
+    }
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * Execute queries within a system/administrative PostgreSQL transaction
+ * @param {Function} callback (client) => Promise<any>
+ */
+const withSystemContext = async (callback) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT set_config('app.is_admin', 'true', true)");
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
 module.exports = {
   query,
   connectDB,
   closeDB,
-  isConnected
+  isConnected,
+  withUserContext,
+  withSystemContext,
+  pool
 };

@@ -1,17 +1,25 @@
 # Dependencies
 node_modules/
 
-# Debug logs
+# Debug and server logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
+**/*.log
 
 # Environment variables
 .env
 .env.*
+*.env
+**/.env
+**/.env.*
 
+# Allow sanitized template files
 !.env.example
 !.env.*.example
+!**/.env.example
+!**/.env.*.example
 
 # Build files
 build/
@@ -22,9 +30,15 @@ frontend/build/
 # Test coverage
 coverage/
 
-# Security keys
+# Security keys, certificates, and credentials
 *.pem
 *.key
+*.crt
+*.cert
+*.pfx
+*.p12
+credentials.json
+client_secret*.json
 
 # Vercel
 .vercel/

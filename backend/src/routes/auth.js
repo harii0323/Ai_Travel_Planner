@@ -21,12 +21,23 @@ const ensureDatabase = async () => {
   return true;
 };
 
-// Generate JWT token
-const generateToken = (userId) => {
+const crypto = require('crypto');
+const { authenticate, revokeToken, getJwtSecret } = require('../middleware/authenticate');
+
+// Generate JWT token with explicit HS256 algorithm and cryptographic jti
+const generateToken = (userId, email) => {
+  const secret = getJwtSecret();
   return jwt.sign(
-    { id: userId },
-    process.env.JWT_SECRET || 'your_secret_key',
-    { expiresIn: process.env.JWT_EXPIRE || '7d' }
+    {
+      id: String(userId),
+      email: email || undefined,
+      jti: crypto.randomUUID()
+    },
+    secret,
+    { 
+      algorithm: 'HS256',
+      expiresIn: process.env.JWT_EXPIRE || '7d' 
+    }
   );
 };
 
@@ -49,8 +60,12 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Passwords do not match' });
     }
     
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long' });
+    }
+
+    if (password.length > 128) {
+      return res.status(400).json({ error: 'Password cannot exceed 128 characters' });
     }
     
     // Check if user already exists
@@ -70,7 +85,7 @@ router.post('/register', async (req, res) => {
     });
     
     // Generate token
-    const token = generateToken(user._id);
+    const token = generateToken(user._id, user.email);
     
     res.status(201).json({
       success: true,
@@ -85,7 +100,7 @@ router.post('/register', async (req, res) => {
     });
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({ error: error.message || 'Registration failed' });
+    res.status(500).json({ error: 'Registration failed. Please verify your inputs.' });
   }
 });
 
@@ -117,7 +132,7 @@ router.post('/login', async (req, res) => {
     }
     
     // Generate token
-    const token = generateToken(user._id || user.id);
+    const token = generateToken(user._id || user.id, user.email);
     
     res.status(200).json({
       success: true,
@@ -137,8 +152,6 @@ router.post('/login', async (req, res) => {
 });
 
 // GET /api/auth/profile - Get current user profile
-const authenticate = require('../middleware/authenticate');
-
 router.get('/profile', authenticate, async (req, res) => {
   try {
     await ensureDatabase();
@@ -161,7 +174,7 @@ router.get('/profile', authenticate, async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Failed to retrieve profile' });
   }
 });
 
@@ -170,16 +183,38 @@ router.put('/profile', authenticate, async (req, res) => {
   try {
     await ensureDatabase();
 
-    const { name, travelCompanionType, favoriteDestinations, preferredActivities, profile } = req.body;
+    // Prototype pollution detection
+    const hasPollutionProbe = (obj) => {
+      if (!obj || typeof obj !== 'object') return false;
+      for (const key of Object.keys(obj)) {
+        if (key.includes('__proto__') || key.includes('constructor') || key.includes('prototype')) {
+          return true;
+        }
+        if (typeof obj[key] === 'object' && hasPollutionProbe(obj[key])) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (hasPollutionProbe(req.body)) {
+      return res.status(400).json({ error: 'Security violation: Prototype pollution payload detected.' });
+    }
+
+    const { name, travelCompanionType, favoriteDestinations, preferredActivities, profile } = req.body || {};
+
+    if (name !== undefined && (typeof name !== 'string' || name.trim().length === 0 || name.length > 100)) {
+      return res.status(400).json({ error: 'Name must be a valid string of 1 to 100 characters' });
+    }
     
     const user = await User.findByIdAndUpdate(
       req.user.id,
       {
-        name: name || undefined,
+        name: name ? name.trim() : undefined,
         'travelPreferences.travelCompanionType': travelCompanionType || undefined,
-        'travelPreferences.favoriteDestinations': favoriteDestinations || undefined,
-        'travelPreferences.preferredActivities': preferredActivities || undefined,
-        profile: profile || undefined
+        'travelPreferences.favoriteDestinations': Array.isArray(favoriteDestinations) ? favoriteDestinations.slice(0, 50) : undefined,
+        'travelPreferences.preferredActivities': Array.isArray(preferredActivities) ? preferredActivities.slice(0, 50) : undefined,
+        profile: (profile && typeof profile === 'object' && !Array.isArray(profile)) ? profile : undefined
       },
       { new: true, runValidators: true }
     );
@@ -196,15 +231,74 @@ router.put('/profile', authenticate, async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message && error.message.includes('Security violation') ? error.message : 'Failed to update profile' });
   }
 });
 
 // POST /api/auth/logout - Logout
-router.post('/logout', authenticate, (req, res) => {
+router.post('/logout', authenticate, async (req, res) => {
+  if (req.token) {
+    await revokeToken(req.token, null, req.user?.id);
+  }
   res.status(200).json({
     success: true,
     message: 'Logged out successfully'
+  });
+});
+
+// DELETE /api/auth/account - Delete user account and all personal itineraries
+router.delete('/account', authenticate, async (req, res) => {
+  try {
+    await ensureDatabase();
+
+    const userId = req.user.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (req.token) {
+      await revokeToken(req.token, null, userId);
+    }
+
+    // Delete all user itineraries first if cascading is not enabled in memory mode
+    const { query, isConnected } = require('../config/database');
+    if (isConnected()) {
+      await query('DELETE FROM itineraries WHERE user_id = $1', [userId]);
+    }
+
+    const deletedUser = await User.findByIdAndDelete(userId);
+    if (!deletedUser) {
+      return res.status(404).json({ error: 'User account not found' });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Account and associated travel itineraries have been permanently deleted.'
+    });
+  } catch (error) {
+    console.error('Account deletion error:', error);
+    res.status(500).json({ error: 'Account deletion failed. Please contact support.' });
+  }
+});
+
+// GET /api/auth/privacy - Transparent data retention and privacy summary
+router.get('/privacy', (req, res) => {
+  res.status(200).json({
+    success: true,
+    policy: {
+      dataCollected: ['Account name', 'Account email', 'Hashed password (bcrypt 12-rounds)', 'User-created trip itineraries', 'Saved travel style preferences'],
+      retentionPeriod: 'Retained as long as your account is active. Permanently purged upon account deletion.',
+      thirdPartySharing: 'We do not sell, rent, or trade your personal information. Route and map computations use anonymized origin and destination coordinates.',
+      guarantees: 'Estimated fuel tariffs and NHAI FASTag tolls are benchmarks and can fluctuate with market rates. We do not guarantee third-party commercial pricing.',
+      cancellationAndRefunds: 'Vehicle rentals through partner fleets (A6 Cars) adhere to partner cancellation schedules as detailed during booking.',
+      contactEmail: 'privacy@vistatravel.app'
+    },
+    dataRetention: 'Retained as long as your account is active. Permanently purged upon account deletion.',
+    accountDeletion: {
+      available: true,
+      endpoint: 'DELETE /api/auth/account',
+      method: 'Permanent cascading purge'
+    }
   });
 });
 

@@ -37,23 +37,41 @@ class ItineraryDocument {
   }
 
   async save() {
-    const result = await db.query(
-      `UPDATE itineraries
-       SET title = $2, description = $3, status = $4, tags = $5, planned_travel_date = $6, updated_at = $7
-       WHERE id = $1
-       RETURNING *`,
-      [
-        this._id,
-        this.title,
-        this.description,
-        this.status,
-        JSON.stringify(this.tags || []),
-        this.plannedTravelDate,
-        this.updatedAt || new Date()
-      ]
-    );
+    this.updatedAt = this.updatedAt || new Date().toISOString();
+    if (db.isConnected()) {
+      try {
+        const result = await db.query(
+          `UPDATE itineraries
+           SET title = $2, description = $3, status = $4, tags = $5, planned_travel_date = $6, updated_at = $7
+           WHERE id = $1
+           RETURNING *`,
+          [
+            this._id,
+            this.title,
+            this.description,
+            this.status,
+            JSON.stringify(this.tags || []),
+            this.plannedTravelDate,
+            this.updatedAt
+          ]
+        );
+        if (result.rows[0]) {
+          Object.assign(this, new ItineraryDocument(result.rows[0]));
+        }
+      } catch (err) {
+        console.warn('DB error in Itinerary.save:', err.message);
+      }
+    }
 
-    Object.assign(this, new ItineraryDocument(result.rows[0]));
+    const mem = memoryItineraries.get(this._id);
+    if (mem) {
+      mem.title = this.title;
+      mem.description = this.description;
+      mem.status = this.status;
+      mem.tags = this.tags;
+      mem.planned_travel_date = this.plannedTravelDate;
+      mem.updated_at = this.updatedAt;
+    }
     return this;
   }
 }
@@ -111,6 +129,13 @@ class ItineraryQuery {
       sql += ` LIMIT $${params.length}`;
     }
 
+    if (this.filter.userId && typeof db.withUserContext === 'function') {
+      return db.withUserContext(this.filter.userId, async (client) => {
+        const result = await client.query(sql, params);
+        return result.rows.map(toDocument);
+      });
+    }
+
     const result = await db.query(sql, params);
     return result.rows.map(toDocument);
   }
@@ -124,64 +149,162 @@ class ItineraryQuery {
   }
 }
 
+const memoryItineraries = new Map();
+
 const Itinerary = {
   async create(data) {
-    const result = await db.query(
-      `INSERT INTO itineraries (
-        id, user_id, title, description, destination, start_location, start_date, end_date,
-        total_days, budget, estimated_cost, without_budget, activities, accommodation,
-        transport, travel_companion_type, number_of_travelers, estimated_costs, day_plans,
-        money_tips, recommendations, planned_travel_date, tags, rental_booking, rental_vehicle
-      )
-      VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-        $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
-      )
-      RETURNING *`,
-      [
-        crypto.randomUUID(),
-        data.userId,
-        data.title,
-        data.description,
-        data.destination,
-        data.startLocation,
-        data.startDate,
-        data.endDate,
-        data.totalDays,
-        data.budget,
-        data.estimatedCost,
-        Boolean(data.withoutBudget),
-        JSON.stringify(data.activities || []),
-        data.accommodation,
-        data.transport,
-        data.travelCompanionType || 'solo',
-        data.numberOfTravelers || 1,
-        JSON.stringify(data.estimatedCosts || {}),
-        JSON.stringify(data.dayPlans || []),
-        JSON.stringify(data.moneyTips || []),
-        JSON.stringify(data.recommendations || {}),
-        data.plannedTravelDate || null,
-        JSON.stringify(data.tags || []),
-        JSON.stringify(data.rentalBooking || {}),
-        JSON.stringify(data.rentalVehicle || {})
-      ]
-    );
+    const id = crypto.randomUUID();
+    const docData = {
+      id,
+      user_id: data.userId,
+      title: data.title,
+      description: data.description,
+      destination: data.destination,
+      start_location: data.startLocation,
+      start_date: data.startDate,
+      end_date: data.endDate,
+      total_days: data.totalDays,
+      budget: data.budget,
+      estimated_cost: data.estimatedCost,
+      without_budget: Boolean(data.withoutBudget),
+      activities: data.activities || [],
+      accommodation: data.accommodation,
+      transport: data.transport,
+      travel_companion_type: data.travelCompanionType || 'solo',
+      number_of_travelers: data.numberOfTravelers || 1,
+      estimated_costs: data.estimatedCosts || {},
+      day_plans: data.dayPlans || [],
+      money_tips: data.moneyTips || [],
+      recommendations: data.recommendations || {},
+      planned_travel_date: data.plannedTravelDate || null,
+      tags: data.tags || [],
+      rental_booking: data.rentalBooking || {},
+      rental_vehicle: data.rentalVehicle || {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    memoryItineraries.set(id, docData);
 
-    return toDocument(result.rows[0]);
+    if (db.isConnected()) {
+      try {
+        const insertSql = `INSERT INTO itineraries (
+            id, user_id, title, description, destination, start_location, start_date, end_date,
+            total_days, budget, estimated_cost, without_budget, activities, accommodation,
+            transport, travel_companion_type, number_of_travelers, estimated_costs, day_plans,
+            money_tips, recommendations, planned_travel_date, tags, rental_booking, rental_vehicle
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+            $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
+          )
+          RETURNING *`;
+        const insertParams = [
+          id,
+          data.userId,
+          data.title,
+          data.description,
+          data.destination,
+          data.startLocation,
+          data.startDate,
+          data.endDate,
+          data.totalDays,
+          data.budget,
+          data.estimatedCost,
+          Boolean(data.withoutBudget),
+          JSON.stringify(data.activities || []),
+          data.accommodation,
+          data.transport,
+          data.travelCompanionType || 'solo',
+          data.numberOfTravelers || 1,
+          JSON.stringify(data.estimatedCosts || {}),
+          JSON.stringify(data.dayPlans || []),
+          JSON.stringify(data.moneyTips || []),
+          JSON.stringify(data.recommendations || {}),
+          data.plannedTravelDate || null,
+          JSON.stringify(data.tags || []),
+          JSON.stringify(data.rentalBooking || {}),
+          JSON.stringify(data.rentalVehicle || {})
+        ];
+
+        let result;
+        if (data.userId && typeof db.withUserContext === 'function') {
+          result = await db.withUserContext(data.userId, async (client) => {
+            return client.query(insertSql, insertParams);
+          });
+        } else {
+          result = await db.query(insertSql, insertParams);
+        }
+        return toDocument(result.rows[0]);
+      } catch (err) {
+        console.warn('DB insert error in Itinerary.create, using memory store fallback:', err.message);
+      }
+    }
+
+    return toDocument(docData);
   },
 
   find(filter) {
-    return new ItineraryQuery(filter);
+    if (db.isConnected()) {
+      return new ItineraryQuery(filter);
+    }
+    // In-memory query handler
+    return {
+      sort: function() { return this; },
+      select: function() { return this; },
+      limit: function(n) { this._limit = n; return this; },
+      async exec() {
+        let results = Array.from(memoryItineraries.values());
+        if (filter?.userId) {
+          results = results.filter(it => it.user_id === filter.userId);
+        }
+        if (filter?.status) {
+          results = results.filter(it => it.status === filter.status);
+        }
+        return results.map(toDocument);
+      },
+      then(res, rej) { return this.exec().then(res, rej); },
+      catch(rej) { return this.exec().catch(rej); }
+    };
   },
 
-  async findById(id) {
-    const result = await db.query('SELECT * FROM itineraries WHERE id = $1', [id]);
-    return toDocument(result.rows[0]);
+  async findById(id, userId = null) {
+    if (db.isConnected()) {
+      try {
+        if (userId && typeof db.withUserContext === 'function') {
+          const doc = await db.withUserContext(userId, async (client) => {
+            const result = await client.query('SELECT * FROM itineraries WHERE id = $1', [id]);
+            return result.rows[0] ? toDocument(result.rows[0]) : null;
+          });
+          if (doc) return doc;
+        } else {
+          const result = await db.query('SELECT * FROM itineraries WHERE id = $1', [id]);
+          if (result.rows[0]) return toDocument(result.rows[0]);
+        }
+      } catch (err) {
+        console.warn('DB query error in Itinerary.findById, using memory store:', err.message);
+      }
+    }
+    const mem = memoryItineraries.get(id);
+    return mem ? toDocument(mem) : null;
   },
 
-  async findByIdAndDelete(id) {
-    const result = await db.query('DELETE FROM itineraries WHERE id = $1 RETURNING *', [id]);
-    return toDocument(result.rows[0]);
+  async findByIdAndDelete(id, userId = null) {
+    memoryItineraries.delete(id);
+    if (db.isConnected()) {
+      try {
+        if (userId && typeof db.withUserContext === 'function') {
+          return await db.withUserContext(userId, async (client) => {
+            const result = await client.query('DELETE FROM itineraries WHERE id = $1 RETURNING *', [id]);
+            return result.rows[0] ? toDocument(result.rows[0]) : null;
+          });
+        }
+        const result = await db.query('DELETE FROM itineraries WHERE id = $1 RETURNING *', [id]);
+        return toDocument(result.rows[0]);
+      } catch (err) {
+        console.warn('DB error in findByIdAndDelete:', err.message);
+      }
+    }
+    return null;
   }
 };
 

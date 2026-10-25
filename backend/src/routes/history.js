@@ -58,14 +58,27 @@ router.post('/save', authenticate, async (req, res) => {
   }
 });
 
+function safeRegex(str) {
+  if (!str || typeof str !== 'string') return null;
+  const sanitized = str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').trim().slice(0, 80);
+  if (!sanitized) return null;
+  return new RegExp(sanitized, 'i');
+}
+
 // GET /api/history - Get all saved itineraries for user
 router.get('/', authenticate, async (req, res) => {
   try {
     const { status, destination, sort } = req.query;
     
     const filter = { userId: req.user.id };
-    if (status) filter.status = status;
-    if (destination) filter.destination = new RegExp(destination, 'i');
+    const allowedStatuses = ['saved', 'completed', 'cancelled', 'active', 'archived', 'draft'];
+    if (status && allowedStatuses.includes(String(status).toLowerCase())) {
+      filter.status = String(status).toLowerCase();
+    }
+    if (destination) {
+      const destRegex = safeRegex(destination);
+      if (destRegex) filter.destination = destRegex;
+    }
     
     const sortBy = sort === 'oldest' ? { createdAt: 1 } : { createdAt: -1 };
     
@@ -104,15 +117,10 @@ router.get('/', authenticate, async (req, res) => {
 // GET /api/history/:id - Get a specific itinerary
 router.get('/:id', authenticate, async (req, res) => {
   try {
-    const itinerary = await Itinerary.findById(req.params.id);
+    const itinerary = await Itinerary.findById(req.params.id, req.user.id);
     
-    if (!itinerary) {
+    if (!itinerary || itinerary.userId.toString() !== req.user.id) {
       return res.status(404).json({ error: 'Itinerary not found' });
-    }
-    
-    // Check ownership
-    if (itinerary.userId.toString() !== req.user.id) {
-      return res.status(403).json({ error: 'Not authorized to view this itinerary' });
     }
     
     res.status(200).json({
@@ -129,15 +137,10 @@ router.put('/:id', authenticate, async (req, res) => {
   try {
     const { title, description, status, tags, plannedTravelDate } = req.body;
     
-    const itinerary = await Itinerary.findById(req.params.id);
+    const itinerary = await Itinerary.findById(req.params.id, req.user.id);
     
-    if (!itinerary) {
+    if (!itinerary || itinerary.userId.toString() !== req.user.id) {
       return res.status(404).json({ error: 'Itinerary not found' });
-    }
-    
-    // Check ownership
-    if (itinerary.userId.toString() !== req.user.id) {
-      return res.status(403).json({ error: 'Not authorized to update this itinerary' });
     }
     
     // Update fields
@@ -163,18 +166,13 @@ router.put('/:id', authenticate, async (req, res) => {
 // DELETE /api/history/:id - Delete itinerary
 router.delete('/:id', authenticate, async (req, res) => {
   try {
-    const itinerary = await Itinerary.findById(req.params.id);
+    const itinerary = await Itinerary.findById(req.params.id, req.user.id);
     
-    if (!itinerary) {
+    if (!itinerary || itinerary.userId.toString() !== req.user.id) {
       return res.status(404).json({ error: 'Itinerary not found' });
     }
     
-    // Check ownership
-    if (itinerary.userId.toString() !== req.user.id) {
-      return res.status(403).json({ error: 'Not authorized to delete this itinerary' });
-    }
-    
-    await Itinerary.findByIdAndDelete(req.params.id);
+    await Itinerary.findByIdAndDelete(req.params.id, req.user.id);
     
     res.status(200).json({
       success: true,
@@ -188,15 +186,10 @@ router.delete('/:id', authenticate, async (req, res) => {
 // POST /api/history/duplicate/:id - Duplicate an itinerary
 router.post('/duplicate/:id', authenticate, async (req, res) => {
   try {
-    const originalItinerary = await Itinerary.findById(req.params.id);
+    const originalItinerary = await Itinerary.findById(req.params.id, req.user.id);
     
-    if (!originalItinerary) {
+    if (!originalItinerary || originalItinerary.userId.toString() !== req.user.id) {
       return res.status(404).json({ error: 'Itinerary not found' });
-    }
-    
-    // Check ownership
-    if (originalItinerary.userId.toString() !== req.user.id) {
-      return res.status(403).json({ error: 'Not authorized to duplicate this itinerary' });
     }
     
     // Create a new itinerary with same data

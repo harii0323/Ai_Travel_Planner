@@ -17,7 +17,7 @@ const getBaseURL = () => {
 
 const api = axios.create({
   baseURL: getBaseURL(),
-  timeout: 45000,
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json'
   }
@@ -43,6 +43,16 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // If token is invalid or expired, clear client session to prevent infinite stale auth loops
+    if (error.response?.status === 401) {
+      try {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      } catch (e) {
+        // ignore storage errors
+      }
+    }
+
     // If backend is completely unreachable
     if (!error.response) {
       const targetUrl = api.defaults.baseURL || 'http://localhost:5000';

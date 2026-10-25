@@ -30,13 +30,21 @@ function History({ onSelectItinerary, addToast, onStartNewTrip }) {
   const fetchItineraries = async () => {
     try {
       const token = localStorage.getItem('token');
+      if (!token) {
+        setLoading(false);
+        return;
+      }
       const config = { headers: { Authorization: `Bearer ${token}` } };
 
       const response = await api.get('/api/history', config);
       setItineraries(response.data.itineraries || []);
     } catch (error) {
-      console.error('Error fetching itineraries:', error);
-      if (addToast) addToast('Error loading travel history', 'error');
+      if (error.response?.status === 401) {
+        setItineraries([]);
+      } else {
+        console.warn('Notice fetching itineraries:', error.message);
+        if (addToast) addToast('Unable to load saved trips right now', 'info');
+      }
     } finally {
       setLoading(false);
     }

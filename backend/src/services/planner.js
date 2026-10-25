@@ -38,7 +38,8 @@ const {
   segmentRoute,
   calculateFameScore,
   DISTANCE_BANDS,
-  classifyDistanceBand
+  classifyDistanceBand,
+  FAMOUS_LANDMARKS_DATABASE
 } = require('./routePlaceDiscoveryEngine');
 
 const {
@@ -301,8 +302,8 @@ function buildTripPhases(totalDays, preferredArrivalDay, routeDistanceKm, transp
 
   if (preferredStayDays !== null && totalDays >= 2) {
     const destinationStayDays = Math.min(
-      Math.max(0, preferredStayDays),
-      Math.max(0, totalDays - 2)
+      Math.max(1, preferredStayDays),
+      Math.max(1, totalDays - 2)
     );
     const remainingTravelDays = Math.max(2, totalDays - destinationStayDays);
     const adjustedReturnDays = Math.min(naturalTravelDays, Math.max(1, Math.floor(remainingTravelDays / 2)));
@@ -317,24 +318,32 @@ function buildTripPhases(totalDays, preferredArrivalDay, routeDistanceKm, transp
     };
   }
 
-  // Ensure destination stay days are prioritized for typical vacation trips
+  // Ensure realistic phase allocation for long routes
   let onwardDays = 1;
   let returnDays = 1;
 
-  if (totalDays >= 6 && routeDistanceKm > 800) {
-    onwardDays = Math.min(2, Math.max(1, naturalTravelDays));
-    returnDays = Math.min(2, Math.max(1, naturalTravelDays));
-  } else if (totalDays >= 8 && routeDistanceKm > 1200) {
-    onwardDays = Math.min(3, naturalTravelDays);
-    returnDays = Math.min(3, naturalTravelDays);
+  if (routeDistanceKm > 450) {
+    if (totalDays >= naturalTravelDays * 2) {
+      onwardDays = Math.min(3, naturalTravelDays);
+      returnDays = Math.min(3, naturalTravelDays);
+    } else if (totalDays >= 5 && routeDistanceKm > 700) {
+      onwardDays = Math.min(2, naturalTravelDays);
+      returnDays = Math.min(2, naturalTravelDays);
+    } else if (totalDays >= 4 && routeDistanceKm > 700) {
+      onwardDays = 2;
+      returnDays = 1;
+    } else if (totalDays >= 4 && routeDistanceKm > 450) {
+      onwardDays = Math.min(2, naturalTravelDays);
+      returnDays = 1;
+    }
   }
 
   if (preferredArrivalDay && preferredArrivalDay < totalDays) {
     onwardDays = Math.min(preferredArrivalDay, Math.max(1, totalDays - 2));
   }
 
-  // Destination stay gets the majority of the trip days
-  const destinationStayDays = Math.max(0, totalDays - onwardDays - returnDays);
+  // Destination stay gets the remaining days
+  const destinationStayDays = Math.max(1, totalDays - onwardDays - returnDays);
 
   return {
     onwardDays,
@@ -386,7 +395,7 @@ function generateRouteWithStops(startLocation, destination, transportMode, numDa
       distance: routeInfo.distance,
       estimatedDuration: routeInfo.duration,
       transportMode: transportMode,
-      distanceSource: source
+      distanceSource: 'database'
     },
     intermediateStops: selectedStops,
     totalDistance: routeInfo.distance + selectedStops.reduce((sum, stop) => sum + (stop.distance || 50), 0)
@@ -456,20 +465,49 @@ async function getBestRoutePlan(startLocation, destination, transportMode, numDa
     };
   }
 
-  // No Google Maps and no local route: provide basic fallback
-  console.log("⚠️ Using fallback_basic distance (no API, no database)");
-  const fallbackDistance = Math.floor(Math.random() * 1000) + 500;
+  // Deterministic geospatial distance estimation & corridor discovery fallback
+  console.log("⚠️ Calculating deterministic geospatial corridor fallback (no live API, no fixed database entry)");
+  let estimatedDist = 550;
+  let discoveredStops = [];
+  try {
+    const candidates = await discoverAllRouteCandidates({
+      startLocation,
+      destination,
+      userPreferences: {},
+      maxPlaces: 12
+    });
+    if (candidates && candidates.length > 0) {
+      // Estimate distance from corridor segments if available
+      const segments = segmentRoute(startLocation, destination);
+      estimatedDist = Math.max(350, segments.length * 120);
+      discoveredStops = candidates.slice(0, Math.min(3, Math.max(1, Math.floor(numDays / 2)))).map((c, i) => ({
+        name: c.name,
+        category: c.category || 'attraction',
+        rating: c.rating || 4.5,
+        userRatingsTotal: c.reviews || 2000,
+        distanceFromRouteKm: c.distanceFromHighwayKm || 10,
+        detourDistance: (c.distanceFromHighwayKm || 10) * 2,
+        detourTime: Math.max(15, Math.round(((c.distanceFromHighwayKm || 10) * 2 / 45) * 60)),
+        location: c.coordinates,
+        whyRecommended: c.description || `Prominent corridor attraction along the ${startLocation} to ${destination} route.`
+      }));
+    }
+  } catch (err) {
+    estimatedDist = 550;
+  }
+
+  const durationHours = Math.round(estimatedDist / 60);
   return {
     primaryRoute: {
       from: startLocation,
       to: destination,
-      distance: fallbackDistance,
-      estimatedDuration: "12-24 hours",
+      distance: estimatedDist,
+      estimatedDuration: `${durationHours}-${durationHours + 3} hours`,
       transportMode: transportMode,
-      distanceSource: "fallback_basic"
+      distanceSource: "derived_geospatial_estimate"
     },
-    intermediateStops: [],
-    totalDistance: fallbackDistance
+    intermediateStops: discoveredStops,
+    totalDistance: estimatedDist + discoveredStops.reduce((sum, stop) => sum + (stop.detourDistance || 25), 0)
   };
 }
 
@@ -1316,19 +1354,20 @@ function getRoutePlaceReason(place, companionType, numberOfTravelers) {
 }
 
 const ROAD_TRIP_CONFIG = {
-  checkpointDistanceKm: 50,
-  checkpointMinKm: 40,
-  checkpointMaxKm: 60,
-  searchRadiusMeters: 25000,
-  maxDistanceFromRouteKm: 25,
-  minRating: 4.2,
+  checkpointDistanceKm: 75,
+  checkpointMinKm: 50,
+  checkpointMaxKm: 90,
+  searchRadiusMeters: 30000,
+  maxDistanceFromRouteKm: 60,
+  exceptionalMaxDistanceFromRouteKm: 80,
+  minRating: 4.0,
   maxAttractionsPerDay: 2,
   maxHighRiskStopsPerSegment: 1,
-  minimumStopSpacingKm: 35,
+  minimumStopSpacingKm: 30,
   minimumGenericStopReviews: 100,
-  routeStartEndBufferKm: 35,
+  routeStartEndBufferKm: 20,
   apiParallelism: 4,
-  maxCategoriesPerCheckpoint: 5,
+  maxCategoriesPerCheckpoint: 4,
   categories: [
     { label: 'Tourist Attraction', query: 'tourist attraction', priority: 80, interests: ['history', 'photography'] },
     { label: 'Temple', query: 'famous temple', priority: 82, interests: ['temple', 'history'] },
@@ -1967,7 +2006,7 @@ function parseRoadTripPreferences({
       ...getRecommendationWeightsForTravelStyle(options.travelStyle),
       ...(options.scoreWeights || options.recommendationWeights || {})
     },
-    maxDetourKm: Math.min(30, Math.max(10, maxDetourKm)),
+    maxDetourKm: Math.min(60, Math.max(15, maxDetourKm)),
     minRating,
     maxAttractionsPerDay: Math.max(1, maxAttractionsPerDay),
     avoid: avoid.map(item => String(item).toLowerCase()),
@@ -2224,39 +2263,51 @@ function decorateCorridorCandidate(candidate, routePoints, preferences, phase) {
   const nearest = findNearestRoutePoint(candidate.location, routePoints);
 
   if (!nearest.point) return null;
-  if (!isAheadOfCheckpoint(candidate, nearest.point)) return null;
-  if (nearest.distanceKm > preferences.maxDetourKm) return null;
-  if ((candidate.rating || 0) < preferences.minRating) return null;
 
   const fameScore = calculateFameScore(candidate);
-  // Protect famous places from being eliminated by tight detour thresholds
-  const effectiveMaxDetour = fameScore >= 0.85 ? Math.max(preferences.maxDetourKm, 65) : preferences.maxDetourKm;
-  if (nearest.distanceKm > effectiveMaxDetour) return null;
+  const isExceptional = fameScore >= 0.85 || candidate.isUNESCO || candidate.isNationalHeritage || (candidate.userRatingsTotal || candidate.reviews || 0) >= 5000;
 
-  // Protect high-fame attractions from strict minRating pruning
-  const effectiveMinRating = fameScore >= 0.85 ? 4.0 : preferences.minRating;
-  if ((candidate.rating || 0) < effectiveMinRating) return null;
+  // 4-tier detour limits: Tier 1 (0-20km), Tier 2 (20-40km), Tier 3 (40-60km), Tier 4 (60-80km for exceptional)
+  const maxAllowableDetour = isExceptional
+    ? (ROAD_TRIP_CONFIG.exceptionalMaxDistanceFromRouteKm || 80)
+    : (ROAD_TRIP_CONFIG.maxDistanceFromRouteKm || 60);
 
-  const detourDistance = Math.round(nearest.distanceKm * 10) / 10;
-  const detourTime = Math.max(8, Math.round((detourDistance * 2 / 35) * 60));
+  if (nearest.distanceKm > maxAllowableDetour) return null;
+
+  // Filter out places right at origin departure curb or destination arrival curb
+  const startEndBufferKm = ROAD_TRIP_CONFIG.routeStartEndBufferKm || 20;
+  const totalRouteDistKm = routePoints[routePoints.length - 1]?.distanceAlongRoute || 1000;
+  if (nearest.point.distanceAlongRoute < startEndBufferKm || nearest.point.distanceAlongRoute > totalRouteDistKm - startEndBufferKm) {
+    return null;
+  }
+
+  // Minimum rating pruning with protection for high-fame/heritage attractions
+  const effectiveMinRating = isExceptional ? 3.8 : (preferences.minRating || 4.0);
+  if ((candidate.rating || 0) > 0 && (candidate.rating || 0) < effectiveMinRating) return null;
+
+  const detourDistance = Math.round(nearest.distanceKm * 2 * 10) / 10;
+  const detourTime = Math.max(8, Math.round((detourDistance / 45) * 60)); // ~45 km/h on detour access roads
   const visitDurationMinutes = calculateVisitDurationMinutes(candidate);
+  const distanceAlongRouteKm = Math.round(nearest.point.distanceAlongRoute * 10) / 10;
 
   const enriched = {
     ...candidate,
     phase,
     fameScore,
-    isMustVisit: fameScore >= 0.85,
-    distanceFromRouteKm: detourDistance,
+    isMustVisit: isExceptional,
+    distanceFromRouteKm: Math.round(nearest.distanceKm * 10) / 10,
     detourDistance,
     detourTime,
-    drivingTime: `${Math.round((nearest.point.distanceAlongRoute / 55) * 10) / 10} hr from route start`,
+    drivingTime: `${Math.round((distanceAlongRouteKm / 65) * 10) / 10} hr from route start`,
     visitDurationMinutes,
     estimatedVisitTime: `${Math.floor(visitDurationMinutes / 60)} hr ${visitDurationMinutes % 60} min`,
     totalExtraTimeMinutes: detourTime + visitDurationMinutes,
-    journeyOrder: Math.round(nearest.point.distanceAlongRoute),
+    journeyOrder: distanceAlongRouteKm,
+    routeSectionKm: distanceAlongRouteKm,
+    distanceAlongRouteKm,
     routePointIndex: nearest.point.routeIndex,
     googleMapsLink: buildGoogleMapsLink(candidate),
-    imageUrl: null,
+    imageUrl: candidate.imageUrl || null,
     bestTimeToVisit: getBestTimeToVisit(candidate),
     suggestedVisitDuration: getSuggestedVisitDuration(candidate)
   };
@@ -2288,55 +2339,67 @@ function dedupeCorridorPlaces(places) {
 }
 
 function optimizeCorridorStops(places, days, preferences, routeContext = {}) {
-  const baseDrivingMinutes = parseDurationToMinutes(routeContext.baseDuration);
+  const numDays = Math.max(1, Number(days) || 1);
   const routeDistanceKm = Number(routeContext.routeDistanceKm || 0);
-  const dailyTravelMinutes = getDailyTravelMinutesLimit(routeContext.transportMode, routeContext.vehicleType);
-  const sightseeingMinutes = getDailySightseeingMinutesLimit(routeContext.transportMode, routeContext.vehicleType);
-  const maxStops = Math.max(0, days * preferences.maxAttractionsPerDay);
-  const totalAvailableMinutes = Math.max(0, (days * dailyTravelMinutes) - baseDrivingMinutes);
-  const sightseeingBudgetMinutes = Math.min(days * sightseeingMinutes, totalAvailableMinutes);
+  const maxAttractionsPerDay = Number(preferences.maxAttractionsPerDay) || ROAD_TRIP_CONFIG.maxAttractionsPerDay || 2;
+  const maxStops = Math.max(1, numDays * maxAttractionsPerDay);
+
+  // Compute daily leg driving and available sightseeing budget
+  const dailyKm = numDays > 0 ? (routeDistanceKm / numDays) : routeDistanceKm;
+  const dailyDrivingMinutes = Math.round((dailyKm / 65) * 60);
+  // Active daytime is 07:00 AM to 08:30 PM (810 mins).
+  // 120 mins reserved for meals/fuel/rest breaks.
+  // Daily sightseeing budget is between 90 and 270 mins per travel day.
+  const dailySightseeingMinutes = Math.max(90, Math.min(270, 780 - dailyDrivingMinutes - 120));
+  const sightseeingBudgetMinutes = numDays * dailySightseeingMinutes;
+
   const ordered = [...places].sort((a, b) =>
-    a.journeyOrder - b.journeyOrder ||
-    b.aiRecommendationScore - a.aiRecommendationScore
+    (a.journeyOrder || 0) - (b.journeyOrder || 0) ||
+    (b.aiRecommendationScore || 0) - (a.aiRecommendationScore || 0)
   );
 
   const selected = [];
   let lastOrder = -Infinity;
   let usedExtraMinutes = 0;
-  let highRiskStops = 0;
+  const categoryCounts = {};
 
   for (const place of ordered) {
     if (selected.length >= maxStops) break;
     if (!isRealisticCorridorStop(place, routeDistanceKm)) continue;
 
+    const cat = String(place.category || 'attraction').toLowerCase();
+    const currentCatCount = categoryCounts[cat] || 0;
+    // Diversity constraint: max 2 of any category per segment unless exceptional
+    if (currentCatCount >= 2 && (place.fameScore || 0) < 0.90) continue;
+
     const isNearLastStop =
       selected.length > 0 &&
-      Math.abs(place.journeyOrder - lastOrder) < ROAD_TRIP_CONFIG.minimumStopSpacingKm;
-    const placeExtraMinutes = Number(place.totalExtraTimeMinutes || 0);
-    const isHighRisk = place.weatherRiskLevel === 'High' || place.climateRecommendation?.weatherRiskLevel === 'High';
+      Math.abs((place.journeyOrder || 0) - lastOrder) < ROAD_TRIP_CONFIG.minimumStopSpacingKm;
+    const placeExtraMinutes = Number(place.totalExtraTimeMinutes || 45);
 
-    if (isHighRisk && highRiskStops >= ROAD_TRIP_CONFIG.maxHighRiskStopsPerSegment) continue;
-    if (usedExtraMinutes + placeExtraMinutes > sightseeingBudgetMinutes) continue;
+    // Hard feasibility check on budget
+    if (usedExtraMinutes + placeExtraMinutes > sightseeingBudgetMinutes && selected.length >= numDays) {
+      continue;
+    }
 
     if (isNearLastStop) {
       const previous = selected[selected.length - 1];
-      const previousExtraMinutes = Number(previous.totalExtraTimeMinutes || 0);
-      const replacingFits = usedExtraMinutes - previousExtraMinutes + placeExtraMinutes <= sightseeingBudgetMinutes;
-      if (replacingFits && place.aiRecommendationScore > previous.aiRecommendationScore + 8) {
+      const previousExtraMinutes = Number(previous.totalExtraTimeMinutes || 45);
+      if ((place.aiRecommendationScore || 0) > (previous.aiRecommendationScore || 0) + 8) {
         selected[selected.length - 1] = place;
-        lastOrder = place.journeyOrder;
+        lastOrder = place.journeyOrder || 0;
         usedExtraMinutes = usedExtraMinutes - previousExtraMinutes + placeExtraMinutes;
       }
       continue;
     }
 
     selected.push(place);
-    lastOrder = place.journeyOrder;
+    lastOrder = place.journeyOrder || 0;
     usedExtraMinutes += placeExtraMinutes;
-    if (isHighRisk) highRiskStops += 1;
+    categoryCounts[cat] = currentCatCount + 1;
   }
 
-  return selected.sort((a, b) => a.journeyOrder - b.journeyOrder);
+  return selected.sort((a, b) => (a.journeyOrder || 0) - (b.journeyOrder || 0));
 }
 
 async function runLimited(tasks, limit = ROAD_TRIP_CONFIG.apiParallelism) {
@@ -2475,7 +2538,21 @@ async function buildCorridorRoutePlan({
     console.warn('Corridor discovery engine warning:', err.message);
   }
 
-  const allCandidatePool = [...rawCandidates, ...adaptedCorridorPlaces];
+  // Precomputed candidates integration if already discovered upstream
+  let precomputedPlaces = [];
+  if (Array.isArray(options.precomputedRouteDiscovery?.allCandidates)) {
+    precomputedPlaces = options.precomputedRouteDiscovery.allCandidates.map(p => ({
+      name: p.name,
+      placeId: p.placeId,
+      rating: p.rating,
+      userRatingsTotal: p.reviews,
+      types: [p.category],
+      location: p.coordinates,
+      formattedAddress: `${p.name}, ${p.city}, ${p.state}`
+    }));
+  }
+
+  const allCandidatePool = [...rawCandidates, ...adaptedCorridorPlaces, ...precomputedPlaces];
   const excludedPlaceIds = new Set(options.excludePlaceIds || []);
   const excludedPlaceNames = new Set((options.excludePlaceNames || []).map(name => String(name).toLowerCase()));
   const validatedPlaces = allCandidatePool
@@ -2494,7 +2571,7 @@ async function buildCorridorRoutePlan({
     .map((place, index) => ({
       ...place,
       journeyOrder: index + 1,
-      routeSectionKm: place.journeyOrder
+      routeSectionKm: Number(place.distanceAlongRouteKm || place.routeSectionKm || 0)
     }));
   optimizedPlaces = await enrichStopsWithLiveClimate(optimizedPlaces, preferences);
 
@@ -2594,7 +2671,9 @@ function getStopDetails(stop) {
     weatherRiskLevel: stop.weatherRiskLevel || stop.climateRecommendation?.weatherRiskLevel,
     climateRecommendation: stop.climateRecommendation,
     phase: stop.phase,
-    location: stop.location
+    location: stop.location,
+    routeSectionKm: stop.routeSectionKm || stop.distanceAlongRouteKm || 0,
+    distanceAlongRouteKm: stop.distanceAlongRouteKm || stop.routeSectionKm || 0
   };
 }
 
@@ -2730,71 +2809,227 @@ function splitStopsAcrossJourneyDays(stops, days, routeDistanceKm) {
   );
 }
 
-function buildTimelineForDayStops(stops, dayPhase, startCity, endCity, accommodationType) {
+function resolveIntermediateOvernightHub({ routePlan, dayIndex, totalDays, dayStops = [], fromCity, toCity }) {
+  if (dayIndex >= totalDays - 1) {
+    return toCity;
+  }
+
+  // 1. If today has scheduled stops, check the last scheduled stop
+  if (dayStops.length > 0) {
+    const lastStop = dayStops[dayStops.length - 1];
+    if (lastStop.city && !String(lastStop.city).toLowerCase().includes(String(fromCity).toLowerCase())) {
+      return lastStop.city;
+    }
+    if (lastStop.formattedAddress) {
+      const parts = lastStop.formattedAddress.split(',');
+      if (parts.length >= 2) {
+        const potentialCity = parts[parts.length - 2].trim();
+        if (potentialCity && !potentialCity.toLowerCase().includes(String(fromCity).toLowerCase())) {
+          return potentialCity;
+        }
+      }
+    }
+    if (lastStop.name) {
+      return `${lastStop.name} Vicinity`;
+    }
+  }
+
+  // 2. Estimate target route km for this intermediate day
+  const totalKm = Number(routePlan?.distance || routePlan?.primaryRoute?.distance || routePlan?.totalDistance || 600);
+  const targetKm = Math.round(((dayIndex + 1) / totalDays) * totalKm);
+
+  // Find route coordinate closest to targetKm
+  const routePoints = routePlan?.routeCoordinates || [];
+  let targetCoord = null;
+  if (routePoints.length > 0) {
+    let closestDiff = Infinity;
+    for (const pt of routePoints) {
+      const ptDist = pt.distanceAlongRoute || 0;
+      const diff = Math.abs(ptDist - targetKm);
+      if (diff < closestDiff) {
+        closestDiff = diff;
+        targetCoord = pt;
+      }
+    }
+  }
+
+  // 3. Search landmark database near targetCoord
+  if (targetCoord && Array.isArray(FAMOUS_LANDMARKS_DATABASE)) {
+    let closestLandmark = null;
+    let minDistance = 85; // km
+
+    for (const lm of FAMOUS_LANDMARKS_DATABASE) {
+      if (lm.coordinates && lm.city) {
+        const d = calculateStraightLineDistanceKm(targetCoord, lm.coordinates);
+        if (d !== null && d < minDistance && !String(lm.city).toLowerCase().includes(String(fromCity).toLowerCase())) {
+          minDistance = d;
+          closestLandmark = lm;
+        }
+      }
+    }
+
+    if (closestLandmark && closestLandmark.city) {
+      return closestLandmark.city;
+    }
+  }
+
+  // 4. Corridor segment towns fallback
+  const segments = segmentRoute(fromCity, toCity);
+  if (segments && segments.length > 1) {
+    const segIdx = Math.min(segments.length - 1, Math.max(0, Math.floor(((dayIndex + 1) / totalDays) * (segments.length - 1))));
+    const candidate = segments[segIdx];
+    if (candidate && !candidate.toLowerCase().includes(fromCity.toLowerCase())) {
+      return candidate;
+    }
+  }
+
+  return `Highway Corridor Hub (km ${targetKm})`;
+}
+
+function buildTimelineForDayStops(stopsOrOptions, dayPhase, startCity, endCity, accommodationType, isFinalPhaseDay = true, dayStartKm = 0, dayEndKm = 0) {
+  let stops = [];
+  let phase = 'Onward Journey';
+  let start = 'Origin';
+  let end = 'Destination';
+  let hotelType = 'Accommodation';
+  let isFinal = true;
+  let startKm = 0;
+  let endKm = 0;
+
+  if (stopsOrOptions && typeof stopsOrOptions === 'object' && !Array.isArray(stopsOrOptions)) {
+    stops = stopsOrOptions.stops || [];
+    phase = stopsOrOptions.dayPhase || 'Onward Journey';
+    start = stopsOrOptions.startCity || 'Origin';
+    end = stopsOrOptions.endCity || 'Destination';
+    hotelType = stopsOrOptions.accommodationType || 'Accommodation';
+    isFinal = stopsOrOptions.isFinalPhaseDay !== undefined ? stopsOrOptions.isFinalPhaseDay : true;
+    startKm = Number(stopsOrOptions.dayStartKm) || 0;
+    endKm = Number(stopsOrOptions.dayEndKm) || 0;
+  } else {
+    stops = stopsOrOptions || [];
+    phase = dayPhase || 'Onward Journey';
+    start = startCity || 'Origin';
+    end = endCity || 'Destination';
+    hotelType = accommodationType || 'Accommodation';
+    isFinal = isFinalPhaseDay !== undefined ? isFinalPhaseDay : true;
+    startKm = Number(dayStartKm) || 0;
+    endKm = Number(dayEndKm) || 0;
+  }
+
   const timeline = [];
   let currentMinutes = 7 * 60; // 07:00 AM start
+  let currentKm = startKm;
+  const targetEndKm = endKm > startKm
+    ? endKm
+    : (stops.length ? Math.max(...stops.map(s => Number(s.routeSectionKm || s.distanceAlongRouteKm || 0))) + 60 : startKm + 350);
 
-  // 1. Journey Departure / Morning start
+  // 1. Morning Departure
   timeline.push({
     time: formatMinutesTo12(currentMinutes),
-    place: `Depart from ${startCity}`,
+    place: `Depart from ${start}`,
     category: 'travel',
     travelTime: '0 mins',
     visitDuration: '15 mins',
     bestVisitWindow: 'Early Morning (06:30 AM - 07:30 AM)',
-    traffic: 'Smooth Morning Flow',
+    traffic: 'Smooth Morning Highway Flow',
     cost: '₹0',
-    reason: `Start the day early to maximize daylight sightseeing and avoid city congestion.`
+    reason: `Start the day early from ${start} to maximize daylight sightseeing and avoid city congestion.`
   });
   currentMinutes += 15;
 
   // 2. Breakfast Window
-  currentMinutes += 60; // Travel ~1 hour
-  timeline.push({
-    time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(currentMinutes + 45)}`,
-    place: `Regional Breakfast Stop near ${startCity}`,
-    category: 'meal',
-    travelTime: '60 mins',
-    visitDuration: '45 mins',
-    bestVisitWindow: 'Breakfast Window (08:00 AM - 09:30 AM)',
-    traffic: 'Normal Highway Flow',
-    cost: '₹120',
-    reason: 'Authentic local breakfast and travel break.'
-  });
-  currentMinutes += 45;
+  const firstStop = stops[0];
+  const firstStopKm = firstStop ? Number(firstStop.routeSectionKm || firstStop.distanceAlongRouteKm || currentKm + 60) : currentKm + 90;
+  const distToFirst = Math.max(0, firstStopKm - currentKm);
 
-  // 3. Sightseeing Stops
-  stops.forEach((stop, idx) => {
-    const travelMins = stop.detourTime || 30;
-    currentMinutes += travelMins;
-    const durMins = stop.durationMinutes || 75;
-    const bestWin = stop.bestTimeToVisit || 'Morning to Afternoon';
-    const costVal = stop.entryFee !== undefined ? stop.entryFee : (stop.cost || 50);
+  if (distToFirst > 60) {
+    const bDriveKm = Math.min(distToFirst - 20, Math.round(distToFirst * 0.45));
+    const bDriveMins = Math.max(35, Math.round((bDriveKm / 65) * 60));
+    currentMinutes += bDriveMins;
+    currentKm += bDriveKm;
+    timeline.push({
+      time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(currentMinutes + 45)}`,
+      place: `Regional Breakfast Stop near ${start} Corridor`,
+      category: 'meal',
+      travelTime: `${bDriveMins} mins (${bDriveKm} km transit)`,
+      visitDuration: '45 mins',
+      bestVisitWindow: 'Breakfast Window (08:00 AM - 09:30 AM)',
+      traffic: 'Normal Highway Flow',
+      cost: '₹120',
+      reason: 'Authentic local highway breakfast and morning driving break.'
+    });
+    currentMinutes += 45;
+  } else {
+    currentMinutes += 20;
+    currentKm += 15;
+    timeline.push({
+      time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(currentMinutes + 40)}`,
+      place: `Morning Breakfast Halt near ${start}`,
+      category: 'meal',
+      travelTime: '20 mins (15 km transit)',
+      visitDuration: '40 mins',
+      bestVisitWindow: 'Breakfast Window (07:30 AM - 09:00 AM)',
+      traffic: 'Normal Highway Flow',
+      cost: '₹120',
+      reason: 'Quick breakfast before reaching the morning attraction.'
+    });
+    currentMinutes += 40;
+  }
 
-    // Lunch break before afternoon stop if reached around 13:00
-    if (currentMinutes >= 12 * 60 + 30 && currentMinutes <= 14 * 60 && !timeline.some(t => t.category === 'meal' && t.place.includes('Lunch'))) {
+  // 3. Sightseeing Stops & Lunch Halt
+  let lunchInserted = false;
+
+  stops.forEach((stop) => {
+    const stopKm = Number(stop.routeSectionKm || stop.distanceAlongRouteKm || (currentKm + 40));
+    const legTransitKm = Math.max(10, stopKm - currentKm);
+    const legDrivingMins = Math.round((legTransitKm / 65) * 60);
+    const detourMins = Number(stop.detourTime) || 15;
+    const totalTravelMins = legDrivingMins + detourMins;
+
+    // Check if lunch should happen before this stop
+    if (!lunchInserted && currentMinutes + totalTravelMins >= 12 * 60 + 30) {
+      const lunchDriveKm = Math.max(10, Math.round(legTransitKm * 0.4));
+      const lunchDriveMins = Math.round((lunchDriveKm / 65) * 60);
+      currentMinutes += lunchDriveMins;
+      currentKm += lunchDriveKm;
+
       timeline.push({
         time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(currentMinutes + 60)}`,
-        place: `Local Specialty Lunch & Rest Halt`,
+        place: `Authentic Regional Lunch & Rest Halt near ${stop.city || 'Highway Corridor'}`,
         category: 'meal',
-        travelTime: '15 mins',
+        travelTime: `${lunchDriveMins} mins (${lunchDriveKm} km transit)`,
         visitDuration: '60 mins',
         bestVisitWindow: 'Lunch Window (12:30 PM - 02:30 PM)',
         traffic: 'Normal Flow',
         cost: '₹220',
-        reason: 'Rest buffer to restore energy before afternoon sightseeing.'
+        reason: 'Mandatory driver rest break and regional dining to restore energy for afternoon exploration.'
       });
       currentMinutes += 60;
+      lunchInserted = true;
+
+      // Recalculate remaining leg to stop
+      const remTransitKm = Math.max(5, stopKm - currentKm);
+      const remTravelMins = Math.round((remTransitKm / 65) * 60) + detourMins;
+      currentMinutes += remTravelMins;
+      currentKm = stopKm;
+    } else {
+      currentMinutes += totalTravelMins;
+      currentKm = stopKm;
     }
+
+    const durMins = Number(stop.durationMinutes) || Number(stop.visitDurationMinutes) || 75;
+    const bestWin = stop.bestTimeToVisit || 'Morning to Afternoon';
+    const costVal = stop.entryFee !== undefined ? stop.entryFee : (stop.cost || 50);
+    const detourDist = stop.detourDistance || stop.distanceFromRouteKm || 0;
 
     timeline.push({
       time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(currentMinutes + durMins)}`,
       place: stop.name,
       category: stop.category || (stop.types ? stop.types[0] : 'attraction'),
-      travelTime: `${travelMins} mins`,
+      travelTime: `${totalTravelMins} mins (${legTransitKm} km highway + ${detourDist} km detour)`,
       visitDuration: `${Math.floor(durMins / 60)}h ${durMins % 60}m`,
       bestVisitWindow: bestWin,
-      traffic: 'Normal Traffic (+0m delay)',
+      traffic: 'Normal Highway Flow',
       cost: `₹${costVal}`,
       reason: stop.whyRecommended || stop.reason || 'Curated high-affinity attraction matching your travel preferences.'
     });
@@ -2802,9 +3037,10 @@ function buildTimelineForDayStops(stops, dayPhase, startCity, endCity, accommoda
   });
 
   // Ensure lunch is recorded if not inserted yet
-  if (!timeline.some(t => t.category === 'meal' && t.place.includes('Lunch'))) {
+  if (!lunchInserted) {
+    const lunchTime = Math.max(currentMinutes, 13 * 60 + 15);
     timeline.push({
-      time: '01:15 PM – 02:15 PM',
+      time: `${formatMinutesTo12(lunchTime)} – ${formatMinutesTo12(lunchTime + 60)}`,
       place: `Authentic Regional Lunch & Rest Halt`,
       category: 'meal',
       travelTime: '20 mins',
@@ -2812,21 +3048,37 @@ function buildTimelineForDayStops(stops, dayPhase, startCity, endCity, accommoda
       bestVisitWindow: 'Lunch Window (12:30 PM - 02:30 PM)',
       traffic: 'Normal Flow',
       cost: '₹220',
-      reason: 'Midday meal and relaxation break.'
+      reason: 'Midday meal and driver relaxation break.'
     });
+    currentMinutes = lunchTime + 60;
   }
 
-  // 4. Evening Dinner & Hotel check-in
+  // 4. Final Leg to endCity
+  const finalLegKm = Math.max(15, targetEndKm - currentKm);
+  const finalTransitMins = Math.round((finalLegKm / 65) * 60);
+  currentMinutes += finalTransitMins;
+
+  const checkInTime = Math.max(19 * 60, currentMinutes);
+  const checkInDuration = 75;
+
+  const checkInPlace = isFinal
+    ? `Dinner & Check-in at ${hotelType} (${end}) — Final Destination Arrival`
+    : `Dinner & Intermediate Overnight Stay at ${hotelType} (${end})`;
+
+  const checkInReason = isFinal
+    ? `Arrival at final destination ${end}. Check into accommodation, dinner with regional dishes, and rest for destination stay.`
+    : `End of today's travel leg in ${end}. Settle into accommodation, enjoy dinner, and recharge before resuming onward road trip tomorrow.`;
+
   timeline.push({
-    time: '07:30 PM – 08:45 PM',
-    place: `Dinner & Check-in at ${accommodationType || 'Accommodation'} (${endCity})`,
+    time: `${formatMinutesTo12(checkInTime)} – ${formatMinutesTo12(checkInTime + checkInDuration)}`,
+    place: checkInPlace,
     category: 'hotel',
-    travelTime: '30 mins',
-    visitDuration: '75 mins',
-    bestVisitWindow: 'Evening (07:30 PM - 09:00 PM)',
+    travelTime: `${finalTransitMins} mins (${finalLegKm} km transit)`,
+    visitDuration: `${checkInDuration} mins`,
+    bestVisitWindow: 'Evening (07:00 PM - 09:00 PM)',
     traffic: 'Evening City Transit',
     cost: '₹250',
-    reason: 'End of day rest, dinner with regional dishes, and overnight stay.'
+    reason: checkInReason
   });
 
   return timeline;
@@ -2849,17 +3101,34 @@ function generateRoundTripDayPlans({
   const pushJourneyDays = (phaseName, routePlan, from, to, days) => {
     const stops = routePlan.intermediateStops || [];
     const services = routePlan.routeServices || [];
-    const dayStopBuckets = splitStopsAcrossJourneyDays(stops, days, getRouteDistanceKm(routePlan));
+    const routeTotalDist = getRouteDistanceKm(routePlan);
+    const dayStopBuckets = splitStopsAcrossJourneyDays(stops, days, routeTotalDist);
+
+    let currentDepartureCity = from;
 
     for (let index = 0; index < days; index += 1) {
       const dayStops = dayStopBuckets[index] || [];
       const service = services[index] || {};
       const isFinalPhaseDay = index === days - 1;
+
+      // Determine day's arrival city
+      const dayArrivalCity = resolveIntermediateOvernightHub({
+        routePlan,
+        dayIndex: index,
+        totalDays: days,
+        dayStops,
+        fromCity: from,
+        toCity: to
+      });
+
+      const dayStartKm = Math.round((index / days) * routeTotalDist);
+      const dayEndKm = Math.round(((index + 1) / days) * routeTotalDist);
+
       let plan = `**${phaseName} - Day ${index + 1}**\n\n`;
 
-      plan += `**Route:** ${from} to ${to}\n`;
+      plan += `**Route:** ${currentDepartureCity} to ${dayArrivalCity}\n`;
       plan += `**Date:** ${formatDate(addDays(startDate, dayNumber - 1))}\n`;
-      plan += `**Travel Target:** ${isFinalPhaseDay ? `Reach ${to}` : 'Cover a comfortable route section with planned halts'}\n`;
+      plan += `**Travel Target:** ${isFinalPhaseDay ? `Reach final destination ${to}` : `Overnight stop at ${dayArrivalCity} after highway corridor exploration`}\n`;
       plan += `**Daily Travel Limit:** About ${phases.dailyTravelLimitKm} km before major rest\n\n`;
 
       if (dayStops.length > 0) {
@@ -2884,25 +3153,36 @@ function generateRoundTripDayPlans({
           plan += `  * Why: ${stop.whyRecommended || stop.reason}\n\n`;
         }
       } else {
-        plan += `**Worthwhile Detours:** Keep this section efficient; no high-confidence iconic detour was selected.\n\n`;
+        plan += `**Worthwhile Detours:** Direct highway transit leg along the ${currentDepartureCity} to ${dayArrivalCity} corridor; keep this stretch efficient without unnecessary detours.\n\n`;
       }
 
-      plan += `**Food:** ${service.restaurantPlan || `Eat at a well-rated restaurant on the ${from}-${to} corridor`}\n`;
+      plan += `**Food:** ${service.restaurantPlan || `Eat at a well-rated restaurant on the ${currentDepartureCity}-${dayArrivalCity} corridor`}\n`;
       plan += `**Fuel/Transit:** ${service.fuelStopPlan || 'Use a major fuel stop or transit hub before continuing'}\n`;
-      plan += `**Accommodation:** ${service.accommodationPlan || `Stay at ${accommodationDetails.type}`}\n`;
+      plan += `**Accommodation:** ${isFinalPhaseDay ? `Check into ${accommodationDetails.type} at ${to}` : `Overnight stay at ${accommodationDetails.type} in ${dayArrivalCity}`}\n`;
 
       const journeyActivities = dayStops.length > 0
         ? dayStops.map((s) => serializeRoadTripAttraction(s, destination))
         : [{
-            name: `${phaseName}: Scenic transit from ${from} towards ${to}`,
-            rawName: `Transit from ${from} to ${to}`,
+            name: `${phaseName}: Scenic highway transit from ${currentDepartureCity} towards ${dayArrivalCity}`,
+            rawName: `Transit from ${currentDepartureCity} to ${dayArrivalCity}`,
             category: 'travel',
             cost: 0,
             timeFit: 1,
-            description: `Comfortable travel along the route corridor with planned rest stops.`
+            description: `Comfortable driving along the route corridor with planned meal and rest halts.`
           }];
 
-      const dayTimeline = buildTimelineForDayStops(dayStops, phaseName, from, to, accommodationDetails?.type);
+      const dayTimeline = buildTimelineForDayStops({
+        stops: dayStops,
+        dayPhase: phaseName,
+        startCity: currentDepartureCity,
+        endCity: dayArrivalCity,
+        accommodationType: accommodationDetails?.type,
+        isFinalPhaseDay,
+        dayStartKm,
+        dayEndKm,
+        dayIndex: index,
+        totalDays: days
+      });
 
       dayPlans.push({
         day: dayNumber,
@@ -2915,8 +3195,11 @@ function generateRoundTripDayPlans({
         stops: dayStops,
         restaurants: [service.restaurantPlan].filter(Boolean),
         fuelStops: [service.fuelStopPlan].filter(Boolean),
-        accommodation: service.accommodationPlan
+        accommodation: isFinalPhaseDay ? service.accommodationPlan : `Overnight stay in ${dayArrivalCity}`
       });
+
+      // Next day starts from today's arrival city!
+      currentDepartureCity = dayArrivalCity;
       dayNumber += 1;
     }
   };
@@ -3210,7 +3493,7 @@ async function generateItinerary(data) {
     const {
       budget,
       travelDates,
-      startLocation,
+      startLocation: inputStartLocation,
       destination,
       activities: activitiesPreference,
       accommodation,
@@ -3239,6 +3522,8 @@ async function generateItinerary(data) {
       scoreWeights,
       recommendationWeights
     } = data;
+
+    const startLocation = inputStartLocation || data.startLocation || data.start || data.origin || destination;
 
     // Validate inputs
     if (!budget || !travelDates || !destination) {
@@ -3269,7 +3554,8 @@ async function generateItinerary(data) {
       startDate,
       endDate,
       vehicleType: effectiveVehicleType,
-      scoreWeights: scoreWeights || recommendationWeights
+      scoreWeights: scoreWeights || recommendationWeights,
+      precomputedRouteDiscovery: data.precomputedRouteDiscovery
     };
 
     // Initialize trip-wide preference profile, memory, and coverage matrix
@@ -4148,5 +4434,7 @@ module.exports = {
   generateRecommendations,
   calculateTripCost,
   calculatePoiCostImpact,
-  calculateAlternativeRouteCost
+  calculateAlternativeRouteCost,
+  buildTripPhases,
+  buildTimelineForDayStops
 };

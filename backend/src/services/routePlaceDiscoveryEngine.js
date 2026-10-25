@@ -42,35 +42,35 @@ function formatMinutesTo12(totalMinutes) {
  * ========================================================================= */
 
 const CORRIDOR_TIERS = {
-  TIER_1: { minKm: 0, maxKm: 5, label: 'Tier 1: Directly Along Route (0–5 km)', penalty: 0.0, rankWeight: 1.0 },
-  TIER_2: { minKm: 5, maxKm: 10, label: 'Tier 2: Very Small Detour (5–10 km)', penalty: 0.05, rankWeight: 0.88 },
-  TIER_3: { minKm: 10, maxKm: 20, label: 'Tier 3: Small Detour (10–20 km)', penalty: 0.15, rankWeight: 0.70 },
-  TIER_4: { minKm: 20, maxKm: 30, label: 'Tier 4: Moderate Detour (20–30 km)', penalty: 0.30, rankWeight: 0.45 },
-  TIER_5: { minKm: 30, maxKm: 999, label: 'Tier 5: Large Detour (30+ km)', penalty: 0.65, rankWeight: 0.15 }
+  TIER_1: { minKm: 0, maxKm: 20, label: 'Tier 1: Directly Along Route (0–20 km)', penalty: 0.0, rankWeight: 1.0 },
+  TIER_2: { minKm: 20, maxKm: 40, label: 'Tier 2: Small Detour (20–40 km)', penalty: 0.08, rankWeight: 0.85 },
+  TIER_3: { minKm: 40, maxKm: 60, label: 'Tier 3: Moderate Detour (40–60 km)', penalty: 0.20, rankWeight: 0.65 },
+  TIER_4: { minKm: 60, maxKm: 80, label: 'Tier 4: Exceptional Detour (60–80 km)', penalty: 0.40, rankWeight: 0.40 },
+  TIER_5: { minKm: 80, maxKm: 999, label: 'Tier 5: Remote Outlier (80+ km)', penalty: 0.75, rankWeight: 0.15 }
 };
 
 const DISTANCE_BANDS = {
-  DIRECT_ROUTE: { maxDetourKm: 5, penalty: 0.0, label: 'Direct Route (0–5 km)' },
-  SMALL_DETOUR: { maxDetourKm: 15, penalty: 0.05, label: 'Small Detour (5–15 km)' },
-  MODERATE_DETOUR: { maxDetourKm: 30, penalty: 0.15, label: 'Moderate Detour (15–30 km)' },
-  LARGE_DETOUR: { maxDetourKm: Infinity, penalty: 0.35, label: 'Large Detour (30+ km)' }
+  DIRECT_ROUTE: { maxDetourKm: 20, penalty: 0.0, label: 'Tier 1: Direct Route (0–20 km)' },
+  SMALL_DETOUR: { maxDetourKm: 40, penalty: 0.08, label: 'Tier 2: Small Detour (20–40 km)' },
+  MODERATE_DETOUR: { maxDetourKm: 60, penalty: 0.20, label: 'Tier 3: Moderate Detour (40–60 km)' },
+  LARGE_DETOUR: { maxDetourKm: Infinity, penalty: 0.40, label: 'Tier 4: Exceptional Detour (60–80 km)' }
 };
 
 function classifyDistanceTier(distanceFromRouteKm) {
   const km = Math.max(0, Number(distanceFromRouteKm) || 0);
-  if (km <= 5) return { tier: 'TIER_1', ...CORRIDOR_TIERS.TIER_1, distanceKm: km };
-  if (km <= 10) return { tier: 'TIER_2', ...CORRIDOR_TIERS.TIER_2, distanceKm: km };
-  if (km <= 20) return { tier: 'TIER_3', ...CORRIDOR_TIERS.TIER_3, distanceKm: km };
-  if (km <= 30) return { tier: 'TIER_4', ...CORRIDOR_TIERS.TIER_4, distanceKm: km };
+  if (km <= 20) return { tier: 'TIER_1', ...CORRIDOR_TIERS.TIER_1, distanceKm: km };
+  if (km <= 40) return { tier: 'TIER_2', ...CORRIDOR_TIERS.TIER_2, distanceKm: km };
+  if (km <= 60) return { tier: 'TIER_3', ...CORRIDOR_TIERS.TIER_3, distanceKm: km };
+  if (km <= 80) return { tier: 'TIER_4', ...CORRIDOR_TIERS.TIER_4, distanceKm: km };
   return { tier: 'TIER_5', ...CORRIDOR_TIERS.TIER_5, distanceKm: km };
 }
 
 function classifyDistanceBand(detourKm) {
   const km = Number(detourKm) || 0;
-  if (km <= 5) return { band: 'DIRECT_ROUTE', label: 'Direct Route (0–5 km)', penalty: 0.0 };
-  if (km <= 15) return { band: 'SMALL_DETOUR', label: 'Small Detour (5–15 km)', penalty: 0.05 };
-  if (km <= 30) return { band: 'MODERATE_DETOUR', label: 'Moderate Detour (15–30 km)', penalty: 0.15 };
-  return { band: 'LARGE_DETOUR', label: 'Large Detour (30+ km)', penalty: 0.35 };
+  if (km <= 20) return { band: 'DIRECT_ROUTE', label: 'Tier 1: Direct Route (0–20 km)', penalty: 0.0 };
+  if (km <= 40) return { band: 'SMALL_DETOUR', label: 'Tier 2: Small Detour (20–40 km)', penalty: 0.08 };
+  if (km <= 60) return { band: 'MODERATE_DETOUR', label: 'Tier 3: Moderate Detour (40–60 km)', penalty: 0.20 };
+  return { band: 'LARGE_DETOUR', label: 'Tier 4: Exceptional Detour (60–80 km)', penalty: 0.40 };
 }
 
 /* =========================================================================
@@ -211,6 +211,160 @@ const FAMOUS_LANDMARKS_DATABASE = [
     weatherSensitivity: 'low',
     entryFee: 0,
     description: 'Historic stone fortress directly along NH44 and birthplace of Tipu Sultan, featuring fortified bastions and preserved ancient temples.'
+  },
+  {
+    name: 'Hogenakkal Falls',
+    city: 'Dharmapuri',
+    state: 'Tamil Nadu',
+    coordinates: { lat: 12.1182, lng: 77.7766 },
+    category: 'waterfall',
+    fameScore: 0.94,
+    isUNESCO: false,
+    isNationalHeritage: true,
+    reviews: 48000,
+    rating: 4.5,
+    tags: ['waterfall', 'nature', 'boating', 'photography', 'must_visit', 'safe'],
+    distanceFromHighwayKm: 38.0,
+    bestVisitWindow: { start: '08:30', end: '17:00', peak: '10:00', type: 'daytime' },
+    openHours: { open: '08:00', close: '17:30' },
+    durationMinutes: 90,
+    suitableFor: ['SOLO', 'COUPLE', 'FAMILY', 'FRIENDS', 'GROUP', 'MIXED_GROUP'],
+    accessibilityScore: 0.75,
+    weatherSensitivity: 'high',
+    entryFee: 50,
+    description: 'Often dubbed the Niagara Falls of India on the Kaveri river, renowned for roaring cascades, therapeutic carbonatite rocks, and traditional coracle boat rides.'
+  },
+  {
+    name: 'Yercaud Emerald Lake & Lady\'s Seat',
+    city: 'Salem',
+    state: 'Tamil Nadu',
+    coordinates: { lat: 11.7753, lng: 78.2093 },
+    category: 'nature',
+    fameScore: 0.88,
+    isUNESCO: false,
+    isNationalHeritage: false,
+    reviews: 34000,
+    rating: 4.4,
+    tags: ['nature', 'viewpoints', 'lake', 'hill_station', 'photography', 'safe'],
+    distanceFromHighwayKm: 28.0,
+    bestVisitWindow: { start: '09:00', end: '17:30', peak: '10:30', type: 'daytime' },
+    openHours: { open: '08:30', close: '18:00' },
+    durationMinutes: 75,
+    suitableFor: ['SOLO', 'COUPLE', 'FAMILY', 'FRIENDS', 'GROUP', 'SENIOR_TRAVELERS', 'CHILDREN_FAMILY', 'MIXED_GROUP'],
+    accessibilityScore: 0.85,
+    weatherSensitivity: 'medium',
+    entryFee: 30,
+    description: 'Picturesque hill station haven in the Shevaroy Hills featuring a serene boating lake and panoramic vistas over Salem city from Lady\'s Seat cliff.'
+  },
+  {
+    name: 'Dindigul Rock Fort',
+    city: 'Dindigul',
+    state: 'Tamil Nadu',
+    coordinates: { lat: 10.3629, lng: 77.9696 },
+    category: 'fort',
+    fameScore: 0.82,
+    isUNESCO: false,
+    isNationalHeritage: true,
+    reviews: 16000,
+    rating: 4.4,
+    tags: ['fort', 'heritage', 'historical', 'architecture', 'viewpoints', 'safe'],
+    distanceFromHighwayKm: 2.5,
+    bestVisitWindow: { start: '09:00', end: '17:30', peak: '10:00', type: 'daytime' },
+    openHours: { open: '09:00', close: '17:30' },
+    durationMinutes: 60,
+    suitableFor: ['SOLO', 'COUPLE', 'FAMILY', 'FRIENDS', 'GROUP', 'SENIOR_TRAVELERS', 'CHILDREN_FAMILY', 'MIXED_GROUP'],
+    accessibilityScore: 0.8,
+    weatherSensitivity: 'low',
+    entryFee: 25,
+    description: 'Majestic 17th-century rock fortress carved atop a 280-foot granite monolith, prominent landmark along the southern highway to Kerala.'
+  },
+  {
+    name: 'Kumbakkarai Falls',
+    city: 'Theni',
+    state: 'Tamil Nadu',
+    coordinates: { lat: 10.1802, lng: 77.5312 },
+    category: 'waterfall',
+    fameScore: 0.80,
+    isUNESCO: false,
+    isNationalHeritage: false,
+    reviews: 12500,
+    rating: 4.3,
+    tags: ['waterfall', 'nature', 'picnic', 'safe'],
+    distanceFromHighwayKm: 8.5,
+    bestVisitWindow: { start: '09:00', end: '16:30', peak: '11:00', type: 'daytime' },
+    openHours: { open: '08:30', close: '17:00' },
+    durationMinutes: 50,
+    suitableFor: ['SOLO', 'COUPLE', 'FAMILY', 'FRIENDS', 'GROUP', 'MIXED_GROUP'],
+    accessibilityScore: 0.8,
+    weatherSensitivity: 'medium',
+    entryFee: 20,
+    description: 'Refreshing foothills waterfall cascading over massive natural rock boulders, serving as an ideal nature break on the ascent towards Munnar.'
+  },
+  {
+    name: 'Bodimettu Ghat Viewpoint',
+    city: 'Theni',
+    state: 'Tamil Nadu',
+    coordinates: { lat: 10.0163, lng: 77.2539 },
+    category: 'nature',
+    fameScore: 0.86,
+    isUNESCO: false,
+    isNationalHeritage: false,
+    reviews: 21000,
+    rating: 4.6,
+    tags: ['nature', 'viewpoints', 'scenic_drive', 'photography', 'sunrise_point', 'sunset_point', 'safe'],
+    distanceFromHighwayKm: 0.5,
+    bestVisitWindow: { start: '06:30', end: '18:00', peak: '08:00', type: 'sunrise' },
+    openHours: { open: '06:00', close: '19:00' },
+    durationMinutes: 45,
+    suitableFor: ['SOLO', 'COUPLE', 'FAMILY', 'FRIENDS', 'GROUP', 'SENIOR_TRAVELERS', 'CHILDREN_FAMILY', 'MIXED_GROUP'],
+    accessibilityScore: 0.9,
+    weatherSensitivity: 'low',
+    entryFee: 0,
+    description: 'Spectacular mountain pass and state border viewpoint at 4,500 ft on the Kochi-Dhanushkodi highway, offering mist-cloaked valley views as you enter Kerala.'
+  },
+  {
+    name: 'Chinnar Wildlife Sanctuary',
+    city: 'Munnar',
+    state: 'Kerala',
+    coordinates: { lat: 10.3129, lng: 77.2023 },
+    category: 'wildlife',
+    fameScore: 0.91,
+    isUNESCO: true,
+    isNationalHeritage: true,
+    reviews: 26000,
+    rating: 4.5,
+    tags: ['wildlife', 'nature', 'unesco', 'trekking', 'photography', 'safe'],
+    distanceFromHighwayKm: 1.2,
+    bestVisitWindow: { start: '07:00', end: '17:00', peak: '08:30', type: 'daytime' },
+    openHours: { open: '06:30', close: '17:30' },
+    durationMinutes: 75,
+    suitableFor: ['SOLO', 'COUPLE', 'FAMILY', 'FRIENDS', 'GROUP', 'MIXED_GROUP'],
+    accessibilityScore: 0.8,
+    weatherSensitivity: 'low',
+    entryFee: 100,
+    description: 'Renowned rain-shadow wildlife sanctuary home to the endangered grizzled giant squirrel, star tortoises, and scenic riverine trekking trails.'
+  },
+  {
+    name: 'Marayoor Sandalwood Forest & Dolmens',
+    city: 'Munnar',
+    state: 'Kerala',
+    coordinates: { lat: 10.2798, lng: 77.1601 },
+    category: 'heritage',
+    fameScore: 0.89,
+    isUNESCO: false,
+    isNationalHeritage: true,
+    reviews: 19500,
+    rating: 4.6,
+    tags: ['heritage', 'nature', 'historical', 'photography', 'safe'],
+    distanceFromHighwayKm: 2.0,
+    bestVisitWindow: { start: '08:30', end: '17:00', peak: '10:00', type: 'daytime' },
+    openHours: { open: '08:00', close: '17:30' },
+    durationMinutes: 60,
+    suitableFor: ['SOLO', 'COUPLE', 'FAMILY', 'FRIENDS', 'GROUP', 'SENIOR_TRAVELERS', 'CHILDREN_FAMILY', 'MIXED_GROUP'],
+    accessibilityScore: 0.85,
+    weatherSensitivity: 'low',
+    entryFee: 25,
+    description: 'Enchanting natural sandalwood forest with prehistoric megalithic stone dolmens (Muniyaras) overlooking rolling tea slopes just before Munnar town.'
   },
   {
     name: 'Kamat Lokaruchi & Heritage Village',
@@ -715,9 +869,8 @@ const FAMOUS_LANDMARKS_DATABASE = [
 
 const HIGHWAY_CORRIDOR_SEGMENTS = {
   // Comprehensive NH44 / NH544 / Southern Arteries
-  'hyderabad-kerala': ['Hyderabad', 'Kurnool', 'Anantapur', 'Bengaluru', 'Mysuru', 'Wayanad', 'Kozhikode', 'Kochi', 'Munnar'],
-  'hyderabad-bangalore': ['Hyderabad', 'Jadcherla', 'Kurnool', 'Gooty', 'Anantapur', 'Penukonda', 'Chikkaballapur', 'Bengaluru'],
-  'hyderabad-munnar': ['Hyderabad', 'Kurnool', 'Anantapur', 'Bengaluru', 'Hosur', 'Salem', 'Dindigul', 'Theni', 'Munnar'],
+  'hyderabad-munnar': ['Hyderabad', 'Kurnool', 'Anantapur', 'Bengaluru', 'Hosur', 'Dharmapuri', 'Salem', 'Dindigul', 'Theni', 'Munnar'],
+  'hyderabad-kerala': ['Hyderabad', 'Kurnool', 'Anantapur', 'Bengaluru', 'Hosur', 'Dharmapuri', 'Salem', 'Dindigul', 'Theni', 'Munnar', 'Kochi'],
   'hyderabad-goa': ['Hyderabad', 'Mahbubnagar', 'Raichur', 'Sindhanur', 'Bagalkot', 'Belagavi', 'Goa'],
   'bangalore-kerala': ['Bengaluru', 'Ramanagara', 'Mandya', 'Mysuru', 'Bandipur', 'Wayanad', 'Kozhikode', 'Kochi'],
   'bangalore-mysore-coorg': ['Bengaluru', 'Ramanagara', 'Mandya', 'Srirangapatna', 'Mysuru', 'Hunsur', 'Madikeri', 'Coorg'],
@@ -745,6 +898,12 @@ const HIGHWAY_CORRIDOR_SEGMENTS = {
 function segmentRoute(startLocation, destination, routeDistanceKm = 0) {
   const normStart = String(startLocation || '').toLowerCase().trim();
   const normDest = String(destination || '').toLowerCase().trim();
+
+  // 1. Exact key match check
+  const exactKey = `${normStart}-${normDest}`;
+  if (HIGHWAY_CORRIDOR_SEGMENTS[exactKey]) {
+    return HIGHWAY_CORRIDOR_SEGMENTS[exactKey];
+  }
 
   for (const [key, segments] of Object.entries(HIGHWAY_CORRIDOR_SEGMENTS)) {
     const startIdx = segments.findIndex(seg => {

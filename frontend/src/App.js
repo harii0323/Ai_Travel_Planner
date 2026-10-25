@@ -33,10 +33,11 @@ import './App.css';
 
 function App() {
   // Authentication State
-  const [authMode, setAuthMode] = useState(null); // 'login', 'register', null (checking)
+  const [authModal, setAuthModal] = useState(null); // 'login', 'register', or null
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
 
   // Navigation State
   const [currentPage, setCurrentPage] = useState('dashboard'); // dashboard, planner, history, profile
@@ -51,7 +52,7 @@ function App() {
   // Global Toasts State
   const [toasts, setToasts] = useState([]);
 
-  // Responsive & Interactive Nav State (Requirement #21)
+  // Responsive & Interactive Nav State
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCarpoolModalOpen, setIsCarpoolModalOpen] = useState(false);
@@ -66,6 +67,12 @@ function App() {
 
   const navigateAndScroll = (page, anchorId = null) => {
     setIsMobileMenuOpen(false);
+    if ((page === 'history' || page === 'profile') && !isAuthenticated) {
+      setAuthModal('login');
+      addToast('Please sign in or create an account to view saved trips and profile settings.', 'info');
+      return;
+    }
+
     if (currentPage !== page) {
       setCurrentPage(page);
       if (anchorId) {
@@ -113,8 +120,6 @@ function App() {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
       }
-    } else {
-      setAuthMode('login');
     }
   }, []);
 
@@ -122,24 +127,22 @@ function App() {
     setUser(userData);
     setToken(authToken);
     setIsAuthenticated(true);
-    setAuthMode(null);
-    setCurrentPage('dashboard');
+    setAuthModal(null);
 
     // Set up Axios default header
     api.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
-    addToast(`Welcome back, ${userData?.name?.split(' ')[0] || 'Traveler'}! ✈️`, 'success');
+    addToast(`Welcome back, ${userData?.name?.split(' ')[0] || 'Traveler'}!`, 'success');
   };
 
   const handleRegisterSuccess = (userData, authToken) => {
     setUser(userData);
     setToken(authToken);
     setIsAuthenticated(true);
-    setAuthMode(null);
-    setCurrentPage('dashboard');
+    setAuthModal(null);
 
     // Set up Axios default header
     api.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
-    addToast('Account created successfully! Welcome to VISTA 🎉', 'success');
+    addToast('Account created successfully. Welcome to VISTA.', 'success');
   };
 
   const handleLogout = () => {
@@ -183,7 +186,7 @@ function App() {
       // The backend wraps the itinerary in an "itinerary" field for /generate
       const planData = res.data.itinerary || res.data;
       setItinerary(planData);
-      addToast(`Itinerary generated for ${formData.destination || 'your trip'}! 🗺️`, 'success');
+      addToast(`Itinerary generated for ${formData.destination || 'your trip'}.`, 'success');
     } catch (err) {
       console.error(err);
       const errMsg = err.response?.data?.error || 'Failed to fetch itinerary. Please try again.';
@@ -204,7 +207,7 @@ function App() {
     try {
       const res = await api.get(`/api/history/${id}`);
       setItinerary(res.data.itinerary || res.data);
-      addToast('Saved trip loaded!', 'info');
+      addToast('Saved trip loaded.', 'info');
     } catch (err) {
       console.error(err);
       const errMsg = err.response?.data?.error || 'Failed to load itinerary details. Please try again.';
@@ -214,41 +217,6 @@ function App() {
       setLoading(false);
     }
   };
-
-  // Render Authentication Pages
-  if (!isAuthenticated) {
-    return (
-      <>
-        {authMode === 'register' ? (
-          <Register
-            onRegisterSuccess={handleRegisterSuccess}
-            onSwitchToLogin={() => setAuthMode('login')}
-          />
-        ) : (
-          <Login
-            onLoginSuccess={handleLoginSuccess}
-            onSwitchToRegister={() => setAuthMode('register')}
-          />
-        )}
-        {/* Global Toasts */}
-        <div className="toast-container">
-          {toasts.map((toast) => (
-            <div key={toast.id} className={`toast toast-${toast.type}`}>
-              <div className="toast-icon">
-                {toast.type === 'success' && <CheckCircle2 size={18} />}
-                {toast.type === 'error' && <AlertCircle size={18} />}
-                {toast.type === 'info' && <Info size={18} />}
-              </div>
-              <span className="toast-message">{toast.message}</span>
-              <button className="toast-close" onClick={() => removeToast(toast.id)}>
-                <X size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-      </>
-    );
-  }
 
   const firstName = user?.name ? user.name.split(' ')[0] : 'Traveler';
   const userInitials = user?.name 
@@ -349,20 +317,33 @@ function App() {
             </button>
           </div>
 
-          {/* User Status & Mobile Toggle */}
+          {/* User Status or Auth CTA & Mobile Toggle */}
           <div className="navbar-user">
-            <div 
-              className="user-chip" 
-              onClick={() => navigateAndScroll('profile')}
-              title="View profile & travel style"
-            >
-              <div className="user-avatar">{userInitials}</div>
-              <span className="user-greeting">{firstName}</span>
-            </div>
-            <button className="btn-logout" onClick={handleLogout} title="Log out of account">
-              <LogOut size={15} />
-              <span>Logout</span>
-            </button>
+            {isAuthenticated ? (
+              <>
+                <div 
+                  className="user-chip" 
+                  onClick={() => navigateAndScroll('profile')}
+                  title="View profile & travel style"
+                >
+                  <div className="user-avatar">{userInitials}</div>
+                  <span className="user-greeting">{firstName}</span>
+                </div>
+                <button className="btn-logout" onClick={handleLogout} title="Log out of account">
+                  <LogOut size={15} />
+                  <span>Logout</span>
+                </button>
+              </>
+            ) : (
+              <div className="navbar-auth-actions">
+                <button className="btn-nav-login" onClick={() => setAuthModal('login')}>
+                  Sign In
+                </button>
+                <button className="btn-nav-register" onClick={() => setAuthModal('register')}>
+                  Create Account
+                </button>
+              </div>
+            )}
             <button 
               className="btn-mobile-toggle" 
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -373,19 +354,30 @@ function App() {
           </div>
         </div>
 
-        {/* Polished Animated Mobile Drawer Navigation (Req #21) */}
+        {/* Polished Animated Mobile Drawer Navigation */}
         {isMobileMenuOpen && (
           <div className="mobile-nav-drawer">
             <div className="mobile-nav-backdrop" onClick={() => setIsMobileMenuOpen(false)} />
             <div className="mobile-nav-pane">
               <div className="mobile-nav-header">
-                <div className="user-chip" onClick={() => navigateAndScroll('profile')}>
-                  <div className="user-avatar">{userInitials}</div>
-                  <div className="mobile-user-meta">
-                    <span className="user-greeting">{user?.name || 'Traveler'}</span>
-                    <span className="user-subtext">{user?.email || 'Explorer Account'}</span>
+                {isAuthenticated ? (
+                  <div className="user-chip" onClick={() => navigateAndScroll('profile')}>
+                    <div className="user-avatar">{userInitials}</div>
+                    <div className="mobile-user-meta">
+                      <span className="user-greeting">{user?.name || 'Traveler'}</span>
+                      <span className="user-subtext">{user?.email || 'Explorer Account'}</span>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                    <button className="btn-nav-login" style={{ flex: 1, justifyContent: 'center' }} onClick={() => { setIsMobileMenuOpen(false); setAuthModal('login'); }}>
+                      Sign In
+                    </button>
+                    <button className="btn-nav-register" style={{ flex: 1, justifyContent: 'center' }} onClick={() => { setIsMobileMenuOpen(false); setAuthModal('register'); }}>
+                      Register
+                    </button>
+                  </div>
+                )}
                 <button className="mobile-nav-close" onClick={() => setIsMobileMenuOpen(false)}>
                   <X size={18} />
                 </button>
@@ -466,10 +458,21 @@ function App() {
               </div>
 
               <div className="mobile-nav-footer">
-                <button className="btn-logout-full" onClick={handleLogout}>
-                  <LogOut size={16} />
-                  <span>Log Out of VISTA</span>
-                </button>
+                {isAuthenticated ? (
+                  <button className="btn-logout-full" onClick={handleLogout}>
+                    <LogOut size={16} />
+                    <span>Log Out of VISTA</span>
+                  </button>
+                ) : (
+                  <button 
+                    className="btn-logout-full" 
+                    style={{ background: '#0d9488', color: '#fff' }} 
+                    onClick={() => { setIsMobileMenuOpen(false); setAuthModal('login'); }}
+                  >
+                    <UserIcon size={16} />
+                    <span>Sign In to VISTA</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -482,7 +485,7 @@ function App() {
           <Dashboard
             user={user}
             onStartPlanning={handleStartPlanning}
-            onViewHistory={() => setCurrentPage('history')}
+            onViewHistory={() => navigateAndScroll('history')}
             onSelectItinerary={handleSelectItinerary}
             addToast={addToast}
           />
@@ -493,17 +496,17 @@ function App() {
             <header className="planner-hero-header">
               <span className="eyebrow-badge">
                 <Sparkles size={13} />
-                AI Itinerary Engine
+                Route & Cost Engine
               </span>
               <h2>
                 {selectedItineraryId 
                   ? 'Review & Customize Travel Plan' 
-                  : 'Create Your Next Unforgettable Journey'}
+                  : 'Plan Your Route & Estimated Trip Costs'}
               </h2>
               <p>
                 {selectedItineraryId
                   ? 'Fine-tune your places, adjust timing, and export your ready-to-go travel schedule.'
-                  : 'Tell us your budget, vehicle, companions, and dates. VISTA will calculate real-world travel costs with fuel, tolls, and optimized routing.'}
+                  : 'Enter your destination, dates, travel style, and transport mode. VISTA calculates realistic costs with fuel, FASTag tolls, stays, and route schedules.'}
               </p>
             </header>
 
@@ -541,6 +544,7 @@ function App() {
                   data={itinerary} 
                   details={itinerary?.details}
                   addToast={addToast}
+                  onRequireAuth={() => setAuthModal('login')}
                   onEditAnother={() => {
                     setSelectedItineraryId(null);
                     setItinerary(null);
@@ -585,6 +589,63 @@ function App() {
         ))}
       </div>
 
+      {/* Progressive Auth Modal Overlay */}
+      {authModal && (
+        <div className="auth-modal-backdrop" onClick={() => setAuthModal(null)}>
+          <div className="auth-modal-card" onClick={(e) => e.stopPropagation()}>
+            <button className="auth-modal-close" onClick={() => setAuthModal(null)} aria-label="Close modal">
+              <X size={20} />
+            </button>
+            {authModal === 'login' ? (
+              <Login 
+                onLoginSuccess={handleLoginSuccess}
+                onSwitchToRegister={() => setAuthModal('register')}
+                addToast={addToast}
+              />
+            ) : (
+              <Register
+                onRegisterSuccess={handleRegisterSuccess}
+                onSwitchToLogin={() => setAuthModal('login')}
+                addToast={addToast}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Privacy Policy & Data Retention Modal */}
+      {isPrivacyModalOpen && (
+        <div className="auth-modal-backdrop" onClick={() => setIsPrivacyModalOpen(false)}>
+          <div className="privacy-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--text-primary)' }}>Privacy Policy & Data Retention</h2>
+              <button className="auth-modal-close" onClick={() => setIsPrivacyModalOpen(false)} aria-label="Close privacy modal">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="privacy-modal-content" style={{ maxHeight: '60vh', overflowY: 'auto', fontSize: '0.92rem', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
+              <p><strong>Last Updated:</strong> October 2026</p>
+              <h4 style={{ color: 'var(--text-primary)', marginTop: '12px', marginBottom: '4px' }}>1. Information We Collect</h4>
+              <p>When you explore destinations or calculate routes without an account, your preferences and inputs are processed anonymously in memory. When you register, we store your name, email address, hashed password, and explicitly saved itineraries.</p>
+              
+              <h4 style={{ color: 'var(--text-primary)', marginTop: '12px', marginBottom: '4px' }}>2. How We Use Travel Data</h4>
+              <p>Trip data is used strictly to estimate route distances, fuel consumption, toll rates, and schedule recommendations. We never sell your personal information or travel history to third-party data brokers or advertisers.</p>
+              
+              <h4 style={{ color: 'var(--text-primary)', marginTop: '12px', marginBottom: '4px' }}>3. Data Retention & Account Deletion</h4>
+              <p>You have full ownership of your data. You can delete saved trips at any time. To permanently delete your account and all associated itineraries from our database, visit the <strong>Profile & Preferences</strong> page and select "Delete Account".</p>
+              
+              <h4 style={{ color: 'var(--text-primary)', marginTop: '12px', marginBottom: '4px' }}>4. Cost & Pricing Transparency</h4>
+              <p>Estimated trip costs are calculated using verifiable public benchmarks (NHAI FASTag toll rates, state fuel prices from IOCL/BPCL, and standard regional accommodation rates). Live tariffs are clearly distinguished from calculated approximations.</p>
+            </div>
+            <div style={{ marginTop: '20px', textAlign: 'right' }}>
+              <button className="btn-primary" style={{ padding: '8px 20px' }} onClick={() => setIsPrivacyModalOpen(false)}>
+                Understood
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Global Carpooling Network Modal (Requirement #19) */}
       {isCarpoolModalOpen && (
         <CarpoolModal
@@ -594,16 +655,29 @@ function App() {
         />
       )}
 
-      {/* Modern Footer */}
+      {/* Modern Trust & Credibility Footer */}
       <footer className="app-footer">
         <div className="footer-content">
           <div className="footer-brand">
             <Sparkles size={16} color="#14b8a6" />
             <span>VISTA AI Travel Planner</span>
           </div>
-          <p>Plan smart. Travel farther. Real-world route cost calculation and intelligent itinerary optimization.</p>
+          <p>Plan your route, compare estimated costs, and find worthwhile stops along the way.</p>
+          <div className="footer-links" style={{ display: 'flex', gap: '16px', justifyContent: 'center', margin: '12px 0', fontSize: '0.85rem' }}>
+            <button 
+              type="button" 
+              onClick={() => setIsPrivacyModalOpen(true)}
+              style={{ background: 'none', border: 'none', color: '#14b8a6', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+            >
+              Privacy Policy & Data Retention
+            </button>
+            <span style={{ color: 'var(--text-muted)' }}>•</span>
+            <a href="mailto:support@vistatravel.internal" style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>
+              Support: support@vistatravel.internal
+            </a>
+          </div>
           <p className="disclaimer">
-            Note: All estimated costs, tolls, and routes are calculated from real-world benchmarks (NHAI FASTag, IOCL/BPCL fuel tariffs, verified hotel benchmarks, and regional menus).
+            All estimated travel costs, tolls, and routes are calculated from verifiable benchmarks (NHAI FASTag toll schedules, IOCL/BPCL fuel tariffs, verified accommodation medians, and regional menus).
           </p>
         </div>
       </footer>

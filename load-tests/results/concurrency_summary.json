@@ -1,0 +1,67 @@
+[
+  {
+    "tier": "100 Concurrent Users (API Health)",
+    "concurrency": 100,
+    "totalRequests": 1000,
+    "durationSec": 2.28,
+    "rps": 439,
+    "successRate": 100,
+    "p50": 156,
+    "p95": 712.2,
+    "p99": 902.3,
+    "avgLatency": 211.6,
+    "errors": 0
+  },
+  {
+    "tier": "500 Concurrent Users (Privacy & Policy)",
+    "concurrency": 500,
+    "totalRequests": 2500,
+    "durationSec": 1.08,
+    "rps": 2323.4,
+    "successRate": 100,
+    "p50": 201.8,
+    "p95": 238.7,
+    "p99": 277.6,
+    "avgLatency": 193.3,
+    "errors": 0
+  },
+  {
+    "tier": "1,000 Concurrent Users (Bandit State)",
+    "concurrency": 1000,
+    "totalRequests": 5000,
+    "durationSec": 1.41,
+    "rps": 3553.7,
+    "successRate": 90.32,
+    "p50": 199.8,
+    "p95": 683.2,
+    "p99": 934.8,
+    "avgLatency": 252.1,
+    "errors": 484
+  },
+  {
+    "tier": "2,500 Concurrent Users (Cached Read Pipeline)",
+    "concurrency": 2500,
+    "totalRequests": 10000,
+    "durationSec": 11.94,
+    "rps": 837.6,
+    "successRate": 5.36,
+    "p50": 1677.6,
+    "p95": 10122.4,
+    "p99": 10138.6,
+    "avgLatency": 2502.5,
+    "errors": 9464
+  },
+  {
+    "tier": "5,000 Concurrent Capacity Target",
+    "concurrency": 5000,
+    "totalRequests": 15000,
+    "durationSec": 17.46,
+    "rps": 859.3,
+    "successRate": 96.43,
+    "p50": 1144,
+    "p95": 14979.1,
+    "p99": 15032.3,
+    "avgLatency": 5580.8,
+    "errors": 535
+  }
+]

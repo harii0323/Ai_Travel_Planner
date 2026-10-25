@@ -1551,7 +1551,7 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
               disabled={loading}
             >
               <Sparkles size={20} />
-              <span>{loading ? 'Crafting Itinerary...' : 'Generate AI Itinerary'}</span>
+              <span>{loading ? 'Calculating Route & Itinerary...' : 'Generate Itinerary'}</span>
             </button>
           )}
         </div>

@@ -38,10 +38,17 @@ const normalizePreferences = (preferences = {}) => ({
   ...preferences
 });
 
+const FORBIDDEN_PROPERTIES = new Set(['__proto__', 'constructor', 'prototype']);
+
 const setNested = (target, dottedKey, value) => {
   const keys = dottedKey.split('.');
-  let cursor = target;
+  for (const k of keys) {
+    if (FORBIDDEN_PROPERTIES.has(k)) {
+      throw new Error(`Security violation: property path '${dottedKey}' is not permitted.`);
+    }
+  }
 
+  let cursor = target;
   keys.slice(0, -1).forEach((key) => {
     cursor[key] = cursor[key] || {};
     cursor = cursor[key];
@@ -50,28 +57,39 @@ const setNested = (target, dottedKey, value) => {
   cursor[keys[keys.length - 1]] = value;
 };
 
+
 // In-memory fallback store for offline / demo mode
 const memoryUsers = new Map();
-(async () => {
-  const demoHash = await bcryptjs.hash('password123', 10);
-  memoryUsers.set('ravi@example.com', {
-    id: 'demo-user-ravi',
-    name: 'Ravi Kumar',
-    email: 'ravi@example.com',
-    password: demoHash,
-    created_at: new Date().toISOString(),
-    travel_preferences: DEFAULT_TRAVEL_PREFERENCES,
-    profile: {}
-  });
-})();
+if (process.env.NODE_ENV !== 'production') {
+  (async () => {
+    const demoHash = await bcryptjs.hash('password123', 10);
+    memoryUsers.set('ravi@example.com', {
+      id: 'demo-user-ravi',
+      name: 'Ravi Kumar',
+      email: 'ravi@example.com',
+      password: demoHash,
+      created_at: new Date().toISOString(),
+      travel_preferences: DEFAULT_TRAVEL_PREFERENCES,
+      profile: {}
+    });
+  })();
+}
 
 const findOneExec = async (filter) => {
   if (filter.email) {
     const cleanEmail = filter.email.toLowerCase().trim();
     if (db.isConnected()) {
       try {
-        const result = await db.query('SELECT * FROM users WHERE email = $1', [cleanEmail]);
-        if (result.rows[0]) return toDocument(result.rows[0]);
+        if (typeof db.withSystemContext === 'function') {
+          const doc = await db.withSystemContext(async (client) => {
+            const result = await client.query('SELECT * FROM users WHERE email = $1', [cleanEmail]);
+            return result.rows[0] ? toDocument(result.rows[0]) : null;
+          });
+          if (doc) return doc;
+        } else {
+          const result = await db.query('SELECT * FROM users WHERE email = $1', [cleanEmail]);
+          if (result.rows[0]) return toDocument(result.rows[0]);
+        }
       } catch (err) {
         console.warn('DB query error in findOne, checking memory store:', err.message);
       }
@@ -155,8 +173,16 @@ const User = {
   async findById(id) {
     if (db.isConnected()) {
       try {
-        const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
-        if (result.rows[0]) return toDocument(result.rows[0]);
+        if (id && typeof db.withUserContext === 'function') {
+          const doc = await db.withUserContext(id, async (client) => {
+            const result = await client.query('SELECT * FROM users WHERE id = $1', [id]);
+            return result.rows[0] ? toDocument(result.rows[0]) : null;
+          });
+          if (doc) return doc;
+        } else {
+          const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+          if (result.rows[0]) return toDocument(result.rows[0]);
+        }
       } catch (err) {
         console.warn('DB error during findById, checking memory store:', err.message);
       }
@@ -185,20 +211,80 @@ const User = {
       else next[key] = value;
     });
 
-    const result = await db.query(
-      `UPDATE users
-       SET name = $2, travel_preferences = $3, profile = $4
-       WHERE id = $1
-       RETURNING *`,
-      [
-        id,
-        next.name,
-        JSON.stringify(next.travelPreferences),
-        JSON.stringify(next.profile)
-      ]
-    );
+    if (db.isConnected()) {
+      try {
+        const updateSql = `UPDATE users
+           SET name = $2, travel_preferences = $3, profile = $4
+           WHERE id = $1
+           RETURNING *`;
+        const updateParams = [
+          id,
+          next.name,
+          JSON.stringify(next.travelPreferences),
+          JSON.stringify(next.profile)
+        ];
+        let result;
+        if (id && typeof db.withUserContext === 'function') {
+          result = await db.withUserContext(id, async (client) => {
+            return client.query(updateSql, updateParams);
+          });
+        } else {
+          result = await db.query(updateSql, updateParams);
+        }
+        if (result && result.rows[0]) {
+          const doc = toDocument(result.rows[0]);
+          for (const u of memoryUsers.values()) {
+            if (u.id === id) {
+              u.name = next.name;
+              u.travel_preferences = next.travelPreferences;
+              u.profile = next.profile;
+            }
+          }
+          return doc;
+        }
+      } catch (err) {
+        console.warn('DB error during findByIdAndUpdate, using memory store:', err.message);
+      }
+    }
 
-    return toDocument(result.rows[0]);
+    for (const u of memoryUsers.values()) {
+      if (u.id === id) {
+        u.name = next.name;
+        u.travel_preferences = next.travelPreferences;
+        u.profile = next.profile;
+        return toDocument(u);
+      }
+    }
+
+    return null;
+  },
+
+  async findByIdAndDelete(id) {
+    let deletedUser = null;
+    if (db.isConnected()) {
+      try {
+        let result;
+        if (id && typeof db.withUserContext === 'function') {
+          result = await db.withUserContext(id, async (client) => {
+            return client.query('DELETE FROM users WHERE id = $1 RETURNING *', [id]);
+          });
+        } else {
+          result = await db.query('DELETE FROM users WHERE id = $1 RETURNING *', [id]);
+        }
+        if (result && result.rows[0]) {
+          deletedUser = toDocument(result.rows[0]);
+        }
+      } catch (err) {
+        console.warn('DB error during findByIdAndDelete:', err.message);
+      }
+    }
+    for (const [email, u] of memoryUsers.entries()) {
+      if (u.id === id || (deletedUser && u.email === deletedUser.email)) {
+        memoryUsers.delete(email);
+        if (!deletedUser) deletedUser = toDocument(u);
+      }
+    }
+    return deletedUser;
   }
 };
 
