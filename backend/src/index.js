@@ -98,6 +98,7 @@ app.use('/api/itinerary/generate', itineraryRateLimiter);
 app.use('/api/itinerary', itineraryRouter);
 
 app.use('/api/history', historyRouter);
+app.use('/api/trips', historyRouter);
 app.use('/api/places', cacheMiddleware(10 * 60 * 1000), placesRouter);
 app.use('/api/rentals', rentalsRouter);
 

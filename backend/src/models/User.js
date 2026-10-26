@@ -18,6 +18,16 @@ class UserDocument {
     this.createdAt = row.created_at;
     this.travelPreferences = row.travel_preferences || DEFAULT_TRAVEL_PREFERENCES;
     this.profile = row.profile || {};
+    this.isVerified = Boolean(row.is_verified);
+    this.is_verified = Boolean(row.is_verified);
+    this.verification_token_hash = row.verification_token_hash || null;
+    this.verification_token_expires = row.verification_token_expires ? new Date(row.verification_token_expires) : null;
+    this.verification_attempts = Number(row.verification_attempts || 0);
+    this.reset_otp_hash = row.reset_otp_hash || null;
+    this.reset_otp_expires = row.reset_otp_expires ? new Date(row.reset_otp_expires) : null;
+    this.reset_otp_attempts = Number(row.reset_otp_attempts || 0);
+    this.reset_token_hash = row.reset_token_hash || null;
+    this.reset_token_expires = row.reset_token_expires ? new Date(row.reset_token_expires) : null;
   }
 
   async comparePassword(enteredPassword) {
@@ -27,6 +37,9 @@ class UserDocument {
   toJSON() {
     const obj = { ...this };
     delete obj.password;
+    delete obj.verification_token_hash;
+    delete obj.reset_otp_hash;
+    delete obj.reset_token_hash;
     return obj;
   }
 }
@@ -68,6 +81,7 @@ if (process.env.NODE_ENV !== 'production') {
       name: 'Ravi Kumar',
       email: 'ravi@example.com',
       password: demoHash,
+      is_verified: true,
       created_at: new Date().toISOString(),
       travel_preferences: DEFAULT_TRAVEL_PREFERENCES,
       profile: {}
@@ -130,6 +144,9 @@ const User = {
     const travelPreferences = normalizePreferences(data.travelPreferences);
     const profile = data.profile || {};
     const cleanEmail = data.email.toLowerCase().trim();
+    const isVerified = Boolean(data.is_verified);
+    const verificationTokenHash = data.verification_token_hash || null;
+    const verificationTokenExpires = data.verification_token_expires || null;
 
     const memRecord = {
       id,
@@ -138,6 +155,10 @@ const User = {
       password: hashedPassword,
       travel_preferences: travelPreferences,
       profile,
+      is_verified: isVerified,
+      verification_token_hash: verificationTokenHash,
+      verification_token_expires: verificationTokenExpires,
+      verification_attempts: 0,
       created_at: new Date().toISOString()
     };
     memoryUsers.set(cleanEmail, memRecord);
@@ -145,8 +166,8 @@ const User = {
     if (db.isConnected()) {
       try {
         const result = await db.query(
-          `INSERT INTO users (id, name, email, password, travel_preferences, profile)
-           VALUES ($1, $2, $3, $4, $5, $6)
+          `INSERT INTO users (id, name, email, password, travel_preferences, profile, is_verified, verification_token_hash, verification_token_expires)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING *`,
           [
             id,
@@ -154,7 +175,10 @@ const User = {
             cleanEmail,
             hashedPassword,
             JSON.stringify(travelPreferences),
-            JSON.stringify(profile)
+            JSON.stringify(profile),
+            isVerified,
+            verificationTokenHash,
+            verificationTokenExpires
           ]
         );
         return toDocument(result.rows[0]);
@@ -285,6 +309,180 @@ const User = {
       }
     }
     return deletedUser;
+  },
+
+  async setVerificationToken(email, tokenHash, expiresAt) {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    if (db.isConnected()) {
+      try {
+        await db.withSystemContext(async (client) => {
+          await client.query(
+            `UPDATE users SET verification_token_hash = $1, verification_token_expires = $2, verification_attempts = 0 WHERE email = $3`,
+            [tokenHash, expiresAt, cleanEmail]
+          );
+        });
+      } catch (err) {
+        console.warn('DB error in setVerificationToken:', err.message);
+      }
+    }
+    const mem = memoryUsers.get(cleanEmail);
+    if (mem) {
+      mem.verification_token_hash = tokenHash;
+      mem.verification_token_expires = expiresAt;
+      mem.verification_attempts = 0;
+    }
+  },
+
+  async incrementVerificationAttempts(email) {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    let attempts = 1;
+    if (db.isConnected()) {
+      try {
+        await db.withSystemContext(async (client) => {
+          const res = await client.query(
+            `UPDATE users SET verification_attempts = COALESCE(verification_attempts, 0) + 1 WHERE email = $1 RETURNING verification_attempts`,
+            [cleanEmail]
+          );
+          if (res.rows[0]) attempts = Number(res.rows[0].verification_attempts);
+        });
+      } catch (err) {
+        console.warn('DB error in incrementVerificationAttempts:', err.message);
+      }
+    }
+    const mem = memoryUsers.get(cleanEmail);
+    if (mem) {
+      mem.verification_attempts = (mem.verification_attempts || 0) + 1;
+      attempts = mem.verification_attempts;
+    }
+    return attempts;
+  },
+
+  async verifyEmail(email) {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    let updated = null;
+    if (db.isConnected()) {
+      try {
+        await db.withSystemContext(async (client) => {
+          const res = await client.query(
+            `UPDATE users SET is_verified = TRUE, verification_token_hash = NULL, verification_token_expires = NULL, verification_attempts = 0 WHERE email = $1 RETURNING *`,
+            [cleanEmail]
+          );
+          if (res.rows[0]) updated = toDocument(res.rows[0]);
+        });
+      } catch (err) {
+        console.warn('DB error in verifyEmail:', err.message);
+      }
+    }
+    const mem = memoryUsers.get(cleanEmail);
+    if (mem) {
+      mem.is_verified = true;
+      mem.verification_token_hash = null;
+      mem.verification_token_expires = null;
+      mem.verification_attempts = 0;
+      if (!updated) updated = toDocument(mem);
+    }
+    return updated;
+  },
+
+  async setResetOtp(email, otpHash, expiresAt) {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    if (db.isConnected()) {
+      try {
+        await db.withSystemContext(async (client) => {
+          await client.query(
+            `UPDATE users SET reset_otp_hash = $1, reset_otp_expires = $2, reset_otp_attempts = 0, reset_token_hash = NULL, reset_token_expires = NULL WHERE email = $3`,
+            [otpHash, expiresAt, cleanEmail]
+          );
+        });
+      } catch (err) {
+        console.warn('DB error in setResetOtp:', err.message);
+      }
+    }
+    const mem = memoryUsers.get(cleanEmail);
+    if (mem) {
+      mem.reset_otp_hash = otpHash;
+      mem.reset_otp_expires = expiresAt;
+      mem.reset_otp_attempts = 0;
+      mem.reset_token_hash = null;
+      mem.reset_token_expires = null;
+    }
+  },
+
+  async incrementResetOtpAttempts(email) {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    let attempts = 1;
+    if (db.isConnected()) {
+      try {
+        await db.withSystemContext(async (client) => {
+          const res = await client.query(
+            `UPDATE users SET reset_otp_attempts = COALESCE(reset_otp_attempts, 0) + 1 WHERE email = $1 RETURNING reset_otp_attempts`,
+            [cleanEmail]
+          );
+          if (res.rows[0]) attempts = Number(res.rows[0].reset_otp_attempts);
+        });
+      } catch (err) {
+        console.warn('DB error in incrementResetOtpAttempts:', err.message);
+      }
+    }
+    const mem = memoryUsers.get(cleanEmail);
+    if (mem) {
+      mem.reset_otp_attempts = (mem.reset_otp_attempts || 0) + 1;
+      attempts = mem.reset_otp_attempts;
+    }
+    return attempts;
+  },
+
+  async setResetToken(email, tokenHash, expiresAt) {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    if (db.isConnected()) {
+      try {
+        await db.withSystemContext(async (client) => {
+          await client.query(
+            `UPDATE users SET reset_token_hash = $1, reset_token_expires = $2, reset_otp_hash = NULL, reset_otp_expires = NULL, reset_otp_attempts = 0 WHERE email = $3`,
+            [tokenHash, expiresAt, cleanEmail]
+          );
+        });
+      } catch (err) {
+        console.warn('DB error in setResetToken:', err.message);
+      }
+    }
+    const mem = memoryUsers.get(cleanEmail);
+    if (mem) {
+      mem.reset_token_hash = tokenHash;
+      mem.reset_token_expires = expiresAt;
+      mem.reset_otp_hash = null;
+      mem.reset_otp_expires = null;
+      mem.reset_otp_attempts = 0;
+    }
+  },
+
+  async resetPassword(email, newHashedPassword) {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    let updated = null;
+    if (db.isConnected()) {
+      try {
+        await db.withSystemContext(async (client) => {
+          const res = await client.query(
+            `UPDATE users SET password = $1, reset_token_hash = NULL, reset_token_expires = NULL, reset_otp_hash = NULL, reset_otp_expires = NULL, reset_otp_attempts = 0 WHERE email = $2 RETURNING *`,
+            [newHashedPassword, cleanEmail]
+          );
+          if (res.rows[0]) updated = toDocument(res.rows[0]);
+        });
+      } catch (err) {
+        console.warn('DB error in resetPassword:', err.message);
+      }
+    }
+    const mem = memoryUsers.get(cleanEmail);
+    if (mem) {
+      mem.password = newHashedPassword;
+      mem.reset_token_hash = null;
+      mem.reset_token_expires = null;
+      mem.reset_otp_hash = null;
+      mem.reset_otp_expires = null;
+      mem.reset_otp_attempts = 0;
+      if (!updated) updated = toDocument(mem);
+    }
+    return updated;
   }
 };
 

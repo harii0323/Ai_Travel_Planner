@@ -439,6 +439,7 @@ a {
 }
 
 /* Mobile Nav Toggle */
+.btn-mobile-toggle,
 .mobile-nav-toggle {
   display: none;
   width: 40px;

@@ -4,6 +4,9 @@ const planner = require('../services/planner');
 const { discoverAndScheduleRoutePlaces } = require('../services/routePlaceDiscoveryEngine');
 const authenticate = require('../middleware/authenticate');
 const Itinerary = require('../models/Itinerary');
+const User = require('../models/User');
+const emailService = require('../services/emailService');
+const { emailActionRateLimiter } = require('../middleware/security');
 const jwt = require('jsonwebtoken');
 
 const { isTokenRevoked, getJwtSecret } = require('../middleware/authenticate');
@@ -351,6 +354,80 @@ router.post('/save', authenticate, async (req, res) => {
   }
 });
 
+// POST /api/itinerary/email - Email generated itinerary (saved or directly) to authenticated verified user
+router.post('/email', authenticate, emailActionRateLimiter, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (user && user.isVerified === false) {
+      return res.status(403).json({
+        error: 'Please verify your registered email address before emailing travel plans.',
+        requiresVerification: true
+      });
+    }
+
+    const { tripId, itineraryId, itineraryData, title } = req.body || {};
+    let itinerary = null;
+
+    if (tripId || itineraryId) {
+      itinerary = await Itinerary.findById(tripId || itineraryId, req.user.id);
+      if (!itinerary || itinerary.userId.toString() !== req.user.id) {
+        return res.status(404).json({ error: 'Itinerary not found or access denied.' });
+      }
+    } else if (itineraryData) {
+      // Auto-save the validated itinerary for this user so it has persistent ownership
+      const dest = itineraryData.summary?.destination || 'Destination';
+      itinerary = await Itinerary.create({
+        userId: req.user.id,
+        title: title || `${dest} Travel Plan`,
+        description: `Personalized travel itinerary for ${dest}`,
+        destination: itineraryData.summary?.destination || dest,
+        startLocation: itineraryData.details?.startLocation || itineraryData.summary?.startLocation,
+        startDate: itineraryData.summary?.startDate,
+        endDate: itineraryData.summary?.endDate,
+        totalDays: itineraryData.summary?.totalDays || 1,
+        budget: itineraryData.summary?.originalBudget || 0,
+        estimatedCost: itineraryData.estimatedCosts?.total || 0,
+        withoutBudget: !itineraryData.summary?.withinBudget,
+        activities: itineraryData.details?.preferredActivities?.split(',').map(a => a.trim()) || [],
+        accommodation: itineraryData.details?.accommodationType || 'Hotel',
+        transport: itineraryData.details?.transportMode || 'car',
+        travelCompanionType: itineraryData.travelCompanionType || 'solo',
+        numberOfTravelers: itineraryData.numberOfTravelers || 1,
+        estimatedCosts: itineraryData.estimatedCosts || {},
+        dayPlans: itineraryData.dayPlans || [],
+        moneyTips: itineraryData.moneyTips || [],
+        recommendations: itineraryData.recommendations || {},
+        plannedTravelDate: itineraryData.summary?.startDate,
+        tags: [dest]
+      });
+    } else {
+      return res.status(400).json({ error: 'Trip ID or itinerary data is required.' });
+    }
+
+    const recipientEmail = user?.email || req.user.email;
+    const recipientName = user?.name || req.user.name || 'Traveler';
+
+    if (!recipientEmail) {
+      return res.status(400).json({ error: 'Verified email address not found on user profile' });
+    }
+
+    const emailResult = await emailService.sendItineraryEmail(recipientEmail, recipientName, itinerary, {
+      userId: req.user.id,
+      tripId: itinerary._id || itinerary.id
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Travel plan successfully sent to your registered email (${recipientEmail}).`,
+      tripId: itinerary._id || itinerary.id,
+      messageId: emailResult.messageId
+    });
+  } catch (error) {
+    console.error('Email itinerary error:', error);
+    res.status(500).json({ error: error.message || 'Failed to email travel itinerary.' });
+  }
+});
+
 // POST /api/itinerary/reoptimize - Real-time traffic re-optimization endpoint
 router.post('/reoptimize', authenticate, async (req, res) => {
   try {
@@ -449,7 +526,7 @@ router.get('/realtime-prices', async (req, res) => {
     const hotelRate = getLiveAccommodationRate(destination, 'budgetHotel', travelDate);
     const meals = getDestinationFoodPlan(destination, 'standard', 1, 1);
     const tolls = getLiveTollRate(origin, destination, 500, transportMode);
-    const transit = getLivePublicTransitRates(500, transportMode, 1);
+    const transit = getLivePublicTransitRates(500, transportMode, 1, origin, destination);
 
     res.json({
       success: true,
@@ -470,6 +547,85 @@ router.get('/realtime-prices', async (req, res) => {
   } catch (err) {
     console.error('Real-time prices error:', err);
     res.status(500).json({ error: 'Failed to retrieve real-time prices' });
+  }
+});
+
+// GET /api/itinerary/transit-routes - Fetch live GTFS Train & Bus routes and cost estimation via Mobility Database
+router.get('/transit-routes', async (req, res) => {
+  try {
+    const {
+      origin = 'Hyderabad',
+      destination = 'Kerala',
+      mode = 'all', // 'train' | 'bus' | 'all'
+      travelers = 1,
+      travelClass = null,
+      distanceKm = null,
+      travelDate = new Date()
+    } = req.query;
+
+    const mobilityDatabase = require('../services/mobilityDatabaseService');
+    const numTravelers = Math.max(1, parseInt(travelers, 10) || 1);
+
+    if (mode === 'train') {
+      const trainData = mobilityDatabase.getTrainRoutes({
+        origin,
+        destination,
+        distanceKm,
+        numTravelers,
+        travelClass: travelClass || '3A',
+        travelDate
+      });
+      return res.json({ success: true, ...trainData });
+    }
+
+    if (mode === 'bus') {
+      const busData = mobilityDatabase.getBusRoutes({
+        origin,
+        destination,
+        distanceKm,
+        numTravelers,
+        busClass: travelClass || 'acSleeper',
+        travelDate
+      });
+      return res.json({ success: true, ...busData });
+    }
+
+    // Default: comparison of both Train & Bus + Local Transit options
+    const recommendations = await mobilityDatabase.getTransitRecommendations({
+      origin,
+      destination,
+      distanceKm,
+      numTravelers,
+      travelDate
+    });
+
+    res.json({
+      success: true,
+      ...recommendations
+    });
+  } catch (err) {
+    console.error('Transit routes error:', err);
+    res.status(500).json({ success: false, error: 'Failed to retrieve transit routes from Mobility Database' });
+  }
+});
+
+// GET /api/itinerary/mobility-feeds - List active GTFS transit feeds from Mobility Database
+router.get('/mobility-feeds', async (req, res) => {
+  try {
+    const countryCode = req.query.country_code || 'IN';
+    const mobilityDatabase = require('../services/mobilityDatabaseService');
+    const feeds = await mobilityDatabase.getMobilityFeeds(countryCode);
+    res.json({
+      success: true,
+      countryCode,
+      totalFeeds: feeds.length,
+      feeds,
+      databaseUrl: 'https://api.mobilitydatabase.org/v1',
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Mobility feeds error:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch Mobility Database feeds' });
   }
 });
 

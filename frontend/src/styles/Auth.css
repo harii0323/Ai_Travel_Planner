@@ -249,6 +249,9 @@
   color: var(--brand);
   font-weight: 800;
   background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
   cursor: pointer;
   transition: transform 0.2s ease, color 0.2s ease;
   display: inline-block;
@@ -278,3 +281,169 @@
     padding: 36px 24px;
   }
 }
+
+/* Modal Embed Overrides to ensure reliable click detection and clean sizing */
+.auth-modal-card .auth-page-wrapper {
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+  perspective: none;
+  overflow: visible;
+}
+
+.auth-modal-card .auth-page-wrapper::before,
+.auth-modal-card .auth-page-wrapper::after {
+  display: none !important;
+}
+
+.auth-modal-card .auth-split-card {
+  width: 100%;
+  min-height: auto;
+  border: none;
+  box-shadow: none;
+  transform: none !important;
+  transform-style: flat;
+}
+
+.auth-modal-card .auth-split-card:hover {
+  transform: none !important;
+  box-shadow: none;
+}
+
+.auth-modal-card .auth-form-panel,
+.auth-modal-card .auth-form,
+.auth-modal-card .auth-hero-panel {
+  transform-style: flat;
+}
+
+.auth-modal-card .auth-form-header,
+.auth-modal-card .auth-switch-prompt,
+.auth-modal-card .auth-brand-header,
+.auth-modal-card .auth-hero-middle,
+.auth-modal-card .auth-quote-box,
+.auth-modal-card .auth-perks-list li,
+.auth-modal-card .form-group input {
+  transform: none !important;
+}
+
+.auth-modal-card .btn-primary {
+  cursor: pointer;
+  position: relative;
+  z-index: 5;
+}
+
+/* Email Verification & Password Recovery Styles */
+.otp-input-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0;
+}
+
+.otp-input-field {
+  width: 100%;
+  max-width: 280px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 8px;
+  padding: 12px 16px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  background: var(--surface-card, #ffffff);
+  border: 2px solid var(--surface-border, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  color: var(--ink-heading, #1e293b);
+  transition: all 0.2s ease;
+}
+
+.otp-input-field:focus {
+  border-color: var(--brand, #c26d38);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(194, 109, 56, 0.18);
+}
+
+.auth-step-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.auth-step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface-border, #cbd5e1);
+  transition: all 0.3s ease;
+}
+
+.auth-step-dot.active {
+  background: var(--brand, #c26d38);
+  width: 24px;
+  border-radius: 4px;
+}
+
+.auth-notice-card {
+  padding: 14px 16px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.auth-notice-card.info {
+  background: rgba(194, 109, 56, 0.08);
+  border: 1px solid rgba(194, 109, 56, 0.25);
+  color: #8c4118;
+}
+
+.auth-notice-card.success {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #065f46;
+}
+
+.btn-secondary-link {
+  background: transparent;
+  border: none;
+  color: var(--brand, #c26d38);
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-secondary-link:hover:not(:disabled) {
+  background: rgba(194, 109, 56, 0.08);
+  text-decoration: underline;
+}
+
+.btn-secondary-link:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.forgot-password-link {
+  font-size: 12.5px;
+  color: var(--brand, #c26d38);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  padding: 2px 0;
+  transition: color 0.2s ease;
+}
+
+.forgot-password-link:hover {
+  text-decoration: underline;
+  color: var(--brand-dark, #8c4118);
+}
+

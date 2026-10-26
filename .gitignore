@@ -46,3 +46,4 @@ client_secret*.json
 # OS / Editor temporary files
 .DS_Store
 Thumbs.db
+scratch/

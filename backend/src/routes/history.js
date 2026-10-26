@@ -2,6 +2,9 @@
 
 const express = require('express');
 const authenticate = require('../middleware/authenticate');
+const { emailActionRateLimiter } = require('../middleware/security');
+const emailService = require('../services/emailService');
+const User = require('../models/User');
 const Itinerary = require('../models/Itinerary');
 
 const router = express.Router();
@@ -228,6 +231,47 @@ router.post('/duplicate/:id', authenticate, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/history/:id/email and /api/trips/:tripId/email - Email a saved itinerary to the authenticated user's registered address
+router.post(['/:id/email', '/:tripId/email'], authenticate, emailActionRateLimiter, async (req, res) => {
+  try {
+    const tripId = req.params.tripId || req.params.id;
+    const itinerary = await Itinerary.findById(tripId, req.user.id);
+    
+    if (!itinerary || itinerary.userId.toString() !== req.user.id) {
+      return res.status(404).json({ error: 'Itinerary not found' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (user && user.isVerified === false) {
+      return res.status(403).json({
+        error: 'Please verify your registered email address before emailing travel itineraries.',
+        requiresVerification: true
+      });
+    }
+
+    const recipientEmail = user?.email || req.user.email;
+    const recipientName = user?.name || req.user.name || 'Traveler';
+
+    if (!recipientEmail) {
+      return res.status(400).json({ error: 'Verified email address not found on user profile' });
+    }
+
+    const emailResult = await emailService.sendItineraryEmail(recipientEmail, recipientName, itinerary, {
+      userId: req.user.id,
+      tripId: itinerary._id || itinerary.id
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Travel plan successfully sent to your registered email (${recipientEmail}).`,
+      messageId: emailResult.messageId
+    });
+  } catch (error) {
+    console.error('Email itinerary error:', error);
+    res.status(500).json({ error: error.message || 'Failed to email travel itinerary.' });
   }
 });
 

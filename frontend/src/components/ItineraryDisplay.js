@@ -4,13 +4,19 @@ import api from '../api';
 import '../styles/ItineraryDisplay.css';
 import RouteMap from './RouteMap';
 import PlaceDetailModal from './PlaceDetailModal';
+import MobilityTransitPanel from './MobilityTransitPanel';
 import {
+  Train,
+  Bus,
+  Ticket,
+  Info,
   Compass,
   Calendar,
   Wallet,
   Printer,
   Share2,
   Bookmark,
+  Mail,
   Check,
   Plus,
   Edit2,
@@ -102,6 +108,8 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
   const [selectedDayTab, setSelectedDayTab] = useState('all'); // 'all' or day number (1, 2, 3...)
   const [expandedDay, setExpandedDay] = useState(1);
   const [saveStatus, setSaveStatus] = useState('idle');
+  const [emailStatus, setEmailStatus] = useState('idle'); // 'idle' | 'sending' | 'sent'
+  const [savedTripId, setSavedTripId] = useState(null);
   const [editableDayPlans, setEditableDayPlans] = useState([]);
   const [newPlaceByDay, setNewPlaceByDay] = useState({});
   const [editingActivity, setEditingActivity] = useState(null);
@@ -286,7 +294,7 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
         rentalVehicle
       };
 
-      await api.post(
+      const saveRes = await api.post(
         '/api/itinerary/save',
         {
           title: titleParts.join(' • ') || 'Custom Travel Plan',
@@ -298,6 +306,10 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
+      if (saveRes.data?.itinerary?.id) {
+        setSavedTripId(saveRes.data.itinerary.id);
+      }
+
       setSaveStatus('saved');
       confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
       if (addToast) addToast('Itinerary saved to your travel history! 🗺️', 'success');
@@ -305,6 +317,79 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
       console.error(err);
       setSaveStatus('idle');
       if (addToast) addToast(err.response?.data?.error || 'Failed to save itinerary', 'error');
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (emailStatus === 'sending') return;
+
+    const token = localStorage.getItem('token');
+    if (!token) {
+      if (onRequireAuth) {
+        onRequireAuth();
+      } else if (addToast) {
+        addToast('Please sign in or create an account to email this travel plan to your verified address.', 'info');
+      }
+      return;
+    }
+
+    setEmailStatus('sending');
+    try {
+      const activeTripId = savedTripId || itinerary._id || itinerary.id;
+      let res;
+      if (activeTripId) {
+        res = await api.post(
+          `/api/trips/${activeTripId}/email`,
+          {},
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+      } else {
+        const titleParts = [summary.destination, summary.totalDays && `${summary.totalDays} day trip`].filter(Boolean);
+        res = await api.post(
+          '/api/itinerary/email',
+          {
+            title: titleParts.join(' • ') || 'Custom Travel Plan',
+            itineraryData: {
+              summary,
+              details: details || itinerary.details || {},
+              estimatedCosts,
+              dayPlans: displayedDayPlans,
+              moneyTips,
+              costBreakdown,
+              accommodationSuggestions,
+              foodRecommendations,
+              warnings,
+              route,
+              transportation,
+              recommendations,
+              climateIntelligence,
+              rentalBooking,
+              rentalVehicle
+            }
+          },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (res.data?.tripId) {
+          setSavedTripId(res.data.tripId);
+          setSaveStatus('saved');
+        }
+      }
+
+      setEmailStatus('sent');
+      if (addToast) {
+        addToast(res.data?.message || 'Itinerary successfully emailed to your verified address! ✉️', 'success');
+      }
+      setTimeout(() => setEmailStatus('idle'), 6000);
+    } catch (err) {
+      console.error('Email itinerary error:', err);
+      setEmailStatus('idle');
+      const errorMsg =
+        err.response?.data?.error ||
+        err.response?.data?.message ||
+        'Failed to email itinerary. Please verify your connection.';
+      if (addToast) {
+        addToast(errorMsg, 'error');
+      }
     }
   };
 
@@ -659,6 +744,7 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
 
           <div className="itinerary-action-toolbar">
             <button
+              id="save-plan-toolbar-btn"
               type="button"
               className={`btn-toolbar save-btn ${saveStatus === 'saved' ? 'saved' : ''}`}
               onClick={handleSavePlan}
@@ -666,6 +752,24 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
             >
               {saveStatus === 'saved' ? <Check size={16} /> : <Bookmark size={16} />}
               <span>{saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Plan Saved' : 'Save Plan'}</span>
+            </button>
+
+            <button
+              id="send-plan-email-btn"
+              type="button"
+              className={`btn-toolbar email-btn ${emailStatus === 'sent' ? 'saved' : ''}`}
+              onClick={handleSendEmail}
+              disabled={emailStatus === 'sending'}
+              title="Send complete travel plan to your verified email"
+            >
+              {emailStatus === 'sent' ? <Check size={16} /> : <Mail size={16} />}
+              <span>
+                {emailStatus === 'sending'
+                  ? 'Sending...'
+                  : emailStatus === 'sent'
+                  ? 'Plan Emailed'
+                  : 'Send Plan to My Email'}
+              </span>
             </button>
 
             <button type="button" className="btn-toolbar" onClick={handleCopySummary} title="Copy shareable summary">
@@ -764,6 +868,14 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
         >
           <Wallet size={16} />
           <span>Cost Summary ({formatINR(costSummary.total || estimatedCosts.total)})</span>
+        </button>
+
+        <button
+          className={`itinerary-tab ${activeTab === 'mobility' ? 'active' : ''}`}
+          onClick={() => setActiveTab('mobility')}
+        >
+          <Train size={16} />
+          <span>Mobility DB Transit (Train & Bus)</span>
         </button>
 
         <button
@@ -2446,6 +2558,20 @@ function ItineraryDisplay({ data, details: propDetails, initialTab = 'timeline',
               )}
             </div>
           </div>
+        )}
+
+        {/* =========================================================================
+            MOBILITY DATABASE GTFS TRANSIT HUB (Train & Bus Routes & Fare Tariffs)
+            ========================================================================= */}
+        {activeTab === 'mobility' && (
+          <MobilityTransitPanel
+            initialOrigin={details.startLocation || summary.startLocation || 'Hyderabad'}
+            initialDestination={summary.destination || 'Kerala'}
+            initialTravelers={travelerCount}
+            initialMode={details.transportMode === 'bus' ? 'bus' : 'train'}
+            initialDistanceKm={route.totalDistance || routeSummary.totalDistance || 1560}
+            preloadedTransit={itinerary.mobilityTransit}
+          />
         )}
 
         {/* =========================================================================

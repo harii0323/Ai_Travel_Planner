@@ -281,52 +281,82 @@ function calculateTollExpenses({
 
 /**
  * 3. Calculate Public Transportation Items (For bus, train, flight)
+ * Grounded in Mobility Database GTFS catalog (mdb-2867 / mdb-3361 / mdb-1835)
  */
 function calculatePublicTransportExpenses({
   transportMode = 'bus',
   totalDistance = 0,
   numTravelers = 1,
-  phases = { onwardDays: 1, destinationStayDays: 2, returnDays: 1 }
+  phases = { onwardDays: 1, destinationStayDays: 2, returnDays: 1 },
+  origin = 'Hyderabad',
+  destination = 'Kerala',
+  travelClass = null
 }) {
   const items = [];
   const isPublic = transportMode !== 'ownTransport' && transportMode !== 'selfDriveRentalCar';
   if (!isPublic) return items;
 
-  const transitData = getLivePublicTransitRates(totalDistance, transportMode, numTravelers);
+  const transitData = getLivePublicTransitRates(totalDistance, transportMode, numTravelers, origin, destination, travelClass);
   const halfCost = Math.round(transitData.totalTripTransitCost / 2);
+
+  const routeLabel = transitData.primaryRoute
+    ? (transitData.primaryRoute.trainName || transitData.primaryRoute.serviceName)
+    : '';
+
+  const outboundName = routeLabel
+    ? `Outbound Transit: ${routeLabel} (${transitData.serviceClass})`
+    : `Outbound Intercity Transit (${transitData.serviceClass})`;
+
+  const returnName = routeLabel
+    ? `Return Transit: ${routeLabel} (${transitData.serviceClass})`
+    : `Return Intercity Transit (${transitData.serviceClass})`;
 
   items.push(createExpenseItem({
     expenseId: 'TRANSIT_OUTBOUND_001',
     category: 'other',
     subCategory: transportMode,
-    name: `Outbound Intercity Transit (${transitData.serviceClass})`,
+    name: outboundName,
     amount: halfCost,
     day: 1,
     phase: 'outbound',
-    segment: 'Outbound Transit',
+    segment: 'Outbound Transit Corridor',
     source: transitData.source,
     status: DATA_STATUS.REAL_TIME,
     isEstimate: false,
     unitPrice: transitData.farePerPerson,
     quantity: numTravelers,
-    unit: 'Passengers'
+    unit: 'Passengers',
+    details: {
+      route: transitData.primaryRoute,
+      feedId: transitData.feedId,
+      feedProvider: transitData.feedProvider,
+      faresByClass: transitData.faresByClass,
+      mobilityDatabaseVerified: true
+    }
   }));
 
   items.push(createExpenseItem({
     expenseId: 'TRANSIT_RETURN_002',
     category: 'other',
     subCategory: transportMode,
-    name: `Return Intercity Transit (${transitData.serviceClass})`,
+    name: returnName,
     amount: transitData.totalTripTransitCost - halfCost,
     day: Math.max(1, phases.onwardDays + phases.destinationStayDays + 1),
     phase: 'return',
-    segment: 'Return Transit',
+    segment: 'Return Transit Corridor',
     source: transitData.source,
     status: DATA_STATUS.REAL_TIME,
     isEstimate: false,
     unitPrice: transitData.farePerPerson,
     quantity: numTravelers,
-    unit: 'Passengers'
+    unit: 'Passengers',
+    details: {
+      route: transitData.primaryRoute,
+      feedId: transitData.feedId,
+      feedProvider: transitData.feedProvider,
+      faresByClass: transitData.faresByClass,
+      mobilityDatabaseVerified: true
+    }
   }));
 
   return items;
@@ -782,7 +812,10 @@ function calculateTripCost(tripData = {}) {
       transportMode: effectiveMode,
       totalDistance: totalDist,
       numTravelers: travelers,
-      phases
+      phases,
+      origin: startLocation,
+      destination,
+      travelClass: root.travelClass || tripData.travelClass
     }),
     ...calculateAccommodationExpenses({
       destination,

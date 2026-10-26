@@ -151,7 +151,7 @@ function App() {
     setUser(null);
     setToken(null);
     setIsAuthenticated(false);
-    setAuthMode('login');
+    setAuthModal(null);
     setCurrentPage('dashboard');
 
     // Remove Axios default header
@@ -336,10 +336,10 @@ function App() {
               </>
             ) : (
               <div className="navbar-auth-actions">
-                <button className="btn-nav-login" onClick={() => setAuthModal('login')}>
+                <button id="nav-login-btn" className="btn-nav-login" onClick={() => setAuthModal('login')}>
                   Sign In
                 </button>
-                <button className="btn-nav-register" onClick={() => setAuthModal('register')}>
+                <button id="nav-register-btn" className="btn-nav-register" onClick={() => setAuthModal('register')}>
                   Create Account
                 </button>
               </div>
@@ -370,10 +370,10 @@ function App() {
                   </div>
                 ) : (
                   <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                    <button className="btn-nav-login" style={{ flex: 1, justifyContent: 'center' }} onClick={() => { setIsMobileMenuOpen(false); setAuthModal('login'); }}>
+                    <button id="mobile-nav-login-btn" className="btn-nav-login" style={{ flex: 1, justifyContent: 'center' }} onClick={() => { setIsMobileMenuOpen(false); setAuthModal('login'); }}>
                       Sign In
                     </button>
-                    <button className="btn-nav-register" style={{ flex: 1, justifyContent: 'center' }} onClick={() => { setIsMobileMenuOpen(false); setAuthModal('register'); }}>
+                    <button id="mobile-nav-register-btn" className="btn-nav-register" style={{ flex: 1, justifyContent: 'center' }} onClick={() => { setIsMobileMenuOpen(false); setAuthModal('register'); }}>
                       Register
                     </button>
                   </div>

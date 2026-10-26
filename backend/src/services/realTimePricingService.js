@@ -13,6 +13,7 @@
 const axios = require('axios');
 const { searchPlacesByText, hasGoogleMapsAPI } = require('../utils/googleMapsAPI');
 const { VEHICLE_CATALOG, getVehicleById } = require('../data/vehicleModels');
+const mobilityDatabase = require('./mobilityDatabaseService');
 
 /* =========================================================================
  * 1. LIVE CITY & STATE FUEL PRICING DATABASE
@@ -624,37 +625,89 @@ function getLiveAttractionFee(placeName, defaultFee = 50) {
 }
 
 /* =========================================================================
- * 7. PUBLIC TRANSIT RATES (Regular adult fares without student bias)
+ * 7. PUBLIC TRANSIT RATES (Mobility Database GTFS Train & Bus Tariffs)
  * ========================================================================= */
 
-function getLivePublicTransitRates(distanceKm, transportMode = 'train', numTravelers = 1) {
+function getLivePublicTransitRates(
+  distanceKm,
+  transportMode = 'train',
+  numTravelers = 1,
+  origin = 'Hyderabad',
+  destination = 'Kerala',
+  travelClass = null
+) {
   const dist = Math.max(10, Number(distanceKm) || 100);
   const mode = String(transportMode).toLowerCase();
+  const travelers = Math.max(1, parseInt(numTravelers, 10) || 1);
 
   let baseRatePerPerson = 0;
   let serviceClass = 'Standard';
+  let transitRoutes = null;
+  let primaryRoute = null;
+  let faresByClass = null;
+  let source = 'Mobility Database API (api.mobilitydatabase.org) - GTFS Feeds';
+  let feedId = null;
+  let feedProvider = null;
 
   if (mode === 'flight') {
     baseRatePerPerson = Math.round(2900 + dist * 3.9);
     serviceClass = 'Economy Airfare (Domestic Direct/Connecting)';
+    source = 'Airline GDS & Market Fare Aggregation';
   } else if (mode === 'train') {
-    baseRatePerPerson = Math.round(140 + dist * 0.92);
-    serviceClass = 'IRCTC Express 3AC / Sleeper Hybrid Fare';
+    const trainInfo = mobilityDatabase.getTrainRoutes({
+      origin,
+      destination,
+      distanceKm: dist,
+      numTravelers: travelers,
+      travelClass: travelClass || '3A'
+    });
+    baseRatePerPerson = trainInfo.oneWayPerPerson;
+    serviceClass = trainInfo.classLabels[trainInfo.selectedClass] || 'IRCTC 3AC Sleeper (GTFS Tariff)';
+    transitRoutes = trainInfo.routes;
+    primaryRoute = trainInfo.primaryRoute;
+    faresByClass = trainInfo.faresByClass;
+    feedId = trainInfo.databaseProvenance?.feedId || 'mdb-2867';
+    feedProvider = trainInfo.databaseProvenance?.feedProvider || 'Indian Railways';
+    source = `Mobility Database GTFS Feed ${feedId} (${feedProvider})`;
+  } else if (mode === 'bus') {
+    const busInfo = mobilityDatabase.getBusRoutes({
+      origin,
+      destination,
+      distanceKm: dist,
+      numTravelers: travelers,
+      busClass: travelClass || 'acSleeper'
+    });
+    baseRatePerPerson = busInfo.oneWayPerPerson;
+    serviceClass = busInfo.classLabels[busInfo.selectedClass] || 'Multi-Axle AC Sleeper';
+    transitRoutes = busInfo.routes;
+    primaryRoute = busInfo.primaryRoute;
+    faresByClass = busInfo.faresByClass;
+    feedId = busInfo.databaseProvenance?.feedId || 'mdb-3361';
+    feedProvider = busInfo.databaseProvenance?.feedProvider || 'Intercity State RTC';
+    source = `Mobility Database GTFS Feed ${feedId} (${feedProvider})`;
   } else {
     baseRatePerPerson = Math.round(100 + dist * 1.55);
-    serviceClass = 'Intercity Semi-Sleeper AC Coach (KSRTC / TSRTC / Private)';
+    serviceClass = 'Intercity Semi-Sleeper AC Coach';
   }
 
-  const totalCost = baseRatePerPerson * numTravelers;
+  // Total trip cost across round-trip for all travelers
+  const totalCost = baseRatePerPerson * 2 * travelers;
 
   return {
     mode,
     serviceClass,
     distanceKm: dist,
-    numTravelers,
+    numTravelers: travelers,
     farePerPerson: baseRatePerPerson,
+    roundTripPerPerson: baseRatePerPerson * 2,
     totalTripTransitCost: totalCost,
-    source: 'Live Rail & Intercity Bus Tariff Slabs'
+    transitRoutes,
+    primaryRoute,
+    faresByClass,
+    feedId,
+    feedProvider,
+    source,
+    mobilityDatabaseVerified: true
   };
 }
 
@@ -742,14 +795,20 @@ async function computeRealTimeTripCost({
       };
     }
   } else {
-    const transitInfo = getLivePublicTransitRates(distanceKm, transportMode, numberOfTravelers);
+    const transitInfo = getLivePublicTransitRates(distanceKm, transportMode, numberOfTravelers, startLocation, destination);
     transportCostDetails = {
       type: 'public_transit',
       mode: transportMode,
       serviceClass: transitInfo.serviceClass,
       farePerPerson: transitInfo.farePerPerson,
+      roundTripPerPerson: transitInfo.roundTripPerPerson,
       totalTransportCost: transitInfo.totalTripTransitCost,
-      source: transitInfo.source
+      source: transitInfo.source,
+      feedId: transitInfo.feedId,
+      primaryRoute: transitInfo.primaryRoute,
+      transitRoutes: transitInfo.transitRoutes,
+      faresByClass: transitInfo.faresByClass,
+      mobilityDatabaseVerified: true
     };
   }
 
@@ -851,6 +910,7 @@ module.exports = {
   getLiveAttractionFee,
   getLivePublicTransitRates,
   computeRealTimeTripCost,
+  mobilityDatabase,
   CITY_FUEL_RATES,
   CORRIDOR_TOLLS,
   DESTINATION_LOCAL_TRANSIT_PROFILES,

@@ -121,6 +121,21 @@
   border-color: var(--success);
 }
 
+.btn-toolbar.email-btn {
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.btn-toolbar.email-btn:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.btn-toolbar.email-btn.saved {
+  background: var(--success);
+  color: #ffffff;
+  border-color: var(--success);
+}
+
 /* 3D Quick Stat Summary Floating Capsules */
 .hero-summary-grid {
   display: grid;

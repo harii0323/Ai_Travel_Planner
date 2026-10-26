@@ -1084,6 +1084,54 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
               </div>
             </div>
 
+            {/* Mobility Database GTFS Train Engine Info */}
+            {form.transport === 'train' && (
+              <div className="vehicle-calculator-box" style={{ background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)', borderColor: '#cbd5e1' }}>
+                <div className="vehicle-calculator-header" style={{ color: '#0369a1' }}>
+                  <Train size={18} color="#0284c7" />
+                  <span>🚆 Mobility Database GTFS Train Engine Active</span>
+                </div>
+                <p style={{ fontSize: '13px', color: '#475569', margin: '4px 0 10px 0', lineHeight: 1.5 }}>
+                  Your train routes, timetables, intermediate stations, and class fares (SL, 3A, 2A, 1A, Vande Bharat CC) are dynamically powered by <strong>Indian Railways GTFS Feed (mdb-2867)</strong> from the Mobility Database.
+                </p>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '11px', background: '#e0f2fe', color: '#0369a1', padding: '3px 8px', borderRadius: '6px', fontWeight: 700 }}>
+                    ✓ IRCTC Ground-Truth Distance Slabs
+                  </span>
+                  <span style={{ fontSize: '11px', background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '6px', fontWeight: 700 }}>
+                    ✓ Intermediate Halt Schedules
+                  </span>
+                  <span style={{ fontSize: '11px', background: '#fef3c7', color: '#92400e', padding: '3px 8px', borderRadius: '6px', fontWeight: 700 }}>
+                    ✓ Realistic Per-Traveler Fares
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Mobility Database GTFS Intercity Bus Engine Info */}
+            {form.transport === 'bus' && (
+              <div className="vehicle-calculator-box" style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%)', borderColor: '#bbf7d0' }}>
+                <div className="vehicle-calculator-header" style={{ color: '#15803d' }}>
+                  <Bus size={18} color="#16a34a" />
+                  <span>🚌 Mobility Database GTFS Intercity Bus Engine Active</span>
+                </div>
+                <p style={{ fontSize: '13px', color: '#475569', margin: '4px 0 10px 0', lineHeight: 1.5 }}>
+                  Your intercity bus coaches, boarding terminals, highway stops, and luxury sleeper tariffs are dynamically powered by <strong>State Road Transport GTFS Feeds (mdb-3361 / mdb-1835 / mdb-2336)</strong> from the Mobility Database.
+                </p>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '11px', background: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '6px', fontWeight: 700 }}>
+                    ✓ TGSRTC / KSRTC / MSRTC Open Data
+                  </span>
+                  <span style={{ fontSize: '11px', background: '#e0f2fe', color: '#0369a1', padding: '3px 8px', borderRadius: '6px', fontWeight: 700 }}>
+                    ✓ Volvo Multi-Axle Sleeper Tariffs
+                  </span>
+                  <span style={{ fontSize: '11px', background: '#fef3c7', color: '#92400e', padding: '3px 8px', borderRadius: '6px', fontWeight: 700 }}>
+                    ✓ Highway Halt Coordination
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Own Transport Real-World Dynamic Calculator */}
             {form.transport === 'ownTransport' && (
               <div className="vehicle-calculator-box">

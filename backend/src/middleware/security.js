@@ -37,8 +37,8 @@ class SlidingWindowRateLimiter {
 
   middleware() {
     return (req, res, next) => {
-      // Health check endpoint is exempt from throttling
-      if (req.path === '/api/health') {
+      // Health check endpoint and CORS preflights are exempt from throttling
+      if (req.path === '/api/health' || req.method === 'OPTIONS') {
         return next();
       }
 
@@ -86,7 +86,14 @@ const securityHeaders = (req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(), microphone=()');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  
+  const clientOrigin = req.headers.origin;
+  const isAllowedOrigin = Boolean(clientOrigin && (
+    clientOrigin.includes('localhost') ||
+    clientOrigin.includes('127.0.0.1') ||
+    (process.env.FRONTEND_URL && process.env.FRONTEND_URL.includes(clientOrigin))
+  ));
+  res.setHeader('Cross-Origin-Resource-Policy', isAllowedOrigin ? 'cross-origin' : 'same-origin');
 
   // Defense-in-depth Content Security Policy
   const csp = [
@@ -205,11 +212,18 @@ const generalRateLimiter = new SlidingWindowRateLimiter({
   message: 'High request rate detected. Throttling active to preserve server stability.'
 }).middleware();
 
+const emailActionRateLimiter = new SlidingWindowRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 30,
+  message: 'Email request rate limit reached. Please wait a few minutes before requesting more emails.'
+}).middleware();
+
 module.exports = {
   securityHeaders,
   requestTimeout,
   authRateLimiter,
   itineraryRateLimiter,
   generalRateLimiter,
+  emailActionRateLimiter,
   cacheMiddleware: (ttl) => memoryResponseCache.middleware(ttl)
 };

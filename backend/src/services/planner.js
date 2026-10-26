@@ -559,28 +559,37 @@ async function estimateRouteDistance(startLocation, destination, intermediateSto
   }
 }
 
-function estimateTransportCost(mode, distance) {
-  const liveTransit = getLivePublicTransitRates(distance, mode, 1);
+function estimateTransportCost(mode, distance, origin = 'Hyderabad', destination = 'Kerala', travelClass = null) {
+  const liveTransit = getLivePublicTransitRates(distance, mode, 1, origin, destination, travelClass);
   return {
     mode: mode,
     farePerPerson: liveTransit.farePerPerson,
     distance: distance,
+    feedId: liveTransit.feedId,
+    primaryRoute: liveTransit.primaryRoute,
     source: liveTransit.source
   };
 }
 
 // Calculate transportation cost for public transport using live dynamic slabs
-function calculatePublicTransportCost(transportMode, distance, numTravelers) {
-  const liveTransit = getLivePublicTransitRates(distance, transportMode, numTravelers);
+function calculatePublicTransportCost(transportMode, distance, numTravelers, origin = 'Hyderabad', destination = 'Kerala', travelClass = null) {
+  const liveTransit = getLivePublicTransitRates(distance, transportMode, numTravelers, origin, destination, travelClass);
 
   return {
     mode: transportMode,
     serviceClass: liveTransit.serviceClass,
     farePerPerson: liveTransit.farePerPerson,
+    roundTripPerPerson: liveTransit.roundTripPerPerson,
     totalCost: liveTransit.totalTripTransitCost,
     numTravelers: numTravelers,
     distance: distance,
-    source: liveTransit.source
+    feedId: liveTransit.feedId,
+    feedProvider: liveTransit.feedProvider,
+    primaryRoute: liveTransit.primaryRoute,
+    transitRoutes: liveTransit.transitRoutes,
+    faresByClass: liveTransit.faresByClass,
+    source: liveTransit.source,
+    mobilityDatabaseVerified: true
   };
 }
 
@@ -3614,7 +3623,10 @@ async function generateItinerary(data) {
       transportCostDetails = calculatePublicTransportCost(
         effectiveTransportMode || 'bus',
         routePlan.totalDistance,
-        numberOfTravelers
+        numberOfTravelers,
+        startLocation,
+        destination,
+        data.travelClass
       );
       transportCost = transportCostDetails.totalCost;
     }
@@ -4154,6 +4166,15 @@ async function generateItinerary(data) {
         tollCost: authoritativeCostSummary.tolls,
         isEV: transportCostDetails.isEV || false,
         evPlan: transportCostDetails.evPlan || null,
+        transitDetails: transportCostDetails.transitRoutes ? {
+          primaryRoute: transportCostDetails.primaryRoute,
+          transitRoutes: transportCostDetails.transitRoutes,
+          faresByClass: transportCostDetails.faresByClass,
+          feedId: transportCostDetails.feedId,
+          feedProvider: transportCostDetails.feedProvider,
+          source: transportCostDetails.source,
+          mobilityDatabaseVerified: true
+        } : null,
         rentalVehicle: rentalVehicle || null,
         rentalBooking: rentalBooking || null,
         rentalDetails: rentalDetails || null,
@@ -4166,6 +4187,17 @@ async function generateItinerary(data) {
           fuelStopsRequired: effectiveFuelType !== 'electric'
         } : null
       },
+      mobilityTransit: (effectiveTransportMode === 'train' || effectiveTransportMode === 'bus') ? {
+        mode: effectiveTransportMode,
+        corridor: `${startLocation} → ${destination}`,
+        primaryRoute: transportCostDetails.primaryRoute,
+        routes: transportCostDetails.transitRoutes,
+        faresByClass: transportCostDetails.faresByClass,
+        feedId: transportCostDetails.feedId,
+        feedProvider: transportCostDetails.feedProvider,
+        source: transportCostDetails.source,
+        mobilityDatabaseVerified: true
+      } : null,
       rentalVehicle: rentalVehicle || null,
       rentalBooking: rentalBooking || null,
 

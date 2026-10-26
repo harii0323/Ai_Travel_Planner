@@ -89,6 +89,19 @@ const initializeSchema = async () => {
       ADD COLUMN IF NOT EXISTS rental_booking JSONB NOT NULL DEFAULT '{}'::jsonb,
       ADD COLUMN IF NOT EXISTS rental_vehicle JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_verified BOOLEAN NOT NULL DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS verification_token_hash TEXT,
+      ADD COLUMN IF NOT EXISTS verification_token_expires TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS verification_attempts INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS reset_otp_hash TEXT,
+      ADD COLUMN IF NOT EXISTS reset_otp_expires TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS reset_otp_attempts INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS reset_token_hash TEXT,
+      ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
+
+    UPDATE users SET is_verified = TRUE WHERE email = 'ravi@example.com';
+
     CREATE TABLE IF NOT EXISTS tourist_places (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
@@ -147,8 +160,20 @@ const initializeSchema = async () => {
       idempotency_key VARCHAR(128),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    CREATE INDEX IF NOT EXISTS idx_payment_transactions_booking ON payment_transactions(booking_id);
-    CREATE INDEX IF NOT EXISTS idx_payment_transactions_user ON payment_transactions(user_id);
+    CREATE TABLE IF NOT EXISTS email_logs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      recipient_email TEXT NOT NULL,
+      email_type TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'sent',
+      brevo_message_id TEXT,
+      error_message TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_email_logs_user ON email_logs(user_id);
+    CREATE INDEX IF NOT EXISTS idx_email_logs_type ON email_logs(email_type);
 
     -- Enable and Force Row Level Security (RLS) on user-owned tables
     ALTER TABLE itineraries ENABLE ROW LEVEL SECURITY;
