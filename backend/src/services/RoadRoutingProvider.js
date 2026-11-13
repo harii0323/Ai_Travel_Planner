@@ -85,20 +85,30 @@ class RoadRoutingProvider {
 
   /**
    * Resolve an input location into clean name and verified coordinates
+   * Preserves id, nodeId, placeId, googlePlaceId, and placeKey identifiers
    */
   normalizeLocation(loc) {
     if (!loc) return null;
     let name = '';
     let lat = null;
     let lng = null;
+    let id = null;
+    let placeId = null;
+    let placeKey = null;
 
     if (typeof loc === 'string') {
       const parts = loc.split(',');
       if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
-        return { lat: parseFloat(parts[0]), lng: parseFloat(parts[1]), name: loc };
+        lat = parseFloat(parts[0]);
+        lng = parseFloat(parts[1]);
+        name = loc;
+      } else {
+        name = loc.trim();
       }
-      name = loc.trim();
     } else {
+      id = loc.id || loc.nodeId || loc.nodeKey || null;
+      placeId = loc.placeId || loc.googlePlaceId || null;
+      placeKey = loc.placeKey || null;
       name = loc.name || loc.city || loc.placeName || loc.formattedAddress || '';
       lat = loc.lat !== undefined ? Number(loc.lat) : (loc.latitude !== undefined ? Number(loc.latitude) : null);
       lng = loc.lng !== undefined ? Number(loc.lng) : (loc.longitude !== undefined ? Number(loc.longitude) : null);
@@ -108,16 +118,32 @@ class RoadRoutingProvider {
       }
     }
 
-    // If coordinates already present and valid, return immediately
+    // If coordinates already present and valid, return immediately with preserved IDs
     if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
-      return { name: name || `${lat.toFixed(4)},${lng.toFixed(4)}`, lat, lng };
+      return {
+        id: id || placeId || placeKey || null,
+        nodeId: id || placeId || null,
+        placeId,
+        placeKey,
+        name: name || `${lat.toFixed(4)},${lng.toFixed(4)}`,
+        lat,
+        lng
+      };
     }
 
     // Resolve by known Indian cities/destinations registry
     const cleanName = name.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
     for (const [key, coords] of Object.entries(KNOWN_CITY_COORDINATES)) {
       if (cleanName === key || cleanName.includes(key) || key.includes(cleanName)) {
-        return { name, lat: coords.lat, lng: coords.lng };
+        return {
+          id: id || placeId || placeKey || `CITY_${key.toUpperCase()}`,
+          nodeId: id || placeId || `CITY_${key.toUpperCase()}`,
+          placeId,
+          placeKey,
+          name,
+          lat: coords.lat,
+          lng: coords.lng
+        };
       }
     }
 
@@ -126,11 +152,23 @@ class RoadRoutingProvider {
     if (nodeKey) {
       const node = highwayRoadGraph.getNode(nodeKey);
       if (node && node.lat && node.lng) {
-        return { name, lat: node.lat, lng: node.lng };
+        return {
+          id: id || nodeKey,
+          nodeId: id || nodeKey,
+          placeId,
+          placeKey,
+          name,
+          lat: node.lat,
+          lng: node.lng
+        };
       }
     }
 
     return {
+      id: id || placeId || placeKey || null,
+      nodeId: id || placeId || null,
+      placeId,
+      placeKey,
       name: name || 'Unknown Location',
       lat: null,
       lng: null
@@ -361,15 +399,57 @@ class RoadRoutingProvider {
   /**
    * Pre-computes an N x N pairwise distance & duration transition matrix.
    * Essential for 2-Opt and 3-Opt to avoid repetitive API requests.
+   * Features bounded concurrency, deterministic locationIndexMap, and transparent fallbacks.
    */
   async getRouteMatrix(locations = [], options = {}) {
     if (!Array.isArray(locations) || locations.length === 0) {
-      return { matrix: [], distances: [], durations: [], locations: [], size: 0 };
+      return {
+        matrix: [],
+        distances: [],
+        durations: [],
+        locations: [],
+        size: 0,
+        locationIndexMap: new Map(),
+        getTransition: () => null
+      };
     }
 
     const n = locations.length;
     const normLocations = locations.map(l => this.normalizeLocation(l));
     const matrix = Array.from({ length: n }, () => Array.from({ length: n }, () => null));
+
+    // Deterministic locationIndexMap mapping ID, placeId, placeKey, coords, and names
+    const locationIndexMap = new Map();
+    normLocations.forEach((loc, idx) => {
+      if (!loc) return;
+      if (loc.id) {
+        locationIndexMap.set(String(loc.id), idx);
+        locationIndexMap.set(String(loc.id).toLowerCase(), idx);
+      }
+      if (loc.nodeId) {
+        locationIndexMap.set(String(loc.nodeId), idx);
+        locationIndexMap.set(String(loc.nodeId).toLowerCase(), idx);
+      }
+      if (loc.placeId) {
+        locationIndexMap.set(String(loc.placeId), idx);
+        locationIndexMap.set(String(loc.placeId).toLowerCase(), idx);
+      }
+      if (loc.placeKey) {
+        locationIndexMap.set(String(loc.placeKey), idx);
+        locationIndexMap.set(String(loc.placeKey).toLowerCase(), idx);
+      }
+      if (loc.lat !== null && loc.lng !== null && !isNaN(loc.lat) && !isNaN(loc.lng)) {
+        locationIndexMap.set(`${loc.lat.toFixed(4)},${loc.lng.toFixed(4)}`, idx);
+      }
+      if (loc.name) {
+        locationIndexMap.set(loc.name, idx);
+        locationIndexMap.set(loc.name.toLowerCase().trim(), idx);
+        const simpleName = loc.name.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+        if (simpleName) {
+          locationIndexMap.set(simpleName, idx);
+        }
+      }
+    });
 
     // Fill diagonal (exact zero self-distance)
     for (let i = 0; i < n; i++) {
@@ -388,17 +468,25 @@ class RoadRoutingProvider {
 
     // Memoize pairs across identical names/coords
     const pairCache = new Map();
+    const pairsToQuery = [];
 
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
-        if (i === j) continue;
-        const fromLoc = normLocations[i];
-        const toLoc = normLocations[j];
+        if (i !== j) {
+          pairsToQuery.push({ i, j, fromLoc: normLocations[i], toLoc: normLocations[j] });
+        }
+      }
+    }
 
+    // Process pair queries with bounded concurrency (batch limit = 6)
+    const BATCH_SIZE = 6;
+    for (let b = 0; b < pairsToQuery.length; b += BATCH_SIZE) {
+      const batch = pairsToQuery.slice(b, b + BATCH_SIZE);
+      await Promise.all(batch.map(async ({ i, j, fromLoc, toLoc }) => {
         const pairKey = `${fromLoc.name}_${fromLoc.lat}_${fromLoc.lng}-->${toLoc.name}_${toLoc.lat}_${toLoc.lng}`;
         if (pairCache.has(pairKey)) {
           matrix[i][j] = { ...pairCache.get(pairKey) };
-          continue;
+          return;
         }
 
         try {
@@ -439,7 +527,7 @@ class RoadRoutingProvider {
           matrix[i][j] = fallbackCell;
           pairCache.set(pairKey, fallbackCell);
         }
-      }
+      }));
     }
 
     // Numerical 2D arrays for quick algorithmic lookups
@@ -452,18 +540,86 @@ class RoadRoutingProvider {
       if (cell && cell.dataSource) usedSources.add(cell.dataSource);
     }));
 
+    const self = this;
+    function resolveIndex(loc) {
+      if (loc === null || loc === undefined) return undefined;
+      if (typeof loc === 'number' && loc >= 0 && loc < n) return loc;
+      if (typeof loc === 'string') {
+        if (locationIndexMap.has(loc)) return locationIndexMap.get(loc);
+        if (locationIndexMap.has(loc.toLowerCase().trim())) return locationIndexMap.get(loc.toLowerCase().trim());
+        const simple = loc.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+        if (locationIndexMap.has(simple)) return locationIndexMap.get(simple);
+        return undefined;
+      }
+      if (typeof loc === 'object') {
+        const id = loc.id || loc.nodeId || loc.nodeKey;
+        if (id && locationIndexMap.has(String(id))) return locationIndexMap.get(String(id));
+        if (id && locationIndexMap.has(String(id).toLowerCase())) return locationIndexMap.get(String(id).toLowerCase());
+        const pId = loc.placeId || loc.googlePlaceId;
+        if (pId && locationIndexMap.has(String(pId))) return locationIndexMap.get(String(pId));
+        if (pId && locationIndexMap.has(String(pId).toLowerCase())) return locationIndexMap.get(String(pId).toLowerCase());
+        const pKey = loc.placeKey;
+        if (pKey && locationIndexMap.has(String(pKey))) return locationIndexMap.get(String(pKey));
+        if (pKey && locationIndexMap.has(String(pKey).toLowerCase())) return locationIndexMap.get(String(pKey).toLowerCase());
+        const lat = loc.lat !== undefined ? Number(loc.lat) : (loc.latitude !== undefined ? Number(loc.latitude) : (loc.coordinates?.lat !== undefined ? Number(loc.coordinates.lat) : null));
+        const lng = loc.lng !== undefined ? Number(loc.lng) : (loc.longitude !== undefined ? Number(loc.longitude) : (loc.coordinates?.lng !== undefined ? Number(loc.coordinates.lng) : null));
+        if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
+          const coordKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+          if (locationIndexMap.has(coordKey)) return locationIndexMap.get(coordKey);
+        }
+        const name = loc.name || loc.placeName || loc.city;
+        if (name) {
+          if (locationIndexMap.has(name)) return locationIndexMap.get(name);
+          if (locationIndexMap.has(name.toLowerCase().trim())) return locationIndexMap.get(name.toLowerCase().trim());
+          const simple = name.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+          if (locationIndexMap.has(simple)) return locationIndexMap.get(simple);
+        }
+      }
+      return undefined;
+    }
+
+    function getTransition(fromLoc, toLoc) {
+      const idx1 = resolveIndex(fromLoc);
+      const idx2 = resolveIndex(toLoc);
+      if (idx1 !== undefined && idx2 !== undefined && matrix[idx1]?.[idx2]) {
+        return matrix[idx1][idx2];
+      }
+      // Transparent Tier 4 non-zero fallback
+      const normFrom = self.normalizeLocation(fromLoc);
+      const normTo = self.normalizeLocation(toLoc);
+      let directKm = 50;
+      if (normFrom && normTo && normFrom.lat !== null && normTo.lat !== null) {
+        directKm = haversineDistanceKm(normFrom, normTo);
+      }
+      const roadKm = Math.max(5, Math.round(directKm * 1.28));
+      const durMins = Math.max(10, Math.round((roadKm / 55) * 60));
+      return {
+        distanceKm: roadKm,
+        totalDistanceKm: roadKm,
+        durationMinutes: durMins,
+        totalDurationMinutes: durMins,
+        isLiveVerified: false,
+        dataStatus: 'estimated',
+        dataSource: 'geodesic_haversine_projection_model',
+        trafficSummary: 'Transition cell fallback estimate',
+        retrievalTimestamp: new Date().toISOString()
+      };
+    }
+
     return {
       size: n,
       locations: normLocations,
       matrix,
       distances,
       durations,
+      locationIndexMap,
       dataProvenance: {
         sources: Array.from(usedSources),
         pairCount: n * (n - 1),
         isAllEstimated: !Array.from(usedSources).some(s => s === 'google_directions_api' || s === 'osrm_open_road_router' || s === 'limited_highway_corridor_graph')
       },
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      getTransition
     };
   }
 
@@ -511,8 +667,69 @@ class RoadRoutingProvider {
 
 const roadRoutingProviderInstance = new RoadRoutingProvider();
 
+/**
+ * Global helper to resolve a pairwise cell from any route transition matrix structure.
+ * Handles both rich matrix objects (with getTransition / locationIndexMap) and raw 2D arrays.
+ */
+function resolveMatrixCell(matrixObj, fromLoc, toLoc) {
+  if (!matrixObj) return null;
+  if (typeof matrixObj.getTransition === 'function') {
+    return matrixObj.getTransition(fromLoc, toLoc);
+  }
+  const mat = matrixObj.matrix || (Array.isArray(matrixObj) ? matrixObj : null);
+  const map = matrixObj.locationIndexMap;
+  if (mat && map) {
+    const resolve = (l) => {
+      if (l == null) return undefined;
+      if (typeof l === 'number') return l;
+      if (typeof l === 'string') {
+        if (map.has(l)) return map.get(l);
+        if (map.has(l.toLowerCase().trim())) return map.get(l.toLowerCase().trim());
+        const s = l.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+        if (map.has(s)) return map.get(s);
+        return undefined;
+      }
+      const k = l.id || l.nodeId || l.placeId || l.placeKey || (l.lat != null && l.lng != null ? `${Number(l.lat).toFixed(4)},${Number(l.lng).toFixed(4)}` : null) || l.name;
+      if (k && map.has(String(k))) return map.get(String(k));
+      if (k && map.has(String(k).toLowerCase().trim())) return map.get(String(k).toLowerCase().trim());
+      if (l.name) {
+        if (map.has(l.name)) return map.get(l.name);
+        if (map.has(l.name.toLowerCase().trim())) return map.get(l.name.toLowerCase().trim());
+      }
+      return undefined;
+    };
+    const i = resolve(fromLoc);
+    const j = resolve(toLoc);
+    if (i !== undefined && j !== undefined && mat[i]?.[j]) {
+      return mat[i][j];
+    }
+  }
+
+  // Graceful Tier 4 fallback
+  const normFrom = roadRoutingProviderInstance.normalizeLocation(fromLoc);
+  const normTo = roadRoutingProviderInstance.normalizeLocation(toLoc);
+  let directKm = 50;
+  if (normFrom && normTo && normFrom.lat !== null && normTo.lat !== null) {
+    directKm = haversineDistanceKm(normFrom, normTo);
+  }
+  const roadKm = Math.max(5, Math.round(directKm * 1.28));
+  const durMins = Math.max(10, Math.round((roadKm / 55) * 60));
+  return {
+    distanceKm: roadKm,
+    totalDistanceKm: roadKm,
+    durationMinutes: durMins,
+    totalDurationMinutes: durMins,
+    isLiveVerified: false,
+    dataStatus: 'estimated',
+    dataSource: 'geodesic_haversine_projection_model',
+    trafficSummary: 'Matrix cell resolution fallback estimate',
+    retrievalTimestamp: new Date().toISOString()
+  };
+}
+
 module.exports = {
   RoadRoutingProvider,
-  roadRoutingProvider: roadRoutingProviderInstance
+  roadRoutingProvider: roadRoutingProviderInstance,
+  resolveMatrixCell
 };
 

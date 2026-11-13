@@ -101,7 +101,7 @@ function validateAndEnforceOutputContract({
           to: d.endLocation,
           distanceKm: d.totalDayDistanceKm,
           durationMinutes: d.totalDayDrivingMinutes,
-          trafficCondition: 'Moderate Highway Traffic'
+          trafficCondition: d.trafficCondition || (routeInfo.isLiveVerified ? 'Live Provider Traffic Monitored' : 'Diurnal Highway Traffic Model')
         }
       ],
       totalDistance: `${d.totalDayDistanceKm} km`,
@@ -115,8 +115,8 @@ function validateAndEnforceOutputContract({
       mealBreaks,
       restBreaks,
       overnightLocation: d.endLocation,
-      estimatedDailyCost: d.cost || { dayTotal: 1500 },
-      cost: d.cost || { day: d.day, dayTotal: 1500, fuel: 500, tolls: 100, accommodation: 500, food: 400, entryFees: 0, activities: 0, parking: 0, other: 0 },
+      estimatedDailyCost: d.cost || (budgetSummary.costSummary?.dayWise?.[d.day - 1] ? { dayTotal: budgetSummary.costSummary.dayWise[d.day - 1].dayTotal } : { dayTotal: 0 }),
+      cost: d.cost || (budgetSummary.costSummary?.dayWise?.[d.day - 1] || { day: d.day, dayTotal: 0, fuel: 0, tolls: 0, accommodation: 0, food: 0, entryFees: 0, activities: 0, parking: 0, other: 0 }),
       plan: d.plan
     };
   });
@@ -185,13 +185,13 @@ function validateAndEnforceOutputContract({
   };
 
   const costBreakdown = {
-    fuel: { amount: totalFuel, dataStatus: 'calculated_estimate', unit: 'Highway Fuel Expenditure' },
-    tolls: { amount: totalTolls, dataStatus: 'calculated_estimate', unit: 'Corridor Tolls' },
-    accommodation: { amount: totalAcc, dataStatus: 'recently_retrieved', unit: 'Overnight Stays' },
-    food: { amount: totalFood, dataStatus: 'calculated_estimate', unit: 'Daily Dining' },
-    entryFees: { amount: totalEntryFees, dataStatus: 'live_verified', unit: 'Attraction Tickets' },
-    activities: { amount: totalActivities, dataStatus: 'live_verified', unit: 'Activity Passes' },
-    parking: { amount: totalParking, dataStatus: 'calculated_estimate', unit: 'Parking Buffer' },
+    fuel: { amount: totalFuel, dataStatus: budgetSummary.costBreakdown?.fuel?.dataStatus || 'calculated_estimate', unit: 'Highway Fuel Expenditure' },
+    tolls: { amount: totalTolls, dataStatus: budgetSummary.costBreakdown?.tolls?.dataStatus || 'calculated_estimate', unit: 'Corridor Tolls' },
+    accommodation: { amount: totalAcc, dataStatus: budgetSummary.costBreakdown?.accommodation?.dataStatus || 'recently_retrieved', unit: 'Overnight Stays' },
+    food: { amount: totalFood, dataStatus: budgetSummary.costBreakdown?.food?.dataStatus || 'calculated_estimate', unit: 'Daily Dining' },
+    entryFees: { amount: totalEntryFees, dataStatus: budgetSummary.costBreakdown?.activities?.dataStatus || 'calculated_estimate', unit: 'Attraction Tickets' },
+    activities: { amount: totalActivities, dataStatus: budgetSummary.costBreakdown?.activities?.dataStatus || 'calculated_estimate', unit: 'Activity Passes' },
+    parking: { amount: totalParking, dataStatus: budgetSummary.costBreakdown?.parkingAndBuffer?.dataStatus || 'calculated_estimate', unit: 'Parking Buffer' },
     other: { amount: totalOther, dataStatus: 'calculated_estimate', unit: 'Incidentals' }
   };
 

@@ -17,16 +17,37 @@ const { haversineDistanceKm, highwayRoadGraph } = require('./RoadNetworkGraphEng
 /**
  * Calculates transition distance between two points with road curvature or highway graph
  */
+/**
+ * Calculates transition distance between two points with road curvature, transition matrix, or highway graph
+ */
 function getSegmentRoadDistanceKm(p1, p2, matrix = null, indexMap = null) {
   if (!p1 || !p2) return 5;
 
-  if (matrix && indexMap) {
-    const k1 = p1.id || p1.name || `${p1.lat},${p1.lng}`;
-    const k2 = p2.id || p2.name || `${p2.lat},${p2.lng}`;
-    const i = indexMap.get(k1);
-    const j = indexMap.get(k2);
-    if (i !== undefined && j !== undefined && matrix[i] && matrix[i][j]) {
-      return matrix[i][j].distanceKm;
+  // Rich matrix object with getTransition helper
+  if (matrix && typeof matrix.getTransition === 'function') {
+    const cell = matrix.getTransition(p1, p2);
+    if (cell && cell.distanceKm > 0) return cell.distanceKm;
+  }
+
+  const mat = matrix?.matrix || (Array.isArray(matrix) ? matrix : null);
+  const map = indexMap || matrix?.locationIndexMap;
+
+  if (mat && map) {
+    const resolve = (p) => {
+      if (!p) return undefined;
+      const k = p.id || p.nodeId || p.placeId || p.placeKey || (p.lat != null && p.lng != null ? `${Number(p.lat).toFixed(4)},${Number(p.lng).toFixed(4)}` : null) || p.name;
+      if (k && map.has(String(k))) return map.get(String(k));
+      if (k && map.has(String(k).toLowerCase().trim())) return map.get(String(k).toLowerCase().trim());
+      if (p.name) {
+        if (map.has(p.name)) return map.get(p.name);
+        if (map.has(p.name.toLowerCase().trim())) return map.get(p.name.toLowerCase().trim());
+      }
+      return undefined;
+    };
+    const i = resolve(p1);
+    const j = resolve(p2);
+    if (i !== undefined && j !== undefined && mat[i] && mat[i][j]) {
+      return mat[i][j].distanceKm;
     }
   }
 
@@ -58,8 +79,8 @@ function evaluateRouteCost(route, options = {}) {
   const departureMinutes = options.departureMinutes || 480; // 08:00 AM
   const origin = options.origin || null;
   const destination = options.destination || null;
-  const matrix = options.matrix || null;
-  const indexMap = options.locationIndexMap || null;
+  const matrixObj = options.matrix || options.routeTransitionMatrix || null;
+  const indexMap = options.locationIndexMap || matrixObj?.locationIndexMap || null;
 
   // Build complete journey sequence including fixed endpoints
   const fullSeq = [];
@@ -80,17 +101,32 @@ function evaluateRouteCost(route, options = {}) {
     const from = fullSeq[i];
     const to = fullSeq[i + 1];
 
-    let distKm = getSegmentRoadDistanceKm(from, to, matrix, indexMap);
+    let distKm = getSegmentRoadDistanceKm(from, to, matrixObj, indexMap);
     totalRoadKm += distKm;
 
     let transitMinutes = 0;
-    if (matrix && indexMap) {
-      const k1 = from.id || from.name || `${from.lat},${from.lng}`;
-      const k2 = to.id || to.name || `${to.lat},${to.lng}`;
-      const idx1 = indexMap.get(k1);
-      const idx2 = indexMap.get(k2);
-      if (idx1 !== undefined && idx2 !== undefined && matrix[idx1]?.[idx2]?.durationMinutes) {
-        transitMinutes = matrix[idx1][idx2].durationMinutes;
+    if (matrixObj && typeof matrixObj.getTransition === 'function') {
+      const cell = matrixObj.getTransition(from, to);
+      if (cell && cell.durationMinutes) {
+        transitMinutes = cell.durationMinutes;
+      }
+    } else if (matrixObj && indexMap) {
+      const mat = matrixObj.matrix || (Array.isArray(matrixObj) ? matrixObj : null);
+      const resolve = (p) => {
+        if (!p) return undefined;
+        const k = p.id || p.nodeId || p.placeId || p.placeKey || (p.lat != null && p.lng != null ? `${Number(p.lat).toFixed(4)},${Number(p.lng).toFixed(4)}` : null) || p.name;
+        if (k && indexMap.has(String(k))) return indexMap.get(String(k));
+        if (k && indexMap.has(String(k).toLowerCase().trim())) return indexMap.get(String(k).toLowerCase().trim());
+        if (p.name) {
+          if (indexMap.has(p.name)) return indexMap.get(p.name);
+          if (indexMap.has(p.name.toLowerCase().trim())) return indexMap.get(p.name.toLowerCase().trim());
+        }
+        return undefined;
+      };
+      const idx1 = resolve(from);
+      const idx2 = resolve(to);
+      if (idx1 !== undefined && idx2 !== undefined && mat?.[idx1]?.[idx2]?.durationMinutes) {
+        transitMinutes = mat[idx1][idx2].durationMinutes;
       }
     }
 
@@ -117,7 +153,6 @@ function evaluateRouteCost(route, options = {}) {
       if (currentClock + 15 > closeMin) {
         penalty += (currentClock + 15 - closeMin) * 8.0; // heavy constraint penalty
       }
-
       currentClock += visitDur;
       totalVisitMinutes += visitDur;
     }
@@ -256,30 +291,39 @@ async function optimizeRouteThreeOptWithProvider(route, options = {}) {
   allPoints.push(...route);
   if (destination) allPoints.push(destination);
 
-  let matrixObj = null;
+  let matrixObj = options.matrix || options.routeTransitionMatrix || null;
   let optConfig = { ...options, origin, destination };
 
-  try {
-    matrixObj = await roadRoutingProvider.getRouteMatrix(allPoints, options);
-    if (matrixObj && matrixObj.matrix) {
-      optConfig.matrix = matrixObj.matrix;
-      optConfig.locationIndexMap = new Map(allPoints.map((p, idx) => [(p.id || p.name || `${p.lat},${p.lng}`), idx]));
+  if (matrixObj) {
+    optConfig.matrix = matrixObj;
+    optConfig.locationIndexMap = options.locationIndexMap || matrixObj.locationIndexMap || new Map(allPoints.map((p, idx) => [(p.id || p.name || `${p.lat},${p.lng}`), idx]));
+  } else {
+    try {
+      matrixObj = await roadRoutingProvider.getRouteMatrix(allPoints, options);
+      if (matrixObj && matrixObj.matrix) {
+        optConfig.matrix = matrixObj;
+        optConfig.locationIndexMap = matrixObj.locationIndexMap || new Map(allPoints.map((p, idx) => [(p.id || p.name || `${p.lat},${p.lng}`), idx]));
+      }
+    } catch (err) {
+      // Falls back gracefully to graph/curvature model
     }
-  } catch (err) {
-    // Falls back gracefully to graph/curvature model
   }
 
   const initialCost = evaluateRouteCost(route, optConfig);
   const optimizedRoute = applyThreeOptLocalSearch(route, optConfig);
   const finalCost = evaluateRouteCost(optimizedRoute, optConfig);
 
+  const sampleProvenance = (matrixObj && typeof matrixObj.getTransition === 'function' && allPoints.length >= 2)
+    ? matrixObj.getTransition(allPoints[0], allPoints[1])
+    : (matrixObj?.matrix?.[0]?.[1] || null);
+
   return {
     bestRoute: optimizedRoute,
     initialCost: Math.round(initialCost * 10) / 10,
     finalCost: Math.round(finalCost * 10) / 10,
     improvementPercent: initialCost > 0 ? Math.round(((initialCost - finalCost) / initialCost) * 1000) / 10 : 0,
-    dataProvenance: matrixObj?.matrix?.[0]?.[1]?.dataSource || 'road_routing_provider',
-    dataStatus: matrixObj?.matrix?.[0]?.[1]?.dataStatus || 'graph_modeled'
+    dataProvenance: sampleProvenance?.dataSource || 'road_routing_provider',
+    dataStatus: sampleProvenance?.dataStatus || 'graph_modeled'
   };
 }
 

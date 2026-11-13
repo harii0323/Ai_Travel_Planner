@@ -61,7 +61,7 @@ const {
   computeUniversalRoute,
   haversineDistanceKm
 } = require('./RoadNetworkGraphEngine');
-const { roadRoutingProvider } = require('./RoadRoutingProvider');
+const { roadRoutingProvider, resolveMatrixCell } = require('./RoadRoutingProvider');
 
 const {
   discoverPlaces,
@@ -74,7 +74,7 @@ const { contextualBandit } = require('./contextualBanditEngine');
 const { dppSelectDiverseCandidates, calculateSubsetDppDiversity } = require('./dppDiversityEngine');
 const { runBeamSearchOptimization, evaluateWeatherImpact } = require('./beamSearchOptimizer');
 const { runAdaptiveLargeNeighborhoodSearch } = require('./alnsOptimizer');
-const { applyThreeOptLocalSearch, optimizeRouteThreeOptWithProvider } = require('./threeOptLocalSearch');
+const { applyThreeOptLocalSearch, optimizeRouteThreeOptWithProvider, evaluateRouteCost } = require('./threeOptLocalSearch');
 const { generateParetoFrontier } = require('./spatiotemporalOptimizer');
 const { scheduleDailyItineraries } = require('./engine/DailyItineraryScheduler');
 const { buildTravelContext } = require('./engine/TravelContextBuilder');
@@ -85,6 +85,43 @@ const { generateRecommendationRationale, runFinalValidationChecklist } = require
 const { normalizeUserPreferences, resolveDestination } = require('./userPreferenceNormalizer');
 const { generateRecommendations } = require('./planner');
 const { generateAlternativeReturnRoutes } = require('./routeDiversityEngine');
+
+/**
+ * Normalizes input weather into the authoritative VISTA Weather Contract.
+ * Strict Rule: Never default unknown weather to 'Clear' or 'favorable'.
+ */
+function normalizeWeatherData(rawInput = {}, destination = '', startDate = null) {
+  const rawCond = rawInput.weatherCondition || rawInput.weather;
+  const destinationStr = typeof destination === 'string' ? destination : (destination?.name || 'Corridor');
+  const dateStr = startDate instanceof Date
+    ? startDate.toISOString().split('T')[0]
+    : (typeof startDate === 'string' ? startDate.split('T')[0] : new Date().toISOString().split('T')[0]);
+
+  if (!rawCond || rawCond === 'Unknown' || rawCond === 'Unavailable' || rawCond === 'UNKNOWN') {
+    return {
+      condition: 'Unknown',
+      status: 'UNAVAILABLE',
+      source: 'unavailable',
+      retrievedAt: new Date().toISOString(),
+      location: destinationStr,
+      forecastDate: dateStr,
+      confidence: 0
+    };
+  }
+
+  const isVerified = Boolean(rawInput.isWeatherVerified || rawInput.weatherSource);
+  const isHazardous = /storm|cyclone|monsoon|heavy.*rain|flood/i.test(rawCond);
+
+  return {
+    condition: rawCond,
+    status: isVerified ? 'LIVE_VERIFIED' : 'FORECAST_ESTIMATE',
+    source: rawInput.weatherSource || 'user_reported',
+    retrievedAt: new Date().toISOString(),
+    location: destinationStr,
+    forecastDate: dateStr,
+    confidence: isVerified ? 0.95 : (isHazardous ? 0.85 : 0.70)
+  };
+}
 
 class UnifiedTravelPlanningOrchestrator {
   /**
@@ -164,13 +201,14 @@ class UnifiedTravelPlanningOrchestrator {
     const candidatePool = placesDiscovery.allPlaces || [];
 
     // =========================================================================
-    // STAGE 4: CONTEXTUAL BANDIT (LinUCB) EVALUATION
+    // STAGE 4: CONTEXTUAL BANDIT (LinUCB) EVALUATION WITH WEATHER CONTRACT
     // =========================================================================
+    const normalizedWeather = normalizeWeatherData(rawInput, destination, userProfile.startDate);
     const banditContext = contextualBandit.buildContextVector(userProfile, {
       budget: userProfile.totalBudget,
       tripDurationDays: totalDays,
       travelMode: userProfile.transportMode,
-      weatherCondition: rawInput.weatherCondition || 'Clear'
+      weatherCondition: normalizedWeather.condition
     });
     contextualBandit.registerActiveContext(rawInput.userId, banditContext);
 
@@ -234,13 +272,17 @@ class UnifiedTravelPlanningOrchestrator {
     const tripOptimizationContext = {
       origin,
       destination,
+      originNode,
+      destNode,
       originCoord: routeInfo.originCoordinates,
       destCoord: routeInfo.destinationCoordinates,
       budget: userProfile.totalBudget,
       tripDurationDays: totalDays,
       startMinutes: 450,
-      weatherCondition: rawInput.weatherCondition || 'Clear',
-      routeTransitionMatrix: routeTransitionMatrix?.matrix,
+      weatherCondition: normalizedWeather.condition,
+      normalizedWeather,
+      matrix: routeTransitionMatrix,
+      routeTransitionMatrix,
       locationIndexMap: routeTransitionMatrix?.locationIndexMap
     };
 
@@ -268,13 +310,14 @@ class UnifiedTravelPlanningOrchestrator {
     const threeOptResult = await optimizeRouteThreeOptWithProvider(alnsResult.bestRoute, {
       origin: originNode,
       destination: destNode,
-      matrix: routeTransitionMatrix?.matrix,
+      matrix: routeTransitionMatrix,
+      routeTransitionMatrix,
       locationIndexMap: routeTransitionMatrix?.locationIndexMap
     });
     const refinedSequence = threeOptResult.bestRoute;
 
     // =========================================================================
-    // STAGE 7: PARETO MULTI-OBJECTIVE FRONTIER EVALUATION
+    // STAGE 7: PARETO MULTI-OBJECTIVE FRONTIER EVALUATION & AUTHORITATIVE SELECTION
     // =========================================================================
     const paretoFrontier = generateParetoFrontier(
       diversePool,
@@ -286,62 +329,83 @@ class UnifiedTravelPlanningOrchestrator {
     const planningMode = String(rawInput.planningMode || rawInput.optimization_mode || rawInput.mode || 'BALANCED').toUpperCase();
     const normMode = planningMode.replace(/EST$/, '');
     const activeParetoSolution = paretoFrontier.find(p => p.mode === planningMode || p.mode === normMode || p.mode.includes(normMode)) || paretoFrontier[0];
-    const selectedOptimizerStops = (activeParetoSolution.stops && activeParetoSolution.stops.length > 0)
-      ? activeParetoSolution.stops
-      : refinedSequence;
 
-    // Build structured route transitions between consecutive stops using routeTransitionMatrix
+    // Authoritative Route Selection: Evaluate candidate routes under unified cost
+    const threeOptCost = evaluateRouteCost(refinedSequence, {
+      origin: originNode,
+      destination: destNode,
+      matrix: routeTransitionMatrix,
+      locationIndexMap: routeTransitionMatrix?.locationIndexMap,
+      departureMinutes: 450
+    });
+
+    let selectedOptimizerStops = refinedSequence;
+    let selectedByOptimizer = 'threeOptLocalSearch';
+
+    if (activeParetoSolution.stops && activeParetoSolution.stops.length > 0) {
+      // Refine Pareto candidate stops through 3-opt as well to ensure optimal road sequencing
+      const paretoThreeOpt = await optimizeRouteThreeOptWithProvider(activeParetoSolution.stops, {
+        origin: originNode,
+        destination: destNode,
+        matrix: routeTransitionMatrix,
+        routeTransitionMatrix,
+        locationIndexMap: routeTransitionMatrix?.locationIndexMap
+      });
+      const paretoCost = evaluateRouteCost(paretoThreeOpt.bestRoute, {
+        origin: originNode,
+        destination: destNode,
+        matrix: routeTransitionMatrix,
+        locationIndexMap: routeTransitionMatrix?.locationIndexMap,
+        departureMinutes: 450
+      });
+
+      const isExplicitModeRequest = rawInput.planningMode || rawInput.optimization_mode || rawInput.mode;
+      if (isExplicitModeRequest && String(isExplicitModeRequest).toUpperCase() !== 'BALANCED') {
+        selectedOptimizerStops = paretoThreeOpt.bestRoute;
+        selectedByOptimizer = 'spatiotemporalParetoOptimizer';
+      } else if (paretoCost < threeOptCost) {
+        selectedOptimizerStops = paretoThreeOpt.bestRoute;
+        selectedByOptimizer = 'spatiotemporalParetoOptimizer';
+      } else {
+        selectedOptimizerStops = refinedSequence;
+        selectedByOptimizer = 'threeOptLocalSearch';
+      }
+    }
+
+    // Build structured route transitions between consecutive stops INCLUDING final destination
+    const fullSequence = [originNode, ...selectedOptimizerStops, destNode];
     const routeTransitions = [];
-    let prevStopNode = originNode;
-    for (let sIdx = 0; sIdx < selectedOptimizerStops.length; sIdx++) {
-      const currStop = selectedOptimizerStops[sIdx];
-      let distKm = null;
-      let durMins = null;
-      let transSource = routeInfo.dataSource || 'road_routing_provider';
-      let transStatus = routeInfo.dataStatus || 'graph_modeled';
-      let transVerified = Boolean(routeInfo.isLiveVerified);
 
-      if (routeTransitionMatrix?.matrix && routeTransitionMatrix?.locationIndexMap) {
-        const k1 = prevStopNode.id || prevStopNode.placeId || prevStopNode.name || `${prevStopNode.coordinates?.lat || prevStopNode.lat},${prevStopNode.coordinates?.lng || prevStopNode.lng}`;
-        const k2 = currStop.id || currStop.placeId || currStop.name || `${currStop.coordinates?.lat || currStop.lat},${currStop.coordinates?.lng || currStop.lng}`;
-        const i = routeTransitionMatrix.locationIndexMap.get(k1);
-        const j = routeTransitionMatrix.locationIndexMap.get(k2);
-        if (i !== undefined && j !== undefined && routeTransitionMatrix.matrix[i]?.[j]) {
-          const cell = routeTransitionMatrix.matrix[i][j];
-          distKm = cell.distanceKm;
-          durMins = cell.durationMinutes;
-          transSource = cell.dataSource || transSource;
-          transStatus = cell.dataStatus || transStatus;
-          transVerified = Boolean(cell.isLiveVerified);
-        }
-      }
+    for (let sIdx = 0; sIdx < fullSequence.length - 1; sIdx++) {
+      const prevStopNode = fullSequence[sIdx];
+      const currStop = fullSequence[sIdx + 1];
 
-      if (distKm == null) {
-        const c1 = prevStopNode.coordinates || (prevStopNode.lat != null ? { lat: prevStopNode.lat, lng: prevStopNode.lng } : null) || routeInfo.originCoordinates;
-        const c2 = currStop.coordinates || (currStop.lat != null ? { lat: currStop.lat, lng: currStop.lng } : null) || routeInfo.destinationCoordinates;
-        const geoKm = c1 && c2 ? haversineDistanceKm(c1, c2) : 25;
-        distKm = Math.round(geoKm * 1.25 * 10) / 10;
-        durMins = Math.round((distKm / 55) * 60);
-        transSource = 'geodesic_haversine_projection_model';
-        transStatus = 'estimated';
-        transVerified = false;
-      }
+      const cell = resolveMatrixCell(routeTransitionMatrix, prevStopNode, currStop);
+      const distKm = cell ? cell.distanceKm : 25;
+      const durMins = cell ? cell.durationMinutes : 30;
+      const transSource = cell?.dataSource || routeInfo.dataSource || 'road_routing_provider';
+      const transStatus = cell?.dataStatus || routeInfo.dataStatus || 'estimated';
+      const transVerified = Boolean(cell?.isLiveVerified);
+      const conf = transVerified ? 1.0 : (transStatus === 'graph_modeled' ? 0.85 : 0.65);
 
       routeTransitions.push({
         from: prevStopNode.name || prevStopNode.placeName || origin,
-        to: currStop.name || currStop.placeName || 'Waypoint',
+        to: currStop.name || currStop.placeName || destination,
         distanceKm: distKm,
         estimatedMinutes: durMins,
+        durationMinutes: durMins,
         dataSource: transSource,
         dataStatus: transStatus,
-        isLiveVerified: transVerified
+        isLiveVerified: transVerified,
+        retrievalTimestamp: cell?.retrievalTimestamp || new Date().toISOString(),
+        confidence: conf
       });
-      prevStopNode = currStop;
     }
 
     // Required Structured Integration Contract (Prompt Section 2)
     const optimizerResult = {
       selectedStops: selectedOptimizerStops,
+      selectedByOptimizer,
       selectedMode: activeParetoSolution.mode,
       objectiveScores: activeParetoSolution.objectives || {},
       routeTransitions,
@@ -380,7 +444,7 @@ class UnifiedTravelPlanningOrchestrator {
       candidatePlaces: diversePool,
       selectedStops: selectedOptimizerStops,
       optimizerResult,
-      routeTransitionMatrix: routeTransitionMatrix?.matrix,
+      routeTransitionMatrix,
       locationIndexMap: routeTransitionMatrix?.locationIndexMap,
       roadRoutingProvider
     });
@@ -442,13 +506,12 @@ class UnifiedTravelPlanningOrchestrator {
     // =========================================================================
     // STAGE 11: CONSTRAINT-BASED FEASIBILITY & 24-POINT VALIDATION CHECKLIST
     // =========================================================================
-    const weatherInfo = rawInput.weatherCondition ? { condition: rawInput.weatherCondition } : null;
     const feasibilityAnalysis = evaluateItineraryFeasibility({
       dayPlans,
       userProfile,
       routeInfo,
       budgetSummary,
-      weatherInfo
+      weatherInfo: normalizedWeather
     });
 
     // Update optimizerResult feasibilityStatus with real evaluation
@@ -457,7 +520,8 @@ class UnifiedTravelPlanningOrchestrator {
       status: feasibilityAnalysis.status,
       score: feasibilityAnalysis.score,
       violations: feasibilityAnalysis.violations,
-      warnings: feasibilityAnalysis.warnings
+      warnings: feasibilityAnalysis.warnings,
+      unverifiedItems: feasibilityAnalysis.unverifiedItems || []
     };
 
     const tripMemoryMock = {
@@ -587,15 +651,18 @@ class UnifiedTravelPlanningOrchestrator {
       validationChecklist: validationChecklist.checks,
       validationScore: validationChecklist.score,
       recommendations: companionRecommendations,
-      weatherSuitability: rawInput.weatherCondition ? {
-        status: 'REPORTED',
-        conditions: rawInput.weatherCondition,
-        timestamp: new Date().toISOString(),
-        verifiedOutdoorFeasibility: !['Storm', 'Heavy Rain', 'Cyclone', 'Flood'].some(s => rawInput.weatherCondition.includes(s))
+      weatherContract: normalizedWeather,
+      weatherSuitability: normalizedWeather.status !== 'UNAVAILABLE' ? {
+        status: normalizedWeather.status,
+        conditions: normalizedWeather.condition,
+        timestamp: normalizedWeather.retrievedAt,
+        confidence: normalizedWeather.confidence,
+        verifiedOutdoorFeasibility: !/storm|cyclone|monsoon|heavy.*rain|flood/i.test(normalizedWeather.condition)
       } : {
         status: 'UNKNOWN',
         conditions: 'Unavailable',
         timestamp: new Date().toISOString(),
+        confidence: 0,
         verifiedOutdoorFeasibility: false,
         note: 'Live weather service not configured; field verification recommended before travel.'
       },

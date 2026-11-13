@@ -84,15 +84,36 @@ function calculateTripBudget({
 
   // 5. Entry Tickets & Activity Fees
   let attractionTickets = 0;
+  let unconfirmedFeesCount = 0;
+  let verifiedFeesCount = 0;
   dayPlans.forEach(d => {
     (d.stops || []).forEach(s => {
       const fee = Number(s.entryFee || 0);
       attractionTickets += fee * travelers;
+      if (s.isLiveVerified || s.entryFeeVerified) {
+        verifiedFeesCount++;
+      } else if (fee === 0 && !s.isFreeAdmissionVerified) {
+        unconfirmedFeesCount++;
+      } else {
+        verifiedFeesCount++;
+      }
     });
   });
 
   // 6. Local Transport & Parking Buffer
   const parkingAndBuffer = totalDays * 100 + (isPersonalVehicle ? 200 : 0);
+
+  // Explicit Estimation Assumptions Array
+  const assumptions = [
+    `Fuel rate: ₹${fuelPrice}/L for ${fuelType.toUpperCase()}`,
+    `Vehicle economy: ${mileage} km/L (${isPersonalVehicle ? 'Personal Vehicle' : 'Public Transport Transit Model'})`,
+    `Highway toll benchmark: ~₹1.15/km along NHAI express corridors`,
+    `Accommodation rate: ₹${accConfig.ratePerRoom}/night per room for ${accConfig.label} (capacity ${accConfig.capacity} persons/room)`,
+    `Dining expense: ₹${dailyFoodPerPerson}/person/day (${userProfile.travelPace || 'standard'} pace model)`
+  ];
+  if (unconfirmedFeesCount > 0) {
+    assumptions.push(`${unconfirmedFeesCount} attraction stop(s) have unconfirmed entry fees; standard zero or municipal admission assumed.`);
+  }
 
   // Grand Total
   const totalEstimatedCost = Math.round(
@@ -152,13 +173,14 @@ function calculateTripBudget({
     budgetGap,
     budgetUtilizationPercent,
     costBreakdown: {
-      fuel: { amount: fuelCost, dataStatus: 'calculated_estimate', unit: `${litersUsed} Liters at ₹${fuelPrice}/L` },
-      tolls: { amount: tollCost, dataStatus: 'calculated_estimate', unit: 'NHAI Corridor Tolls' },
-      accommodation: { amount: accommodationCost, dataStatus: 'recently_retrieved', unit: `${nights} nights × ${roomsNeeded} rooms (${accConfig.label})` },
-      food: { amount: foodCost, dataStatus: 'calculated_estimate', unit: `₹${dailyFoodPerPerson}/person/day` },
-      activities: { amount: attractionTickets, dataStatus: 'live_verified', unit: 'Attraction Admission & Entry Tickets' },
-      parkingAndBuffer: { amount: parkingAndBuffer, dataStatus: 'calculated_estimate', unit: 'Parking & Incidentals Buffer' }
+      fuel: { amount: fuelCost, dataStatus: 'calculated_estimate', unit: `${litersUsed} Liters at ₹${fuelPrice}/L`, provenance: 'benchmark_mileage_fuel' },
+      tolls: { amount: tollCost, dataStatus: 'calculated_estimate', unit: 'NHAI Corridor Tolls', provenance: 'nhai_corridor_benchmark' },
+      accommodation: { amount: accommodationCost, dataStatus: 'recently_retrieved', unit: `${nights} nights × ${roomsNeeded} rooms (${accConfig.label})`, provenance: 'market_rate_database' },
+      food: { amount: foodCost, dataStatus: 'calculated_estimate', unit: `₹${dailyFoodPerPerson}/person/day`, provenance: 'regional_dining_benchmark' },
+      activities: { amount: attractionTickets, dataStatus: (verifiedFeesCount > 0 && unconfirmedFeesCount === 0) ? 'recently_retrieved' : 'calculated_estimate', unit: 'Attraction Admission & Entry Tickets', provenance: 'places_catalog_rates' },
+      parkingAndBuffer: { amount: parkingAndBuffer, dataStatus: 'calculated_estimate', unit: 'Parking & Incidentals Buffer', provenance: 'incidentals_benchmark' }
     },
+    assumptions,
     tradeOffRecommendations
   };
 }

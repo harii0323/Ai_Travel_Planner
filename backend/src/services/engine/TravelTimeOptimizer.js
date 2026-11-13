@@ -12,6 +12,7 @@
 
 const { calculateHaversineDistanceKm } = require('./RouteDiscoveryEngine');
 const { parseTimeToMinutes, formatMinutesTo12 } = require('./TravelContextBuilder');
+const { resolveMatrixCell } = require('../RoadRoutingProvider');
 
 // Base speed profiles by road and geographical terrain
 const SPEED_PROFILES = {
@@ -154,17 +155,17 @@ function scheduleDayTimeline({
     let transitionDataStatus = 'estimated';
     let isTransitionVerified = false;
 
-    if (transitionMatrix && locationIndexMap) {
-      const kFrom = (i === 0 ? startLocationName : (stops[i - 1].placeId || stops[i - 1].name)) || (currentCoord?.lat && currentCoord?.lng ? `${currentCoord.lat},${currentCoord.lng}` : null);
-      const kTo = stop.placeId || stop.name || (stopCoord?.lat && stopCoord?.lng ? `${stopCoord.lat},${stopCoord.lng}` : null);
-      const idx1 = locationIndexMap.get(kFrom);
-      const idx2 = locationIndexMap.get(kTo);
-      if (idx1 !== undefined && idx2 !== undefined && transitionMatrix.matrix?.[idx1]?.[idx2]) {
-        const cell = transitionMatrix.matrix[idx1][idx2];
+    if (transitionMatrix) {
+      const fromPoint = i === 0
+        ? (startCoord ? { name: startLocationName, lat: startCoord.lat, lng: startCoord.lng } : startLocationName)
+        : stops[i - 1];
+      const toPoint = stop;
+      const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint);
+      if (cell && cell.durationMinutes > 0) {
         transitDistKm = cell.distanceKm;
         effectiveTransitMinutes = cell.durationMinutes;
-        transitionDataSource = cell.dataSource;
-        transitionDataStatus = cell.dataStatus;
+        transitionDataSource = cell.dataSource || transitionDataSource;
+        transitionDataStatus = cell.dataStatus || transitionDataStatus;
         isTransitionVerified = Boolean(cell.isLiveVerified);
       }
     }
@@ -267,14 +268,15 @@ function scheduleDayTimeline({
   // 3. Drive to End Location / Hotel Check-in
   let finalDistKm = 0;
   let finalDurationMins = 0;
-  if (transitionMatrix && locationIndexMap) {
-    const kFrom = stops.length > 0 ? (stops[stops.length - 1].placeId || stops[stops.length - 1].name) : startLocationName;
-    const kTo = endLocationName;
-    const i1 = locationIndexMap.get(kFrom);
-    const i2 = locationIndexMap.get(kTo);
-    if (i1 !== undefined && i2 !== undefined && transitionMatrix.matrix?.[i1]?.[i2]) {
-      finalDistKm = transitionMatrix.matrix[i1][i2].distanceKm;
-      finalDurationMins = transitionMatrix.matrix[i1][i2].durationMinutes;
+  if (transitionMatrix) {
+    const fromPoint = stops.length > 0
+      ? stops[stops.length - 1]
+      : (startCoord ? { name: startLocationName, lat: startCoord.lat, lng: startCoord.lng } : startLocationName);
+    const toPoint = endCoord ? { name: endLocationName, lat: endCoord.lat, lng: endCoord.lng } : endLocationName;
+    const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint);
+    if (cell && cell.durationMinutes > 0) {
+      finalDistKm = cell.distanceKm;
+      finalDurationMins = cell.durationMinutes;
     }
   }
 

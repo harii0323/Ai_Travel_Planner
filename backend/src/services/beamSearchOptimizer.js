@@ -228,12 +228,26 @@ function runBeamSearchOptimization({
         if (!weatherCheck.isFeasible) continue;
 
         // 1. Calculate REAL road transit distance from currentNode to candidate
-        const stepRoadKm = getSegmentRoadDistanceKm(state.currentNode, cand);
+        const stepRoadKm = getSegmentRoadDistanceKm(
+          state.currentNode,
+          cand,
+          tripContext.routeTransitionMatrix,
+          tripContext.locationIndexMap
+        );
 
         // Reject impossible jump transitions within a single day's sightseeing sequence (> 280 km)
         if (stepRoadKm > 280 && state.sequence.length > 0) continue;
 
-        const transit = calculateTimeDependentTravelTime(stepRoadKm, state.currentTime);
+        let stepTransitMinutes = null;
+        if (tripContext.routeTransitionMatrix && typeof tripContext.routeTransitionMatrix.getTransition === 'function') {
+          const cell = tripContext.routeTransitionMatrix.getTransition(state.currentNode, cand);
+          if (cell && cell.durationMinutes) {
+            stepTransitMinutes = cell.durationMinutes;
+          }
+        }
+        const transit = stepTransitMinutes != null
+          ? { travelMinutes: stepTransitMinutes }
+          : calculateTimeDependentTravelTime(stepRoadKm, state.currentTime);
         const effectiveTransitMinutes = Math.round(transit.travelMinutes * weatherCheck.transitMultiplier);
         const expectedArrival = state.currentTime + effectiveTransitMinutes;
 
