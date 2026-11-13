@@ -160,7 +160,11 @@ function determineReturnHubs(returnDays, returnWaypoints, destination, origin) {
  * Plans the return journey phases and allocates distinct sightseeing stops.
  */
 function planReturnJourney(params = {}) {
-  const returnDays = params.returnDays || 1;
+  const returnDays = params.returnDays !== undefined ? params.returnDays : 1;
+  if (returnDays <= 0 || params.userProfile?.isRoundTrip === false) {
+    return [];
+  }
+
   const startLocation = params.startLocation || params.destination || params.userProfile?.destinationCity || 'Destination';
   const startCoord = params.startCoord || params.returnRouteInfo?.destinationCoordinates || { lat: 10.0889, lng: 77.0595 };
   const origin = params.origin || params.userProfile?.origin || 'Origin';
@@ -170,6 +174,7 @@ function planReturnJourney(params = {}) {
     : (params.returnRouteInfo?.waypoints ? [...params.returnRouteInfo.waypoints].reverse() : []);
   const userProfile = params.userProfile || {};
   const visitedKeys = params.visitedKeys || new Set();
+  const selectedStops = params.selectedStops || [];
 
   const safeReturnDays = Math.max(1, returnDays);
 
@@ -197,13 +202,33 @@ function planReturnJourney(params = {}) {
 
     // Pick 2-3 distinct authentic sightseeing attractions for this return day along this transit segment
     const dayStops = [];
+
+    // Prioritize optimizer selectedStops for return journey
+    for (const cand of selectedStops) {
+      if (dayStops.length >= 3) break;
+      const candKey = cand.name.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      if (visitedKeys.has(candKey)) continue;
+      if (isStopAlongDaySegment(cand.coordinates, currentCoord, endCoord, 90) || selectedStops.length <= safeReturnDays * 3) {
+        dayStops.push({
+          ...cand,
+          whySelected: cand.whySelected || `Selected return corridor attraction matching ${userProfile.planningMode || 'travel'} preferences.`
+        });
+        visitedKeys.add(candKey);
+        if (cand.placeId) visitedKeys.add(cand.placeId);
+      }
+    }
+
     for (let cIdx = 0; cIdx < returnCandidates.length && dayStops.length < 3; cIdx++) {
       const cand = returnCandidates[cIdx];
       const candKey = cand.name.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
       if (visitedKeys.has(candKey)) continue;
 
       if (isStopAlongDaySegment(cand.coordinates, currentCoord, endCoord, 75)) {
-        dayStops.push(cand);
+        dayStops.push({
+          ...cand,
+          isSupplementary: selectedStops.length > 0,
+          whySelected: cand.whySelected || `Distinct return sightseeing stop along ${currentStart} → ${endLocation} corridor.`
+        });
         visitedKeys.add(candKey);
       }
     }

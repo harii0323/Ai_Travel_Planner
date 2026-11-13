@@ -10,6 +10,7 @@
  */
 
 const { parseTimeToMinutes, formatMinutesTo12 } = require('./TravelContextBuilder');
+const { reoptimizeRollingHorizon } = require('../spatiotemporalOptimizer');
 
 /**
  * Replans a day's timeline when an unexpected delay occurs.
@@ -77,6 +78,7 @@ function replanTimelineWithDelay({
 }
 
 module.exports = {
-  replanTimelineWithDelay
+  replanTimelineWithDelay,
+  reoptimizeRollingHorizon
 };
 

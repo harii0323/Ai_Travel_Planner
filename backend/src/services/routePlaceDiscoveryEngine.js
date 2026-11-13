@@ -1933,7 +1933,9 @@ async function discoverAndScheduleRoutePlaces(tripInput = {}) {
     dayClock += 20;
 
     dayStops.forEach((stop, sIdx) => {
-      const driveMins = 60 + sIdx * 30;
+      const distFromPrev = stop.detourKm ? stop.detourKm * 1.5 : (stop.distanceFromOrigin ? Math.abs(stop.distanceFromOrigin - (dayStops[sIdx - 1]?.distanceFromOrigin || 0)) : 35);
+      const estSpeed = 55; // km/h realistic Indian highway transit speed
+      const driveMins = Math.max(15, Math.min(180, Math.round((Math.max(10, distFromPrev) / estSpeed) * 60)));
       dayClock += driveMins;
       const arrivalTime = formatMinutesTo12(dayClock);
       const stayMins = parseInt(stop.recommendedStay) || 60;

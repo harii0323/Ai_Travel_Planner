@@ -308,10 +308,28 @@ function normalizeUserPreferences(rawInput = {}) {
   // Normalized interest profile
   const normalizedInterests = normalizeInterests(rawInput);
 
-  // Return trip requested? (default true for road trips with origin != destination)
-  const isRoundTrip = rawInput.isRoundTrip !== undefined
-    ? Boolean(rawInput.isRoundTrip)
-    : true; // Round trip requested by default for personal road trip
+  // Normalize Trip Direction (One-Way vs Round Trip)
+  const rawDirection = String(rawInput.tripDirection || rawInput.tripType || rawInput.direction || '').toLowerCase().trim();
+  const rawTextPrompt = `${rawInput.activities || ''} ${rawInput.prompt || ''} ${rawInput.notes || ''}`.toLowerCase();
+
+  let isRoundTrip = false;
+  let tripDirection = 'one_way';
+
+  if (rawInput.isRoundTrip === false || rawInput.roundTrip === false || rawDirection.includes('one') || rawTextPrompt.includes('one way') || rawTextPrompt.includes('one-way')) {
+    isRoundTrip = false;
+    tripDirection = 'one_way';
+  } else if (rawInput.isRoundTrip === true || rawInput.roundTrip === true || rawDirection.includes('round') || rawTextPrompt.includes('round trip') || rawTextPrompt.includes('round-trip') || rawTextPrompt.includes('return journey')) {
+    isRoundTrip = true;
+    tripDirection = 'round_trip';
+  } else if (rawInput.isRoundTrip !== undefined) {
+    isRoundTrip = Boolean(rawInput.isRoundTrip);
+    tripDirection = isRoundTrip ? 'round_trip' : 'one_way';
+  } else {
+    // Documented default: Round-trip for personal road trips with car/bike; one-way for public transit unless specified
+    const isPersonal = transportMode === 'car' || transportMode === 'bike';
+    isRoundTrip = isPersonal;
+    tripDirection = isPersonal ? 'round_trip' : 'one_way';
+  }
 
   return {
     origin,
@@ -324,6 +342,8 @@ function normalizeUserPreferences(rawInput = {}) {
     totalDays,
     datesString,
     travelDates: datesString,
+    isRoundTrip,
+    tripDirection,
     numberOfTravelers,
     travelCompanionType: companionType,
     transportMode,

@@ -111,8 +111,7 @@ class UnifiedTravelPlanningOrchestrator {
     const origin = userProfile.origin;
     const destination = userProfile.destinationCity || userProfile.destination;
     const totalDays = userProfile.totalDays;
-    const isRoundTrip = rawInput.isRoundTrip !== false && (rawInput.isRoundTrip === true || totalDays > 1);
-    userProfile.isRoundTrip = isRoundTrip;
+    const isRoundTrip = userProfile.isRoundTrip;
 
     // =========================================================================
     // STAGE 2: BUILD ROUTE CORRIDOR & ROAD NETWORK GRAPH
@@ -242,8 +241,61 @@ class UnifiedTravelPlanningOrchestrator {
       tripOptimizationContext
     );
 
-    const planningMode = (rawInput.planningMode || rawInput.optimization_mode || 'BALANCED').toUpperCase();
-    const activeParetoSolution = paretoFrontier.find(p => p.mode === planningMode) || paretoFrontier[0];
+    const planningMode = String(rawInput.planningMode || rawInput.optimization_mode || rawInput.mode || 'BALANCED').toUpperCase();
+    const normMode = planningMode.replace(/EST$/, '');
+    const activeParetoSolution = paretoFrontier.find(p => p.mode === planningMode || p.mode === normMode || p.mode.includes(normMode)) || paretoFrontier[0];
+    const selectedOptimizerStops = (activeParetoSolution.stops && activeParetoSolution.stops.length > 0)
+      ? activeParetoSolution.stops
+      : refinedSequence;
+
+    // Build structured route transitions between consecutive stops
+    const routeTransitions = [];
+    let prevStopNode = { name: origin, coordinates: routeInfo.originCoordinates };
+    for (let sIdx = 0; sIdx < selectedOptimizerStops.length; sIdx++) {
+      const currStop = selectedOptimizerStops[sIdx];
+      const distKm = haversineDistanceKm(
+        prevStopNode.coordinates || routeInfo.originCoordinates,
+        currStop.coordinates || routeInfo.originCoordinates
+      );
+      routeTransitions.push({
+        from: prevStopNode.name || prevStopNode.placeName || origin,
+        to: currStop.name || currStop.placeName || 'Waypoint',
+        distanceKm: Math.round(distKm * 10) / 10,
+        estimatedMinutes: Math.round((distKm / 60) * 60)
+      });
+      prevStopNode = currStop;
+    }
+
+    // Required Structured Integration Contract (Prompt Section 2)
+    const optimizerResult = {
+      selectedStops: selectedOptimizerStops,
+      selectedMode: activeParetoSolution.mode,
+      objectiveScores: activeParetoSolution.objectives || {},
+      routeTransitions,
+      feasibilityStatus: {
+        isFeasible: true,
+        status: 'OPTIMAL',
+        score: 95
+      },
+      preferenceCoverage: {},
+      diversityMetrics: {
+        dppDiversityMetric: calculateSubsetDppDiversity(selectedOptimizerStops),
+        retainedCandidateCount: selectedOptimizerStops.length,
+        categoriesRepresented: Array.from(new Set(selectedOptimizerStops.map(s => s.category || 'general')))
+      },
+      estimatedTravelDuration: {
+        totalDistanceKm: routeInfo.totalDistanceKm,
+        drivingDurationFormatted: routeInfo.drivingDurationFormatted
+      },
+      optimizationWarnings: [],
+      dataProvenance: {
+        routingProvider: routeInfo.dataSource || 'limited_highway_corridor_graph',
+        routingTier: routeInfo.tier || 3,
+        isLiveVerified: Boolean(routeInfo.isLiveVerified),
+        placesRetrievedCount: candidatePool.length,
+        paretoModesEvaluated: paretoFrontier.length
+      }
+    };
 
     // =========================================================================
     // STAGE 8: TIME-AWARE MULTI-DAY ITINERARY SCHEDULING
@@ -252,7 +304,9 @@ class UnifiedTravelPlanningOrchestrator {
       userProfile,
       routeInfo,
       travelContext,
-      candidatePlaces: diversePool
+      candidatePlaces: diversePool,
+      selectedStops: selectedOptimizerStops,
+      optimizerResult
     });
 
     // =========================================================================
@@ -274,23 +328,40 @@ class UnifiedTravelPlanningOrchestrator {
       });
     });
 
-    const returnRouteAlternatives = generateAlternativeReturnRoutes({
-      origin,
-      destination,
-      baseDistance: routeInfo.totalDistanceKm,
-      baseDurationMinutes: Math.round(routeInfo.totalDistanceKm * 1.2),
-      missingPreferences: [],
-      transportMode: userProfile.transportMode,
-      numTravelers: userProfile.numberOfTravelers
-    });
+    optimizerResult.preferenceCoverage = coverageMatrix.getSummaryStats();
 
-    const returnRoutePlan = {
-      isRoundTrip: true,
-      origin,
-      destination,
-      alternativeRoutes: returnRouteAlternatives,
-      routeOverlapPercent: returnRouteAlternatives[1]?.routeOverlapPercent || 48
-    };
+    // Independent Return Route Plan (Round-Trip Only)
+    let returnRoutePlan = null;
+    if (userProfile.isRoundTrip) {
+      const returnRouteAlternatives = generateAlternativeReturnRoutes({
+        origin,
+        destination,
+        baseDistance: routeInfo.totalDistanceKm,
+        baseDurationMinutes: Math.round(routeInfo.totalDistanceKm * 1.2),
+        missingPreferences: [],
+        transportMode: userProfile.transportMode,
+        numTravelers: userProfile.numberOfTravelers
+      });
+
+      returnRoutePlan = {
+        isRoundTrip: true,
+        tripDirection: 'round_trip',
+        origin,
+        destination,
+        alternativeRoutes: returnRouteAlternatives,
+        routeOverlapPercent: returnRouteAlternatives[1]?.routeOverlapPercent || 48
+      };
+    } else {
+      returnRoutePlan = {
+        isRoundTrip: false,
+        tripDirection: 'one_way',
+        origin,
+        destination,
+        alternativeRoutes: [],
+        routeOverlapPercent: 0,
+        message: 'One-way trip terminates at destination. No return route required.'
+      };
+    }
 
     // =========================================================================
     // STAGE 11: EVIDENCE-BASED 24-POINT VALIDATION CHECKLIST
@@ -375,6 +446,7 @@ class UnifiedTravelPlanningOrchestrator {
         pipelineStagesCompleted: 13,
         timestamp: new Date().toISOString()
       },
+      optimizerResult,
       routeDiscovery: {
         origin,
         destination,

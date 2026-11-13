@@ -20,7 +20,60 @@ const { scheduleDayTimeline } = require('./TravelTimeOptimizer');
 const { planOnwardJourney } = require('./OnwardJourneyEngine');
 const { planDestinationExploration } = require('./DestinationExplorationEngine');
 const { planReturnJourney } = require('./ReturnJourneyEngine');
-const { calculateIndependentReturnRoute } = require('./RouteDiscoveryEngine');
+const { calculateIndependentReturnRoute, calculateHaversineDistanceKm } = require('./RouteDiscoveryEngine');
+
+/**
+ * Partitions optimizer selectedStops across the journey phases:
+ * Phase A: Onward highway corridor
+ * Phase B: Regional destination exploration
+ * Phase C: Return highway corridor (if round trip)
+ */
+function partitionStopsByPhase(selectedStops = [], {
+  originCoord,
+  destCoord,
+  originCity = '',
+  destCity = '',
+  isRoundTrip = true,
+  onwardDays = 1,
+  destinationDays = 1,
+  returnDays = 0
+}) {
+  if (!Array.isArray(selectedStops) || selectedStops.length === 0) {
+    return { onwardSelected: [], destinationSelected: [], returnSelected: [] };
+  }
+
+  const onwardSelected = [];
+  const destinationSelected = [];
+  const returnSelected = [];
+
+  const destCityNorm = (destCity || '').toLowerCase().trim();
+  const originCityNorm = (originCity || '').toLowerCase().trim();
+
+  selectedStops.forEach((stop, idx) => {
+    const sCity = (stop.city || '').toLowerCase().trim();
+    const sCoord = stop.coordinates;
+    const distToDest = sCoord && destCoord ? calculateHaversineDistanceKm(sCoord, destCoord) : 999;
+    const distToOrigin = sCoord && originCoord ? calculateHaversineDistanceKm(sCoord, originCoord) : 999;
+
+    const isAtDestination = (destCityNorm && sCity.includes(destCityNorm)) ||
+      (stop.isDestination === true) ||
+      distToDest <= 65;
+
+    if (isAtDestination) {
+      destinationSelected.push(stop);
+    } else if (isRoundTrip && returnDays > 0) {
+      if (idx >= Math.ceil(selectedStops.length / 2) && distToOrigin < distToDest) {
+        returnSelected.push(stop);
+      } else {
+        onwardSelected.push(stop);
+      }
+    } else {
+      onwardSelected.push(stop);
+    }
+  });
+
+  return { onwardSelected, destinationSelected, returnSelected };
+}
 
 /**
  * Builds the complete multi-day round-trip itinerary.
@@ -29,19 +82,34 @@ async function scheduleDailyItineraries({
   userProfile,
   routeInfo,
   travelContext,
-  candidatePlaces = []
+  candidatePlaces = [],
+  selectedStops = [],
+  optimizerResult = null
 }) {
   const { totalDays, origin, destinationCity, numberOfTravelers } = userProfile;
+  const isRoundTrip = userProfile.isRoundTrip !== false;
   const days = travelContext.days || [];
   const dayPlans = [];
 
   const onwardDays = travelContext.onwardDays || 1;
-  const returnDays = travelContext.returnDays || (totalDays > 1 ? 1 : 0);
+  const returnDays = isRoundTrip ? (travelContext.returnDays ?? (totalDays > 1 ? 1 : 0)) : 0;
   const destinationDays = travelContext.destinationDays || Math.max(0, totalDays - onwardDays - returnDays);
   const intermediateWaypoints = routeInfo.waypoints || [];
 
   // Master tracking set for visited place keys to prevent any duplicate stops across phases
   const visitedKeys = new Set();
+
+  // Partition optimizer selected stops across trip phases
+  const { onwardSelected, destinationSelected, returnSelected } = partitionStopsByPhase(selectedStops, {
+    originCoord: routeInfo.originCoordinates,
+    destCoord: routeInfo.destinationCoordinates,
+    originCity: origin,
+    destCity: destinationCity,
+    isRoundTrip,
+    onwardDays,
+    destinationDays,
+    returnDays
+  });
 
   // -------------------------------------------------------------
   // 1. PLAN PHASE A: ONWARD JOURNEY
@@ -55,7 +123,8 @@ async function scheduleDailyItineraries({
     routeWaypoints: intermediateWaypoints,
     userProfile,
     candidatePlaces,
-    visitedKeys
+    visitedKeys,
+    selectedStops: onwardSelected
   });
 
   // -------------------------------------------------------------
@@ -66,7 +135,8 @@ async function scheduleDailyItineraries({
     destinationDays,
     userProfile,
     candidatePlaces,
-    destinationCoordinates: routeInfo.destinationCoordinates
+    destinationCoordinates: routeInfo.destinationCoordinates,
+    selectedStops: destinationSelected
   });
 
   // Register destination exploration stops in visitedKeys
@@ -81,41 +151,45 @@ async function scheduleDailyItineraries({
   // -------------------------------------------------------------
   // 3. PLAN PHASE C: INDEPENDENT RETURN JOURNEY (Prompt Section 5 & Rule 9)
   // -------------------------------------------------------------
-  // Last destination hub becomes starting location for the return journey
-  const lastDestHub = destExplorationClusters.length > 0
-    ? destExplorationClusters[destExplorationClusters.length - 1].hubName
-    : destinationCity;
-  const lastDestCoord = destExplorationClusters.length > 0
-    ? destExplorationClusters[destExplorationClusters.length - 1].hubCoord
-    : routeInfo.destinationCoordinates;
+  let returnAllocations = [];
+  if (isRoundTrip && returnDays > 0) {
+    // Last destination hub becomes starting location for the return journey
+    const lastDestHub = destExplorationClusters.length > 0
+      ? destExplorationClusters[destExplorationClusters.length - 1].hubName
+      : destinationCity;
+    const lastDestCoord = destExplorationClusters.length > 0
+      ? destExplorationClusters[destExplorationClusters.length - 1].hubCoord
+      : routeInfo.destinationCoordinates;
 
-  // Discover independent return highway corridor (never a simple reverse of onward route)
-  let returnWaypoints = [];
-  try {
-    const returnStartCity = destinationCity || lastDestHub;
-    const returnRoute = await calculateIndependentReturnRoute(returnStartCity, origin, {
-      transportMode: userProfile.transportMode
-    });
-    if (returnRoute && Array.isArray(returnRoute.waypoints) && returnRoute.waypoints.length > 0) {
-      returnWaypoints = returnRoute.waypoints;
+    // Discover independent return highway corridor (never a simple reverse of onward route)
+    let returnWaypoints = [];
+    try {
+      const returnStartCity = destinationCity || lastDestHub;
+      const returnRoute = await calculateIndependentReturnRoute(returnStartCity, origin, {
+        transportMode: userProfile.transportMode
+      });
+      if (returnRoute && Array.isArray(returnRoute.waypoints) && returnRoute.waypoints.length > 0) {
+        returnWaypoints = returnRoute.waypoints;
+      }
+    } catch (err) {
+      // Continue with reversed waypoints if independent computation blocked
     }
-  } catch (err) {
-    // Continue with reversed waypoints if independent computation blocked
-  }
-  if (returnWaypoints.length === 0) {
-    returnWaypoints = [...intermediateWaypoints].reverse();
-  }
+    if (returnWaypoints.length === 0) {
+      returnWaypoints = [...intermediateWaypoints].reverse();
+    }
 
-  const returnAllocations = planReturnJourney({
-    returnDays,
-    startLocation: lastDestHub,
-    startCoord: lastDestCoord,
-    origin,
-    originCoord: routeInfo.originCoordinates,
-    returnWaypoints,
-    userProfile,
-    visitedKeys
-  });
+    returnAllocations = planReturnJourney({
+      returnDays,
+      startLocation: lastDestHub,
+      startCoord: lastDestCoord,
+      origin,
+      originCoord: routeInfo.originCoordinates,
+      returnWaypoints,
+      userProfile,
+      visitedKeys,
+      selectedStops: returnSelected
+    });
+  }
 
   // -------------------------------------------------------------
   // 4. CHRONOLOGICAL SCHEDULING (Days 1 to N)
@@ -142,8 +216,8 @@ async function scheduleDailyItineraries({
     if (isSingleDay) {
       phaseLabel = 'Single Day Exploration';
       journeyPhase = 'DESTINATION_EXPLORATION';
-      dayEndLocation = origin;
-      dayEndCoord = routeInfo.originCoordinates;
+      dayEndLocation = isRoundTrip ? origin : destinationCity;
+      dayEndCoord = isRoundTrip ? routeInfo.originCoordinates : routeInfo.destinationCoordinates;
       const singleCluster = destExplorationClusters[0];
       selectedStops = singleCluster ? singleCluster.stops.slice(0, 3) : [];
       zoneHighlight = singleCluster?.zoneName || `${destinationCity} Day Highlights`;
@@ -152,7 +226,12 @@ async function scheduleDailyItineraries({
       phaseLabel = 'Onward Journey';
       journeyPhase = 'ONWARD';
       isCorridorDay = true;
-      const alloc = onwardAllocations[dIdx];
+      const alloc = onwardAllocations[dIdx] || {
+        endLocation: destinationCity,
+        endCoord: routeInfo.destinationCoordinates,
+        stops: [],
+        isFinalArrival: dIdx === onwardDays - 1
+      };
       dayEndLocation = alloc.endLocation;
       dayEndCoord = alloc.endCoord;
       selectedStops = alloc.stops;
@@ -164,18 +243,22 @@ async function scheduleDailyItineraries({
       journeyPhase = 'DESTINATION_EXPLORATION';
       isCorridorDay = false;
       const clusterIdx = dIdx - onwardDays;
-      const cluster = destExplorationClusters[clusterIdx % destExplorationClusters.length];
+      const cluster = (destExplorationClusters.length > 0)
+        ? destExplorationClusters[clusterIdx % destExplorationClusters.length]
+        : { hubName: destinationCity, hubCoord: routeInfo.destinationCoordinates, stops: [] };
       dayEndLocation = cluster?.hubName || destinationCity;
       dayEndCoord = cluster?.hubCoord || routeInfo.destinationCoordinates;
       selectedStops = cluster?.stops || [];
       zoneHighlight = cluster?.zoneName || `${destinationCity} Exploration Zone ${clusterIdx + 1}`;
     } else {
-      // RETURN JOURNEY PHASE
+      // RETURN JOURNEY PHASE (only if isRoundTrip && returnDays > 0)
       phaseLabel = 'Return Journey';
       journeyPhase = 'RETURN';
       isCorridorDay = true;
       const retIdx = dIdx - (onwardDays + destinationDays);
-      const retAlloc = returnAllocations[retIdx % returnAllocations.length];
+      const retAlloc = (returnAllocations.length > 0)
+        ? returnAllocations[retIdx % returnAllocations.length]
+        : { endLocation: origin, endCoord: routeInfo.originCoordinates, stops: [], isFinalArrival: true };
       dayEndLocation = retAlloc.endLocation;
       dayEndCoord = retAlloc.endCoord;
       selectedStops = retAlloc.stops;
@@ -261,6 +344,11 @@ async function scheduleDailyItineraries({
         entryFee: s.entryFee || 0,
         preferenceMatch: s.scoring?.preferenceMatch || 0.85,
         sourceInformation: s.dataSource || 'verified_places_engine',
+        dataSource: s.dataSource || 'verified_places_database',
+        dataStatus: s.dataStatus || (s.dataSource === 'google_places_api' ? 'provider_retrieved' : 'verified_database'),
+        isLiveVerified: Boolean(s.isLiveVerified),
+        whySelected: s.whySelected || s.reason || `Selected for ${cat} matching your ${userProfile.planningMode || 'personalized'} travel preference.`,
+        isSupplementary: Boolean(s.isSupplementary),
         description: s.description || s.reason
       };
     });

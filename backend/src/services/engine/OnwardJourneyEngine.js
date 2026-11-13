@@ -101,6 +101,7 @@ function planOnwardJourney(params = {}) {
   const userProfile = params.userProfile || {};
   const candidatePlaces = params.candidatePlaces || [];
   const visitedKeys = params.visitedKeys || new Set();
+  const selectedStops = params.selectedStops || [];
 
   const safeOnwardDays = Math.max(1, onwardDays);
 
@@ -142,13 +143,34 @@ function planOnwardJourney(params = {}) {
 
     // Pick 2-3 authentic corridor stops matching user preferences along this transit segment
     const dayStops = [];
+
+    // 1. Prioritize optimizer selectedStops for onward journey
+    for (const cand of selectedStops) {
+      if (dayStops.length >= 3) break;
+      const candKey = cand.name.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      if (visitedKeys.has(candKey)) continue;
+      if (isStopAlongDaySegment(cand.coordinates, currentCoord, endCoord, 90) || selectedStops.length <= safeOnwardDays * 3) {
+        dayStops.push({
+          ...cand,
+          whySelected: cand.whySelected || `Selected in optimized route corridor matching ${userProfile.planningMode || 'travel'} preferences.`
+        });
+        visitedKeys.add(candKey);
+        if (cand.placeId) visitedKeys.add(cand.placeId);
+      }
+    }
+
+    // 2. Fill remaining capacity from onwardCandidates
     for (let cIdx = 0; cIdx < onwardCandidates.length && dayStops.length < 3; cIdx++) {
       const cand = onwardCandidates[cIdx];
       const candKey = cand.name.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
       if (visitedKeys.has(candKey)) continue;
 
       if (isStopAlongDaySegment(cand.coordinates, currentCoord, endCoord, 75)) {
-        dayStops.push(cand);
+        dayStops.push({
+          ...cand,
+          isSupplementary: selectedStops.length > 0,
+          whySelected: cand.whySelected || `Corridor stop along ${currentStart} → ${endLocation} route matching your preferences.`
+        });
         visitedKeys.add(candKey);
       }
     }

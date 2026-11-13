@@ -53,18 +53,26 @@ function formatMinutesTo12(totalMinutes) {
 /**
  * Builds the chronological calendar days and phase allocations.
  */
-function buildCalendarDays(startDate, totalDays, estimatedDistanceKm = 500) {
+function buildCalendarDays(startDate, totalDays, estimatedDistanceKm = 500, isRoundTrip = true) {
   const days = [];
   const safeDays = Math.max(1, Math.min(30, totalDays));
 
   // Determine onward, destination, and return day counts dynamically based on distance,
   // road network feasibility, and available trip duration (NO rigid fixed-ratio allocations):
   let onwardDays = 1;
-  let returnDays = 1;
+  let returnDays = isRoundTrip ? 1 : 0;
 
   if (safeDays === 1) {
     onwardDays = 1;
     returnDays = 0;
+  } else if (!isRoundTrip) {
+    // ONE-WAY TRIP: Never allocate return days!
+    returnDays = 0;
+    if (estimatedDistanceKm > 850 && safeDays >= 5) {
+      onwardDays = 2; // Split long onward driving for passenger comfort
+    } else {
+      onwardDays = 1;
+    }
   } else if (safeDays === 2) {
     onwardDays = 1;
     returnDays = 1;
@@ -115,7 +123,7 @@ function buildCalendarDays(startDate, totalDays, estimatedDistanceKm = 500) {
       phase = 'single_day_trip';
     } else if (idx < onwardDays) {
       phase = 'onward_corridor';
-    } else if (idx >= safeDays - returnDays) {
+    } else if (isRoundTrip && returnDays > 0 && idx >= safeDays - returnDays) {
       phase = 'return_corridor';
     } else {
       phase = 'destination_stay';
@@ -242,7 +250,8 @@ function evaluateOperatingHoursCompatibility(category, openHours, arrivalMinutes
  * Builds the complete travel context object.
  */
 function buildTravelContext(userProfile, estimatedDistanceKm = 500) {
-  const calendar = buildCalendarDays(userProfile.startDate, userProfile.totalDays, estimatedDistanceKm);
+  const isRoundTrip = userProfile?.isRoundTrip !== false;
+  const calendar = buildCalendarDays(userProfile.startDate, userProfile.totalDays, estimatedDistanceKm, isRoundTrip);
 
   return {
     ...calendar,

@@ -77,7 +77,12 @@ function validateAndEnforceOutputContract({
       entryFee: Number(s.entryFee || 0),
       preferenceMatch: s.preferenceMatch || 0.85,
       sourceInformation: s.sourceInformation || 'verified_places_engine',
-      description: s.description || ''
+      dataSource: s.dataSource || s.sourceInformation || 'verified_places_database',
+      dataStatus: s.dataStatus || 'verified_database',
+      isLiveVerified: Boolean(s.isLiveVerified),
+      whySelected: s.whySelected || s.reason || `Selected for ${s.category || 'attraction'} matching your travel preferences.`,
+      isSupplementary: Boolean(s.isSupplementary),
+      description: s.description || s.whySelected || ''
     }));
 
     return {

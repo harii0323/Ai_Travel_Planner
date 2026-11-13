@@ -173,10 +173,33 @@ function planDestinationExploration({
   destinationDays = 3,
   userProfile,
   candidatePlaces = [],
-  destinationCoordinates
+  destinationCoordinates,
+  selectedStops = []
 }) {
   const destClean = String(destination || userProfile.destinationCity || '').toLowerCase().trim();
   const safeDays = Math.max(1, destinationDays);
+
+  // If optimizer selectedStops are provided, prioritize them for destination exploration
+  let preSelected = [];
+  if (Array.isArray(selectedStops) && selectedStops.length > 0) {
+    preSelected = selectedStops.filter(p => {
+      if (!p || !p.coordinates) return false;
+      const pc = (p.city || '').toLowerCase();
+      const pr = (p.region || '').toLowerCase();
+      if (pc.includes(destClean) || destClean.includes(pc) || pr.includes(destClean) || p.isDestination === true) {
+        return true;
+      }
+      if (destinationCoordinates && Number.isFinite(destinationCoordinates.lat)) {
+        const dist = calculateHaversineDistanceKm(p.coordinates, destinationCoordinates);
+        if (dist <= 75) return true;
+      }
+      return false;
+    });
+    // If none matched destination filter but selectedStops were passed specifically as destinationStops, use all of them
+    if (preSelected.length === 0 && selectedStops.length > 0) {
+      preSelected = [...selectedStops];
+    }
+  }
 
   // 1. Filter candidate places belonging to the destination exploration region
   // Uses multi-level matching: city, region, state, or geographic radius proximity (<=85 km)
@@ -241,7 +264,39 @@ function planDestinationExploration({
 
   let dailyClusters = [];
 
-  if (zonesMap.size >= 1) {
+  if (preSelected.length > 0) {
+    // Distribute optimizer preSelected stops across destination days
+    const stopsPerDay = Math.ceil(preSelected.length / safeDays);
+    const usedKeys = new Set();
+    for (let i = 0; i < safeDays; i++) {
+      const daySlice = preSelected.slice(i * stopsPerDay, (i + 1) * stopsPerDay);
+      const dayStops = [...daySlice];
+      dayStops.forEach(s => usedKeys.add(s.name.toLowerCase().trim().replace(/[^a-z0-9]/g, '')));
+
+      // If day has fewer than 2 stops, supplement from scoredPlaces
+      for (const p of scoredPlaces) {
+        if (dayStops.length >= 3) break;
+        const pKey = p.name.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+        if (!usedKeys.has(pKey)) {
+          dayStops.push({
+            ...p,
+            isSupplementary: true,
+            whySelected: p.whySelected || `Supplementary regional attraction in ${destination} matching your profile.`
+          });
+          usedKeys.add(pKey);
+        }
+      }
+
+      const hubName = dayStops[0]?.city || userProfile.destinationCity;
+      const hubCoord = dayStops[0]?.coordinates || destinationCoordinates;
+      dailyClusters.push({
+        zoneName: `${userProfile.destinationCity} Highlights Zone ${i + 1}`,
+        stops: dayStops,
+        hubName,
+        hubCoord
+      });
+    }
+  } else if (zonesMap.size >= 1) {
     // Sort zones by composite score: place quality, average affinity, and thematic relevance
     const sortedZones = Array.from(zonesMap.entries()).sort((a, b) => {
       if (a[0] === 'general_exploration' && b[0] !== 'general_exploration') return 1;
