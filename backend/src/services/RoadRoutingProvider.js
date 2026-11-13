@@ -23,6 +23,56 @@ const {
 const GOOGLE_MAPS_API_KEY = () => process.env.GOOGLE_MAPS_API_KEY || '';
 const OSRM_ROUTER_URL = () => process.env.OSRM_ROUTER_URL || '';
 
+// Known Geographic Center Coordinates for Indian Hubs, Destinations & Corridors
+const KNOWN_CITY_COORDINATES = {
+  hyderabad: { lat: 17.3850, lng: 78.4867, state: 'Telangana' },
+  munnar: { lat: 10.0889, lng: 77.0595, state: 'Kerala' },
+  kochi: { lat: 9.9312, lng: 76.2673, state: 'Kerala' },
+  cochin: { lat: 9.9312, lng: 76.2673, state: 'Kerala' },
+  bangalore: { lat: 12.9716, lng: 77.5946, state: 'Karnataka' },
+  bengaluru: { lat: 12.9716, lng: 77.5946, state: 'Karnataka' },
+  chennai: { lat: 13.0827, lng: 80.2707, state: 'Tamil Nadu' },
+  delhi: { lat: 28.6139, lng: 77.2090, state: 'Delhi' },
+  mumbai: { lat: 19.0760, lng: 72.8777, state: 'Maharashtra' },
+  pune: { lat: 18.5204, lng: 73.8567, state: 'Maharashtra' },
+  goa: { lat: 15.4909, lng: 73.8278, state: 'Goa' },
+  panaji: { lat: 15.4909, lng: 73.8278, state: 'Goa' },
+  hampi: { lat: 15.3350, lng: 76.4600, state: 'Karnataka' },
+  srisailam: { lat: 16.0740, lng: 78.8680, state: 'Andhra Pradesh' },
+  tirupati: { lat: 13.6288, lng: 79.4192, state: 'Andhra Pradesh' },
+  visakhapatnam: { lat: 17.6868, lng: 83.2185, state: 'Andhra Pradesh' },
+  vizag: { lat: 17.6868, lng: 83.2185, state: 'Andhra Pradesh' },
+  vijayawada: { lat: 16.5062, lng: 80.6480, state: 'Andhra Pradesh' },
+  araku: { lat: 18.3273, lng: 82.8775, state: 'Andhra Pradesh' },
+  manali: { lat: 32.2396, lng: 77.1887, state: 'Himachal Pradesh' },
+  shimla: { lat: 31.1048, lng: 77.1734, state: 'Himachal Pradesh' },
+  ooty: { lat: 11.4102, lng: 76.6950, state: 'Tamil Nadu' },
+  kodaikanal: { lat: 10.2381, lng: 77.4892, state: 'Tamil Nadu' },
+  jaipur: { lat: 26.9124, lng: 75.7873, state: 'Rajasthan' },
+  agra: { lat: 27.1767, lng: 78.0081, state: 'Uttar Pradesh' },
+  varanasi: { lat: 25.3176, lng: 82.9739, state: 'Uttar Pradesh' },
+  kolkata: { lat: 22.5726, lng: 88.3639, state: 'West Bengal' },
+  kanyakumari: { lat: 8.0883, lng: 77.5385, state: 'Tamil Nadu' },
+  kanniyakumari: { lat: 8.0883, lng: 77.5385, state: 'Tamil Nadu' },
+  madurai: { lat: 9.9252, lng: 78.1198, state: 'Tamil Nadu' },
+  mysore: { lat: 12.2958, lng: 76.6394, state: 'Karnataka' },
+  mysuru: { lat: 12.2958, lng: 76.6394, state: 'Karnataka' },
+  coimbatore: { lat: 11.0168, lng: 76.9558, state: 'Tamil Nadu' },
+  wayanad: { lat: 11.6854, lng: 76.1320, state: 'Kerala' },
+  alleppey: { lat: 9.4981, lng: 76.3388, state: 'Kerala' },
+  alappuzha: { lat: 9.4981, lng: 76.3388, state: 'Kerala' },
+  thekkady: { lat: 9.6031, lng: 77.1615, state: 'Kerala' },
+  pondicherry: { lat: 11.9416, lng: 79.8083, state: 'Puducherry' },
+  puducherry: { lat: 11.9416, lng: 79.8083, state: 'Puducherry' },
+  kurnool: { lat: 15.8281, lng: 78.0373, state: 'Andhra Pradesh' },
+  anantapur: { lat: 14.6819, lng: 77.6006, state: 'Andhra Pradesh' },
+  salem: { lat: 11.6643, lng: 78.1460, state: 'Tamil Nadu' },
+  dindigul: { lat: 10.3673, lng: 77.9803, state: 'Tamil Nadu' },
+  hubli: { lat: 15.3647, lng: 75.1240, state: 'Karnataka' },
+  belgaum: { lat: 15.8497, lng: 74.4977, state: 'Karnataka' },
+  kolhapur: { lat: 16.7050, lng: 74.2433, state: 'Maharashtra' }
+};
+
 // In-memory route cache (30-minute TTL)
 const routeCache = new Map();
 const CACHE_TTL_MS = 30 * 60 * 1000;
@@ -34,23 +84,56 @@ class RoadRoutingProvider {
   }
 
   /**
-   * Normalize an input location (string or object with lat/lng or name)
+   * Resolve an input location into clean name and verified coordinates
    */
   normalizeLocation(loc) {
     if (!loc) return null;
+    let name = '';
+    let lat = null;
+    let lng = null;
+
     if (typeof loc === 'string') {
       const parts = loc.split(',');
       if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
         return { lat: parseFloat(parts[0]), lng: parseFloat(parts[1]), name: loc };
       }
-      return { name: loc.trim(), lat: null, lng: null };
+      name = loc.trim();
+    } else {
+      name = loc.name || loc.city || loc.placeName || loc.formattedAddress || '';
+      lat = loc.lat !== undefined ? Number(loc.lat) : (loc.latitude !== undefined ? Number(loc.latitude) : null);
+      lng = loc.lng !== undefined ? Number(loc.lng) : (loc.longitude !== undefined ? Number(loc.longitude) : null);
+      if (loc.coordinates) {
+        if (lat === null && loc.coordinates.lat !== undefined) lat = Number(loc.coordinates.lat);
+        if (lng === null && loc.coordinates.lng !== undefined) lng = Number(loc.coordinates.lng);
+      }
     }
-    const lat = loc.lat !== undefined ? Number(loc.lat) : (loc.latitude !== undefined ? Number(loc.latitude) : null);
-    const lng = loc.lng !== undefined ? Number(loc.lng) : (loc.longitude !== undefined ? Number(loc.longitude) : null);
+
+    // If coordinates already present and valid, return immediately
+    if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+      return { name: name || `${lat.toFixed(4)},${lng.toFixed(4)}`, lat, lng };
+    }
+
+    // Resolve by known Indian cities/destinations registry
+    const cleanName = name.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    for (const [key, coords] of Object.entries(KNOWN_CITY_COORDINATES)) {
+      if (cleanName === key || cleanName.includes(key) || key.includes(cleanName)) {
+        return { name, lat: coords.lat, lng: coords.lng };
+      }
+    }
+
+    // Check highway graph nodes
+    const nodeKey = highwayRoadGraph.resolveNodeKey(name);
+    if (nodeKey) {
+      const node = highwayRoadGraph.getNode(nodeKey);
+      if (node && node.lat && node.lng) {
+        return { name, lat: node.lat, lng: node.lng };
+      }
+    }
+
     return {
-      name: loc.name || loc.city || loc.placeName || (lat && lng ? `${lat.toFixed(4)},${lng.toFixed(4)}` : 'Unknown'),
-      lat,
-      lng
+      name: name || 'Unknown Location',
+      lat: null,
+      lng: null
     };
   }
 
@@ -99,6 +182,7 @@ class RoadRoutingProvider {
         if (resp.data?.status === 'OK' && resp.data.routes?.[0]?.legs?.[0]) {
           const leg = resp.data.routes[0].legs[0];
           const distKm = Math.round((leg.distance?.value || 0) / 1000);
+          const hasTraffic = Boolean(leg.duration_in_traffic);
           const durMin = Math.round((leg.duration_in_traffic?.value || leg.duration?.value || 0) / 60);
 
           const result = {
@@ -111,12 +195,12 @@ class RoadRoutingProvider {
             formattedDuration: `${Math.floor(durMin / 60)}h ${durMin % 60}m`,
             tier: 'Tier 1 (Real Routing Provider)',
             dataSource: 'google_directions_api',
-            dataStatus: 'live_verified',
-            isLiveVerified: true,
+            dataStatus: hasTraffic ? 'live_verified' : 'provider_retrieved',
+            isLiveVerified: hasTraffic,
             isLimitedGraph: false,
             isEstimate: false,
             polyline: resp.data.routes[0].overview_polyline?.points || null,
-            trafficSummary: leg.duration_in_traffic ? 'Live Google Traffic Monitored' : 'Standard Driving Conditions',
+            trafficSummary: hasTraffic ? 'Live Google Traffic Monitored' : 'Standard Provider Duration (Static Flow)',
             timestamp: new Date().toISOString()
           };
 
@@ -152,10 +236,10 @@ class RoadRoutingProvider {
             tier: 'Tier 2 (Open Road Routing Engine)',
             dataSource: 'osrm_open_road_router',
             dataStatus: 'provider_retrieved',
-            isLiveVerified: true,
+            isLiveVerified: false, // OSRM has no live traffic
             isLimitedGraph: false,
             isEstimate: false,
-            trafficSummary: 'Open-Road Network Distance Model',
+            trafficSummary: 'Open-Road Network Distance Model (Static Speed Curves)',
             timestamp: new Date().toISOString()
           };
 
@@ -247,7 +331,9 @@ class RoadRoutingProvider {
       isLiveVerified: false,
       isLimitedGraph: false,
       isEstimate: true,
-      routingLimitation: 'No live provider or highway graph route available; distance and duration are modeled estimates.',
+      routingLimitation: orig.lat === null || dest.lat === null
+        ? 'Coordinates unavailable for one or both endpoints; distance and duration are modeled estimates.'
+        : 'No live provider or highway graph route available; distance and duration are modeled estimates.',
       trafficSummary: trafficMultiplier > 1.0 ? 'Rush Hour Modeled (+20% delay)' : 'Standard Flow Estimate',
       timestamp: new Date().toISOString()
     };
@@ -278,44 +364,105 @@ class RoadRoutingProvider {
    */
   async getRouteMatrix(locations = [], options = {}) {
     if (!Array.isArray(locations) || locations.length === 0) {
-      return { matrix: [], locations: [], size: 0 };
+      return { matrix: [], distances: [], durations: [], locations: [], size: 0 };
     }
 
     const n = locations.length;
+    const normLocations = locations.map(l => this.normalizeLocation(l));
     const matrix = Array.from({ length: n }, () => Array.from({ length: n }, () => null));
 
-    // Fill diagonal
+    // Fill diagonal (exact zero self-distance)
     for (let i = 0; i < n; i++) {
-      matrix[i][i] = { distanceKm: 0, durationMinutes: 0, isLiveVerified: true, dataStatus: 'exact_zero' };
+      matrix[i][i] = {
+        distanceKm: 0,
+        totalDistanceKm: 0,
+        durationMinutes: 0,
+        totalDurationMinutes: 0,
+        isLiveVerified: true,
+        dataStatus: 'exact_zero',
+        dataSource: 'self_transition',
+        trafficSummary: 'No transit required (self)',
+        retrievalTimestamp: new Date().toISOString()
+      };
     }
 
-    // Solve pairs
+    // Memoize pairs across identical names/coords
+    const pairCache = new Map();
+
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
         if (i === j) continue;
-        const fromLoc = locations[i];
-        const toLoc = locations[j];
-        const res = await this.getRoute(fromLoc, toLoc, options);
-        matrix[i][j] = {
-          distanceKm: res.distanceKm,
-          durationMinutes: res.durationMinutes,
-          isLiveVerified: res.isLiveVerified,
-          dataStatus: res.dataStatus,
-          dataSource: res.dataSource
-        };
+        const fromLoc = normLocations[i];
+        const toLoc = normLocations[j];
+
+        const pairKey = `${fromLoc.name}_${fromLoc.lat}_${fromLoc.lng}-->${toLoc.name}_${toLoc.lat}_${toLoc.lng}`;
+        if (pairCache.has(pairKey)) {
+          matrix[i][j] = { ...pairCache.get(pairKey) };
+          continue;
+        }
+
+        try {
+          const res = await this.getRoute(fromLoc, toLoc, options);
+          const cell = {
+            distanceKm: res.distanceKm,
+            totalDistanceKm: res.distanceKm,
+            durationMinutes: res.durationMinutes,
+            totalDurationMinutes: res.durationMinutes,
+            isLiveVerified: Boolean(res.isLiveVerified),
+            dataStatus: res.dataStatus || 'estimated',
+            dataSource: res.dataSource || 'geodesic_haversine_projection_model',
+            trafficSummary: res.trafficSummary || 'Modeled Flow Estimate',
+            retrievalTimestamp: new Date().toISOString()
+          };
+          matrix[i][j] = cell;
+          pairCache.set(pairKey, cell);
+        } catch (pairErr) {
+          // Never substitute zero on failure! Compute transparent Tier 4 fallback
+          let estDirect = 50;
+          if (fromLoc.lat !== null && toLoc.lat !== null) {
+            estDirect = haversineDistanceKm(fromLoc, toLoc);
+          }
+          const estRoadKm = Math.max(5, Math.round(estDirect * 1.28));
+          const estMins = Math.max(10, Math.round((estRoadKm / 55) * 60));
+
+          const fallbackCell = {
+            distanceKm: estRoadKm,
+            totalDistanceKm: estRoadKm,
+            durationMinutes: estMins,
+            totalDurationMinutes: estMins,
+            isLiveVerified: false,
+            dataStatus: 'estimated',
+            dataSource: 'geodesic_haversine_projection_model',
+            trafficSummary: 'Pair routing fallback estimate',
+            retrievalTimestamp: new Date().toISOString()
+          };
+          matrix[i][j] = fallbackCell;
+          pairCache.set(pairKey, fallbackCell);
+        }
       }
     }
 
-    // Also extract convenient 2D numerical arrays for quick lookups
+    // Numerical 2D arrays for quick algorithmic lookups
     const distances = matrix.map(row => row.map(cell => cell ? cell.distanceKm : 0));
     const durations = matrix.map(row => row.map(cell => cell ? cell.durationMinutes : 0));
 
+    // Calculate matrix provenance summary
+    const usedSources = new Set();
+    matrix.forEach(row => row.forEach(cell => {
+      if (cell && cell.dataSource) usedSources.add(cell.dataSource);
+    }));
+
     return {
       size: n,
-      locations,
+      locations: normLocations,
       matrix,
       distances,
       durations,
+      dataProvenance: {
+        sources: Array.from(usedSources),
+        pairCount: n * (n - 1),
+        isAllEstimated: !Array.from(usedSources).some(s => s === 'google_directions_api' || s === 'osrm_open_road_router' || s === 'limited_highway_corridor_graph')
+      },
       timestamp: new Date().toISOString()
     };
   }

@@ -35,10 +35,19 @@ const corsOptions = {
     if (!origin) return callback(null, true);
 
     const allowed = getAllowedOrigins();
+    let isVercelDomain = false;
+    try {
+      const parsed = new URL(origin);
+      isVercelDomain = parsed.hostname.endsWith('.vercel.app');
+    } catch (e) {
+      isVercelDomain = false;
+    }
+
     if (
       allowed.includes(origin) ||
       /^http:\/\/localhost(:\d+)?$/.test(origin) ||
-      /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)
+      /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) ||
+      isVercelDomain
     ) {
       return callback(null, true);
     }

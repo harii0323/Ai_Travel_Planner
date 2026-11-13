@@ -1,16 +1,23 @@
 {
-  "dependencies": {
-    "winget": "^0.0.1"
-  },
   "name": "ai_travel_planner",
   "version": "1.0.0",
   "description": "An intelligent, budget-optimized travel itinerary generator designed specifically for students with limited budgets. This full-stack application creates personalized, cost-effective travel plans based on user preferences, locations, and financial constraints.",
   "main": "EXAMPLES.js",
+  "scripts": {
+    "build": "npm run build --prefix frontend",
+    "start": "npm start --prefix backend",
+    "test": "npm test --prefix backend",
+    "test:frontend": "npm test --prefix frontend -- --watchAll=false",
+    "test:p0": "node backend/test_remediation_p0_suite.js",
+    "test:master": "node backend/test_unified_master_suite.js",
+    "test:benchmark": "node backend/scripts/benchmark_suite.js",
+    "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend"
+  },
+  "dependencies": {
+    "winget": "^0.0.1"
+  },
   "devDependencies": {
     "eslint": "^10.14.0"
-  },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",

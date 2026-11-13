@@ -21,6 +21,7 @@ const { planOnwardJourney } = require('./OnwardJourneyEngine');
 const { planDestinationExploration } = require('./DestinationExplorationEngine');
 const { planReturnJourney } = require('./ReturnJourneyEngine');
 const { calculateIndependentReturnRoute, calculateHaversineDistanceKm } = require('./RouteDiscoveryEngine');
+const { FUEL_BENCHMARKS, ACCOMMODATION_BENCHMARKS, MEAL_BENCHMARKS } = require('./BudgetCalculationEngine');
 
 /**
  * Partitions optimizer selectedStops across the journey phases:
@@ -84,7 +85,10 @@ async function scheduleDailyItineraries({
   travelContext,
   candidatePlaces = [],
   selectedStops = [],
-  optimizerResult = null
+  optimizerResult = null,
+  routeTransitionMatrix = null,
+  locationIndexMap = null,
+  roadRoutingProvider = null
 }) {
   const { totalDays, origin, destinationCity, numberOfTravelers } = userProfile;
   const isRoundTrip = userProfile.isRoundTrip !== false;
@@ -288,10 +292,12 @@ async function scheduleDailyItineraries({
       phaseLabel,
       isOnwardFinalArrival,
       isReturnFinalArrival,
-      travelerCount: numberOfTravelers
+      travelerCount: numberOfTravelers,
+      transitionMatrix: routeTransitionMatrix,
+      locationIndexMap
     });
 
-    // Compute itemized daily expenditure
+    // Compute itemized daily expenditure using authoritative benchmarks
     const isPersonalVehicle = userProfile.transportDetails?.isPersonalVehicle !== false &&
       userProfile.transportMode !== 'bus' &&
       userProfile.transportMode !== 'train' &&
@@ -300,9 +306,11 @@ async function scheduleDailyItineraries({
     let dailyFuelCost = 0;
     let dailyTolls = 0;
 
+    const fuelType = userProfile.vehicleDetails?.fuelType || 'petrol';
+    const fuelPrice = FUEL_BENCHMARKS[fuelType] || FUEL_BENCHMARKS.petrol;
+    const mileage = userProfile.vehicleDetails?.mileage || 15;
+
     if (isPersonalVehicle) {
-      const fuelPrice = userProfile.vehicleDetails?.fuelType === 'diesel' ? 94.8 : 105.5;
-      const mileage = userProfile.vehicleDetails?.mileage || 15;
       dailyFuelCost = Math.round((scheduled.totalDrivingKm / mileage) * fuelPrice);
       dailyTolls = isCorridorDay ? Math.round(scheduled.totalDrivingKm * 1.15) : 50;
     } else {
@@ -311,12 +319,14 @@ async function scheduleDailyItineraries({
       dailyTolls = 0;
     }
 
-    const dailyFood = 550 * numberOfTravelers;
+    const mealConfig = MEAL_BENCHMARKS[userProfile.travelPace === 'relaxed' ? 'premium' : 'standard'] || MEAL_BENCHMARKS.standard;
+    const dailyFood = (mealConfig.breakfast + mealConfig.lunch + mealConfig.dinner) * numberOfTravelers;
     const isTripOver = dIdx === days.length - 1;
-    const isHostel = userProfile.accommodationPreference === 'hostel' || userProfile.travelCompanionType === 'solo';
-    const accRate = isHostel ? 600 : 1800;
-    const roomCapacity = isHostel ? 1 : 2;
-    const dailyHotel = isTripOver ? 0 : Math.ceil(numberOfTravelers / roomCapacity) * accRate;
+    const accType = userProfile.accommodationPreference || (userProfile.travelCompanionType === 'solo' ? 'hostel' : 'budgetHotel');
+    const accConfig = ACCOMMODATION_BENCHMARKS[accType] || ACCOMMODATION_BENCHMARKS.budgetHotel;
+    const roomCapacity = accConfig.capacity || 2;
+    const roomsNeeded = Math.ceil(numberOfTravelers / roomCapacity);
+    const dailyHotel = isTripOver ? 0 : roomsNeeded * accConfig.ratePerRoom;
     const dailyTickets = optimizedStops.reduce((sum, s) => sum + (Number(s.entryFee || 0) * numberOfTravelers), 0);
     const dailyTotal = dailyFuelCost + dailyTolls + dailyFood + dailyHotel + dailyTickets;
 
@@ -333,16 +343,16 @@ async function scheduleDailyItineraries({
         placeId: s.placeId || `POI_D${dayMeta.dayNumber}_${sIdx + 1}`,
         placeName: s.name,
         name: s.name,
-        coordinates: s.coordinates,
+        coordinates: s.coordinates || null,
         category: cat,
         taxonomyCategory: s.taxonomyCategory || 'historical_cultural',
         types: s.subCategories || [cat],
-        rating: s.rating || 4.5,
-        googleRating: s.rating || 4.5,
+        rating: s.rating != null ? Number(s.rating) : null,
+        googleRating: s.googleRating != null ? Number(s.googleRating) : (s.rating != null ? Number(s.rating) : null),
         estimatedVisitDuration: `${s.estimatedVisitDurationMinutes || 75} mins`,
         estimatedCost: s.entryFee ? `₹${s.entryFee * numberOfTravelers}` : '₹0',
         entryFee: s.entryFee || 0,
-        preferenceMatch: s.scoring?.preferenceMatch || 0.85,
+        preferenceMatch: s.preferenceMatch != null ? Number(s.preferenceMatch) : (s.scoring?.preferenceMatch != null ? Number(s.scoring.preferenceMatch) : (s.preferenceScore != null ? Number(s.preferenceScore) : null)),
         sourceInformation: s.dataSource || 'verified_places_engine',
         dataSource: s.dataSource || 'verified_places_database',
         dataStatus: s.dataStatus || (s.dataSource === 'google_places_api' ? 'provider_retrieved' : 'verified_database'),

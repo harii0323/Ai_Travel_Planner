@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "node --check src/index.js",
+    "test": "node test_remediation_p0_suite.js && node test_unified_master_suite.js",
+    "test:syntax": "node --check src/index.js && node --check src/services/UnifiedTravelPlanningOrchestrator.js && node --check src/services/RoadRoutingProvider.js",
+    "test:p0": "node test_remediation_p0_suite.js",
+    "test:master": "node test_unified_master_suite.js",
+    "test:benchmark": "node scripts/benchmark_suite.js",
     "seed:india-tourism": "node src/scripts/seedIndiaTourismData.js"
   },
   "dependencies": {

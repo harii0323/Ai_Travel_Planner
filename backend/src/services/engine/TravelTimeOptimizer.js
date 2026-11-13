@@ -68,7 +68,9 @@ function scheduleDayTimeline({
   isOnwardFinalArrival = false,
   isReturnFinalArrival = false,
   isReturnDay = false,
-  travelerCount = 1
+  travelerCount = 1,
+  transitionMatrix = null,
+  locationIndexMap = null
 }) {
   const timeline = [];
   const isCorridorDay = phaseLabel === 'Onward Journey' || phaseLabel === 'Return Journey';
@@ -111,13 +113,12 @@ function scheduleDayTimeline({
       travelTime: '0 mins',
       visitDuration: `${bDuration} mins`,
       cost: `₹${120 * travelerCount}`,
-      reason: 'Authentic South Indian or regional breakfast and hot coffee to energize the morning.'
+      reason: 'Authentic regional breakfast and hot beverage to energize the morning.'
     });
     currentMinutes += bDuration;
     hadBreakfast = true;
   };
 
-  // Helper to insert lunch
   const insertLunch = (hubName) => {
     if (hadLunch) return;
     const lDuration = 55;
@@ -143,22 +144,44 @@ function scheduleDayTimeline({
 
     // Determine terrain
     const isHill = String(stop.category).includes('mountain') || String(stop.name).includes('Ghat') || String(destinationCity).toLowerCase().includes('manali') || String(destinationCity).toLowerCase().includes('munnar');
-    const isCorridorDay = phaseLabel === 'Onward Journey' || phaseLabel === 'Return Journey';
     const segDist = calculateHaversineDistanceKm(currentCoord, stopCoord);
     const roadType = isHill ? 'hillGhat' : (isCorridorDay || segDist > 45) ? 'expressway' : (segDist > 15 ? 'stateHighway' : 'urbanCity');
 
-    // Calculate transit to this stop
-    const detourKm = Number(stop.distanceFromRouteKm || 5);
-    const detourMinutes = isCorridorDay ? Math.min(25, Math.max(8, Math.round((detourKm / 45) * 60))) : 0;
+    // Calculate transit to this stop using authoritative transition matrix when available
+    let transitDistKm = 0;
+    let effectiveTransitMinutes = 0;
+    let transitionDataSource = 'geodesic_speed_curve_model';
+    let transitionDataStatus = 'estimated';
+    let isTransitionVerified = false;
 
-    const transit = calculateSegmentDrivingMinutes(currentCoord, stopCoord, currentMinutes, roadType);
-    const effectiveTransitMinutes = isCorridorDay ? Math.max(30, transit.durationMinutes + detourMinutes) : transit.durationMinutes;
+    if (transitionMatrix && locationIndexMap) {
+      const kFrom = (i === 0 ? startLocationName : (stops[i - 1].placeId || stops[i - 1].name)) || (currentCoord?.lat && currentCoord?.lng ? `${currentCoord.lat},${currentCoord.lng}` : null);
+      const kTo = stop.placeId || stop.name || (stopCoord?.lat && stopCoord?.lng ? `${stopCoord.lat},${stopCoord.lng}` : null);
+      const idx1 = locationIndexMap.get(kFrom);
+      const idx2 = locationIndexMap.get(kTo);
+      if (idx1 !== undefined && idx2 !== undefined && transitionMatrix.matrix?.[idx1]?.[idx2]) {
+        const cell = transitionMatrix.matrix[idx1][idx2];
+        transitDistKm = cell.distanceKm;
+        effectiveTransitMinutes = cell.durationMinutes;
+        transitionDataSource = cell.dataSource;
+        transitionDataStatus = cell.dataStatus;
+        isTransitionVerified = Boolean(cell.isLiveVerified);
+      }
+    }
 
-    totalDrivingKm += transit.distanceKm;
+    if (effectiveTransitMinutes === 0) {
+      const detourKm = Number(stop.distanceFromRouteKm || 5);
+      const detourMinutes = isCorridorDay ? Math.min(25, Math.max(8, Math.round((detourKm / 45) * 60))) : 0;
+      const transit = calculateSegmentDrivingMinutes(currentCoord, stopCoord, currentMinutes, roadType);
+      transitDistKm = transit.distanceKm;
+      effectiveTransitMinutes = isCorridorDay ? Math.max(30, transit.durationMinutes + detourMinutes) : transit.durationMinutes;
+    }
+
+    totalDrivingKm += transitDistKm;
     totalDrivingMinutes += effectiveTransitMinutes;
     accumulatedDrivingMinutesSinceBreak += effectiveTransitMinutes;
 
-    // Only check for driver fatigue break on long continuous highway drives (>180 mins continuous highway transit without stop)
+    // Driver fatigue break on long continuous highway drives (>180 mins continuous transit without stop)
     if (effectiveTransitMinutes >= 180 && !hadLunch) {
       currentMinutes += 20;
       timeline.push({
@@ -175,12 +198,12 @@ function scheduleDayTimeline({
 
     currentMinutes += effectiveTransitMinutes;
 
-    // Check if Breakfast halt should happen before or at morning stop (08:00 AM - 09:30 AM)
+    // Breakfast halt (08:00 AM - 09:30 AM)
     if (!hadBreakfast && currentMinutes >= 8 * 60 && currentMinutes <= 10 * 60) {
       insertBreakfast(stop.city || startLocationName);
     }
 
-    // Check if Lunch halt should happen (12:30 PM - 02:00 PM)
+    // Lunch halt (12:30 PM - 02:00 PM)
     if (!hadLunch && currentMinutes >= 12 * 60 + 30) {
       insertLunch(stop.city || (isCorridorDay ? startLocationName : destinationCity));
     }
@@ -190,26 +213,30 @@ function scheduleDayTimeline({
     const stopArrivalStr = formatMinutesTo12(currentMinutes);
     const stopDepartureStr = formatMinutesTo12(currentMinutes + visitDuration);
 
-    const travelTimeLabel = `${effectiveTransitMinutes} mins (${transit.distanceKm} km highway + ${detourKm} km detour)`;
-
     timeline.push({
-      placeId: stop.placeId || `POI_${i + 1}`,
+      placeId: stop.placeId || (stop.id ? String(stop.id) : null),
       name: stop.name,
       place: stop.name,
-      coordinates: stop.coordinates,
+      coordinates: (stop.coordinates && (stop.coordinates.lat !== 0 || stop.coordinates.lng !== 0)) ? stop.coordinates : null,
       category: stop.category || 'sightseeing',
       taxonomyCategory: stop.taxonomyCategory || 'historical_cultural',
       time: `${stopArrivalStr} – ${stopDepartureStr}`,
       arrivalTime: stopArrivalStr,
       departureTime: stopDepartureStr,
-      travelTime: travelTimeLabel,
+      travelTime: `${effectiveTransitMinutes} mins (${transitDistKm} km road transit)`,
+      distanceKm: transitDistKm,
+      durationMinutes: effectiveTransitMinutes,
       visitDuration: `${visitDuration} mins`,
       cost: stop.entryFee !== undefined ? `₹${Number(stop.entryFee) * travelerCount}` : '₹0',
       entryFee: Number(stop.entryFee || 0),
-      rating: stop.rating || 4.5,
-      preferenceMatch: stop.preferenceMatch || 0.85,
+      rating: Number.isFinite(stop.rating) ? Number(stop.rating) : null,
+      preferenceMatch: Number.isFinite(stop.preferenceMatch) ? Number(stop.preferenceMatch) : (Number.isFinite(stop.scoring?.preferenceMatch) ? Number(stop.scoring.preferenceMatch) : null),
       activities: stop.activities || [],
-      reason: stop.description || `Highly rated ${stop.category} landmark chosen to match your travel preferences.`
+      dataSource: transitionDataSource,
+      dataStatus: transitionDataStatus,
+      isLiveVerified: isTransitionVerified,
+      whySelected: stop.whySelected || stop.description || `Selected ${stop.category} landmark matching your travel preferences.`,
+      reason: stop.description || stop.whySelected || `Selected ${stop.category} landmark matching your travel preferences.`
     });
 
     currentMinutes += visitDuration;
@@ -228,22 +255,40 @@ function scheduleDayTimeline({
     insertBreakfast(startLocationName);
   }
 
-  // If lunch hasn't occurred yet, ensure appropriate midday window (12:30 PM - 02:00 PM)
+  // If lunch hasn't occurred yet, advance to midday lunch window
   if (!hadLunch) {
     if (currentMinutes < 12 * 60) {
-      currentMinutes = 12 * 60 + 30; // Advance to standard lunch hour
+      currentMinutes = 12 * 60 + 30;
     }
     const defaultLunchCity = isCorridorDay ? (stops[0]?.city || startLocationName) : (destinationCity || endLocationName);
     insertLunch(defaultLunchCity);
   }
 
   // 3. Drive to End Location / Hotel Check-in
-  const endDist = calculateHaversineDistanceKm(currentCoord, endCoord);
-  const finalRoadType = (String(destinationCity).toLowerCase().includes('manali') || String(destinationCity).toLowerCase().includes('munnar')) ? 'hillGhat' : (isCorridorDay || endDist > 45) ? 'expressway' : (endDist > 15 ? 'stateHighway' : 'urbanCity');
-  const finalTransit = calculateSegmentDrivingMinutes(currentCoord, endCoord, currentMinutes, finalRoadType);
-  totalDrivingKm += finalTransit.distanceKm;
-  totalDrivingMinutes += finalTransit.durationMinutes;
-  currentMinutes += finalTransit.durationMinutes;
+  let finalDistKm = 0;
+  let finalDurationMins = 0;
+  if (transitionMatrix && locationIndexMap) {
+    const kFrom = stops.length > 0 ? (stops[stops.length - 1].placeId || stops[stops.length - 1].name) : startLocationName;
+    const kTo = endLocationName;
+    const i1 = locationIndexMap.get(kFrom);
+    const i2 = locationIndexMap.get(kTo);
+    if (i1 !== undefined && i2 !== undefined && transitionMatrix.matrix?.[i1]?.[i2]) {
+      finalDistKm = transitionMatrix.matrix[i1][i2].distanceKm;
+      finalDurationMins = transitionMatrix.matrix[i1][i2].durationMinutes;
+    }
+  }
+
+  if (finalDurationMins === 0) {
+    const endDist = calculateHaversineDistanceKm(currentCoord, endCoord);
+    const finalRoadType = (String(destinationCity).toLowerCase().includes('manali') || String(destinationCity).toLowerCase().includes('munnar')) ? 'hillGhat' : (isCorridorDay || endDist > 45) ? 'expressway' : (endDist > 15 ? 'stateHighway' : 'urbanCity');
+    const finalTransit = calculateSegmentDrivingMinutes(currentCoord, endCoord, currentMinutes, finalRoadType);
+    finalDistKm = finalTransit.distanceKm;
+    finalDurationMins = finalTransit.durationMinutes;
+  }
+
+  totalDrivingKm += finalDistKm;
+  totalDrivingMinutes += finalDurationMins;
+  currentMinutes += finalDurationMins;
 
   // 4. Hotel Check-in & Evening Leisure (if arriving before 07:00 PM)
   if (currentMinutes < 19 * 60) {
@@ -252,7 +297,7 @@ function scheduleDayTimeline({
       time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(eveningLeisureEnd)}`,
       place: `Hotel Check-in & Evening Leisure (${endLocationName})`,
       category: 'hotel',
-      travelTime: `${finalTransit.durationMinutes} mins (${finalTransit.distanceKm} km transit)`,
+      travelTime: `${finalDurationMins} mins (${finalDistKm} km transit)`,
       visitDuration: `${eveningLeisureEnd - currentMinutes} mins`,
       cost: '₹0',
       reason: `Check in to hotel, freshen up, and enjoy relaxed evening downtime in ${endLocationName}.`
@@ -276,7 +321,7 @@ function scheduleDayTimeline({
     time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(currentMinutes + 75)}`,
     place: hotelPlaceLabel,
     category: 'hotel',
-    travelTime: `${finalTransit.durationMinutes} mins (${finalTransit.distanceKm} km transit)`,
+    travelTime: `${finalDurationMins} mins (${finalDistKm} km transit)`,
     visitDuration: 'Overnight Rest',
     cost: `₹${250 * travelerCount} (Dinner) + Hotel Room`,
     reason: `Arrival at day's destination hub (${endLocationName}). Settle in for dinner and overnight rest.`

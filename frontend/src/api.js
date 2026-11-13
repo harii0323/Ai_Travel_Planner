@@ -8,8 +8,12 @@ const getBaseURL = () => {
   
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname || 'localhost';
-    // Match the host running the frontend, but hit backend port 5000
-    return `http://${hostname}:5000`;
+    // If running on local machine in development, hit port 5000
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return `http://${hostname}:5000`;
+    }
+    // On Vercel or cloud deployments, use the origin domain (reverse proxied /api/ routes)
+    return window.location.origin;
   }
   
   return 'http://localhost:5000';

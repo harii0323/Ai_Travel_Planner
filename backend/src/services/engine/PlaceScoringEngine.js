@@ -11,6 +11,8 @@
  * - Rejects popular attractions if they don't match user preferences or force irrational detours.
  */
 
+const { calculatePOIPreferenceMatch } = require('../preferenceEngine');
+
 const DEFAULT_WEIGHTS = {
   preferenceMatch: 0.35,
   activityRelevance: 0.15,
@@ -128,7 +130,13 @@ function scorePlace(place, context = {}) {
   } = context;
 
   // 1. Preference Match
-  const preferenceMatch = calculatePreferenceMatch(place, normalizedInterests);
+  let preferenceMatch = 0;
+  if (context.prefProfile) {
+    const matchObj = calculatePOIPreferenceMatch(place, context.prefProfile);
+    preferenceMatch = matchObj.totalMatchScore;
+  } else {
+    preferenceMatch = calculatePreferenceMatch(place, normalizedInterests);
+  }
 
   // 2. Activity Relevance
   const activityRelevance = preferenceMatch >= 0.75 ? 1.0 : preferenceMatch >= 0.5 ? 0.75 : 0.4;
