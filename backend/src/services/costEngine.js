@@ -73,8 +73,12 @@ function createExpenseItem({
   phase = 'outbound', // 'outbound' | 'destination' | 'return'
   segment = '',
   source = 'Verified Market Benchmark',
+  dataSource = null,
   sourceTimestamp = new Date().toISOString(),
+  dataTimestamp = null,
   status = DATA_STATUS.ESTIMATED,
+  confidenceLevel = null,
+  calculationMethod = null,
   isEstimate = true,
   unitPrice = null,
   quantity = null,
@@ -82,6 +86,24 @@ function createExpenseItem({
   details = {}
 }) {
   const safeAmount = normalizeCost(amount);
+
+  // Provenance and confidence attribution
+  const resolvedConfidence = confidenceLevel || (
+    status === DATA_STATUS.REAL_TIME ? 'VERIFIED_LIVE' :
+    status === DATA_STATUS.RECENT ? 'RECENT_CACHE' :
+    status === DATA_STATUS.ESTIMATED ? 'HIGH_CONFIDENCE_BENCHMARK' : 'ESTIMATED'
+  );
+
+  const resolvedMethod = calculationMethod || (
+    ['fuel', 'tolls'].includes(category) ? 'distance_based' :
+    ['accommodation'].includes(category) ? 'city_tier_model' :
+    ['food'].includes(category) ? 'per_person_per_day' :
+    ['entryFees', 'activities'].includes(category) ? 'verified_schedule' : 'standard_benchmark'
+  );
+
+  const resolvedSource = dataSource || source;
+  const resolvedTimestamp = dataTimestamp || sourceTimestamp;
+
   return {
     expenseId: expenseId || `EXP_${category.toUpperCase()}_${day}_${Math.random().toString(36).substring(2, 7)}`,
     category,
@@ -92,9 +114,13 @@ function createExpenseItem({
     day: Math.max(1, parseInt(day, 10) || 1),
     phase: ['outbound', 'destination', 'return'].includes(phase) ? phase : 'destination',
     segment: segment || 'Trip Corridor',
-    source,
-    sourceTimestamp,
+    source: resolvedSource,
+    dataSource: resolvedSource,
+    sourceTimestamp: resolvedTimestamp,
+    dataTimestamp: resolvedTimestamp,
     status: safeAmount !== null ? status : DATA_STATUS.UNAVAILABLE,
+    confidenceLevel: safeAmount !== null ? resolvedConfidence : 'ESTIMATED',
+    calculationMethod: resolvedMethod,
     isEstimate,
     unitPrice: normalizeCost(unitPrice),
     quantity: quantity !== null ? quantity : 1,
@@ -1024,8 +1050,8 @@ function calculateTripCost(tripData = {}) {
     statusBreakdown: statusCounts,
     unavailableCategories: items.filter(i => i.status === DATA_STATUS.UNAVAILABLE).map(i => i.name),
     estimatedRange: {
-      min: Math.round(totalTripCost * 0.95),
-      max: Math.round(totalTripCost * 1.08)
+      min: Math.round(items.reduce((sum, item) => sum + (item.details?.priceRange?.min || (item.isEstimate ? item.amount * 0.95 : item.amount)), 0)),
+      max: Math.round(items.reduce((sum, item) => sum + (item.details?.priceRange?.max || (item.isEstimate ? item.amount * 1.05 : item.amount)), 0))
     },
 
     items,

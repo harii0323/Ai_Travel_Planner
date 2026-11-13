@@ -223,8 +223,8 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
     transport: 'ownTransport',
     destinationArrivalDay: '',
     destinationArrivalDate: null,
-    travelCompanionType: userPreferences?.companionType || 'friends',
-    numberOfTravelers: 4,
+    travelCompanionType: userPreferences?.companionType || initialPreset?.companion || '',
+    numberOfTravelers: initialPreset?.numberOfTravelers || initialPreset?.travelers || 2,
     vehicleType: 'car',
     vehicleModel: 'toyota-innova-crysta-diesel',
     fuelType: 'diesel',
@@ -263,16 +263,28 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
   // Sync preset if selected from Dashboard
   useEffect(() => {
     if (initialPreset) {
-      setForm((prev) => ({
-        ...prev,
-        destination: initialPreset.destination || prev.destination,
-        startLocation: initialPreset.startLocation || prev.startLocation,
-        budget: initialPreset.budget ? String(initialPreset.budget) : prev.budget,
-        activities: initialPreset.activities || prev.activities,
-        travelCompanionType: initialPreset.companion || prev.travelCompanionType,
-        transport: initialPreset.transport || prev.transport,
-        accommodation: initialPreset.accommodation || prev.accommodation
-      }));
+      const presetDays = Number(initialPreset.days || initialPreset.totalDays || initialPreset.numberOfDays);
+      setForm((prev) => {
+        let newStart = prev.startDate || new Date(Date.now() + 86400000 * 2);
+        let newEnd = prev.endDate;
+        if (presetDays && presetDays >= 1) {
+          newEnd = new Date(newStart);
+          newEnd.setDate(newEnd.getDate() + (presetDays - 1));
+        }
+        return {
+          ...prev,
+          destination: initialPreset.destination || prev.destination,
+          startLocation: initialPreset.startLocation || prev.startLocation,
+          budget: initialPreset.budget ? String(initialPreset.budget) : prev.budget,
+          activities: initialPreset.activities || prev.activities,
+          travelCompanionType: initialPreset.companion || prev.travelCompanionType,
+          transport: initialPreset.transport || prev.transport,
+          accommodation: initialPreset.accommodation || prev.accommodation,
+          numberOfTravelers: initialPreset.numberOfTravelers || initialPreset.travelers || prev.numberOfTravelers,
+          startDate: newStart,
+          endDate: newEnd
+        };
+      });
     }
   }, [initialPreset]);
 
@@ -327,8 +339,11 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
     }
 
     if (step === 4) {
+      if (!form.travelCompanionType) {
+        newErrors.travelCompanionType = 'Please select your companion type (Solo, Couple, Friends, or Family)';
+      }
       if (!form.budget || parseFloat(form.budget) <= 0) {
-        newErrors.budget = 'Please enter a valid budget';
+        newErrors.budget = 'Please enter a valid trip budget';
       }
       if (!form.numberOfTravelers || parseInt(form.numberOfTravelers) < 1) {
         newErrors.numberOfTravelers = 'Min 1 traveler required';
@@ -337,6 +352,23 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  const handleCompanionSelect = (id) => {
+    let travelers = parseInt(form.numberOfTravelers) || 1;
+    if (id === 'solo') travelers = 1;
+    else if (id === 'couple') travelers = 2;
+    else if (id === 'friends') travelers = Math.max(3, travelers);
+    else if (id === 'family') travelers = Math.max(3, travelers);
+
+    setForm((prev) => ({
+      ...prev,
+      travelCompanionType: id,
+      numberOfTravelers: travelers
+    }));
+    if (errors.travelCompanionType) {
+      setErrors((prev) => ({ ...prev, travelCompanionType: '' }));
+    }
   };
 
   const handleNext = () => {
@@ -563,15 +595,31 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
+    // Guard against premature submission: only submit when explicitly on Step 4
+    if (currentStep !== 4) {
+      handleNext();
+      return;
+    }
     if (!validateStep(1) || !validateStep(3) || !validateStep(4)) {
       return;
     }
 
     setLoading(true);
     try {
+      const liveDays = form.startDate && form.endDate
+        ? Math.max(1, Math.round((form.endDate - form.startDate) / (1000 * 60 * 60 * 24)) + 1)
+        : 1;
+
       const formattedForm = {
         ...form,
+        totalDays: liveDays,
+        days: liveDays,
+        numDays: liveDays,
+        numberOfDays: liveDays,
+        trip_duration: liveDays,
+        duration: liveDays,
+        availableDays: liveDays,
         transportType: form.transport === 'selfDriveRentalCar' ? 'own' : form.transport === 'ownTransport' ? 'own' : 'public',
         vehicleType: form.transport === 'selfDriveRentalCar' ? 'car' : form.vehicleType,
         rentalDetails: form.transport === 'selfDriveRentalCar' ? form.rentalDetails : undefined,
@@ -601,9 +649,9 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
     }
   };
 
-  // Calculate live trip length
+  // Calculate live trip length (inclusive calendar days)
   const tripDays = form.startDate && form.endDate
-    ? Math.max(1, Math.ceil((form.endDate - form.startDate) / (1000 * 60 * 60 * 24)))
+    ? Math.max(1, Math.round((form.endDate - form.startDate) / (1000 * 60 * 60 * 24)) + 1)
     : 1;
 
   const perPersonPerDay = form.budget && tripDays && form.numberOfTravelers
@@ -654,12 +702,28 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
           <span className="step-number">4</span>
           <div className="step-info">
             <span className="step-title">Group & Budget</span>
-            <span className="step-subtitle">₹{form.budget || 0}</span>
+            <span className="step-subtitle">
+              {form.travelCompanionType
+                ? `${form.travelCompanionType.charAt(0).toUpperCase() + form.travelCompanionType.slice(1)} • ₹${Number(form.budget || 0).toLocaleString('en-IN')}`
+                : (form.budget ? `₹${Number(form.budget).toLocaleString('en-IN')}` : 'Companion & Budget')}
+            </span>
           </div>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit}>
+      <form
+        onSubmit={handleSubmit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+            e.preventDefault();
+            if (currentStep < 4) {
+              handleNext();
+            } else {
+              handleSubmit(e);
+            }
+          }
+        }}
+      >
         {/* Step 1: Destination & Dates */}
         {currentStep === 1 && (
           <div className="form-step-content">
@@ -1461,7 +1525,10 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
             </div>
 
             <div className="form-group">
-              <label>Who are you traveling with?</label>
+              <label>
+                Who are you traveling with? *
+                <span className="label-hint">(Select companion type)</span>
+              </label>
               <div className="options-cards-grid">
                 {COMPANION_ITEMS.map((item) => {
                   const Icon = item.icon;
@@ -1470,19 +1537,30 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
                     <div
                       key={item.id}
                       className={`option-select-card ${selected ? 'selected' : ''}`}
-                      onClick={() => setForm((prev) => ({ ...prev, travelCompanionType: item.id }))}
+                      onClick={() => handleCompanionSelect(item.id)}
+                      style={{ cursor: 'pointer' }}
                     >
                       <div className="option-card-header">
                         <div className="option-card-icon">
                           <Icon size={18} />
                         </div>
                         <span className="option-card-title">{item.label}</span>
+                        {selected && (
+                          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', color: '#10b981' }}>
+                            <Check size={16} />
+                          </span>
+                        )}
                       </div>
                       <span className="option-card-subtitle">{item.desc}</span>
                     </div>
                   );
                 })}
               </div>
+              {errors.travelCompanionType && (
+                <span className="error-badge" style={{ marginTop: '8px', display: 'inline-flex' }}>
+                  <AlertCircle size={12} /> {errors.travelCompanionType}
+                </span>
+              )}
             </div>
 
             <div className="form-grid-2" style={{ marginTop: '16px' }}>
@@ -1498,7 +1576,7 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
                         numberOfTravelers: Math.max(1, parseInt(prev.numberOfTravelers || 1) - 1)
                       }))
                     }
-                    disabled={parseInt(form.numberOfTravelers) <= 1}
+                    disabled={parseInt(form.numberOfTravelers) <= 1 || form.travelCompanionType === 'solo'}
                   >
                     -
                   </button>
@@ -1512,10 +1590,21 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
                         numberOfTravelers: Math.min(20, parseInt(prev.numberOfTravelers || 1) + 1)
                       }))
                     }
+                    disabled={form.travelCompanionType === 'solo'}
                   >
                     +
                   </button>
                 </div>
+                {form.travelCompanionType === 'solo' && (
+                  <span style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px', display: 'block' }}>
+                    Solo travel is set to 1 traveler
+                  </span>
+                )}
+                {errors.numberOfTravelers && (
+                  <span className="error-badge">
+                    <AlertCircle size={12} /> {errors.numberOfTravelers}
+                  </span>
+                )}
               </div>
 
               <div className="form-group">
@@ -1577,9 +1666,14 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
         )}
 
         {/* Navigation & Action Bar */}
-        <div className="form-step-actions">
+        <div className="form-step-footer form-step-actions">
           {currentStep > 1 ? (
-            <button type="button" className="btn-secondary" onClick={handlePrev}>
+            <button
+              key="btn-step-prev"
+              type="button"
+              className="btn-secondary"
+              onClick={handlePrev}
+            >
               <ArrowLeft size={16} />
               <span>Back</span>
             </button>
@@ -1588,18 +1682,30 @@ function ItineraryForm({ onSubmit, initialPreset, userPreferences }) {
           )}
 
           {currentStep < 4 ? (
-            <button type="button" className="btn-primary" onClick={handleNext}>
+            <button
+              key={`btn-step-${currentStep}-continue`}
+              type="button"
+              className="btn-primary"
+              onClick={handleNext}
+            >
               <span>Continue</span>
               <ArrowRight size={16} />
             </button>
           ) : (
             <button
-              type="submit"
-              className="btn-generate-big"
+              key="btn-step-4-plan-itinerary"
+              type="button"
+              className="btn-primary btn-generate btn-generate-big"
+              onClick={handleSubmit}
               disabled={loading}
+              style={{
+                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                boxShadow: '0 8px 24px rgba(16, 185, 129, 0.35)',
+                color: '#ffffff'
+              }}
             >
               <Sparkles size={20} />
-              <span>{loading ? 'Calculating Route & Itinerary...' : 'Generate Itinerary'}</span>
+              <span>{loading ? 'Planning Itinerary...' : 'Plan Itinerary'}</span>
             </button>
           )}
         </div>

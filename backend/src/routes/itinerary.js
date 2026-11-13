@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const planner = require('../services/planner');
+const { generateUnifiedItinerary } = require('../services/UnifiedTravelPlanningOrchestrator');
 const { discoverAndScheduleRoutePlaces } = require('../services/routePlaceDiscoveryEngine');
 const authenticate = require('../middleware/authenticate');
 const Itinerary = require('../models/Itinerary');
 const User = require('../models/User');
 const emailService = require('../services/emailService');
-const { emailActionRateLimiter } = require('../middleware/security');
+const { emailActionRateLimiter, itineraryRateLimiter } = require('../middleware/security');
 const jwt = require('jsonwebtoken');
 
 const { isTokenRevoked, getJwtSecret } = require('../middleware/authenticate');
@@ -48,7 +49,7 @@ router.post('/optimize-spatiotemporal', optionalAuthenticate, async (req, res) =
       destination: input.destination || 'Goa',
       travel_date: input.travel_date || input.travelDate || input.travelDates || new Date(),
       start_time: input.start_time || input.startTime || '07:00 AM',
-      trip_duration: input.trip_duration || input.totalDays || input.numDays || 3,
+      trip_duration: Number(input.trip_duration || input.totalDays || input.numberOfDays || input.days || input.numDays || 3),
       number_of_travelers: input.number_of_travelers || input.numberOfTravelers || 2,
       traveler_type: input.traveler_type || input.travelCompanionType || input.companionType || 'friends',
       total_budget: input.total_budget || input.budget || 20000,
@@ -114,6 +115,13 @@ router.post('/bandit/feedback', optionalAuthenticate, async (req, res) => {
       action,
       rating
     });
+    try {
+      const db = require('../config/database');
+      if (db.isConnected && db.isConnected() && result && result.record) {
+        contextualBandit.recordFeedbackToDb(result.record, db).catch(() => {});
+        contextualBandit.persistStateToDb(db).catch(() => {});
+      }
+    } catch (_) {}
     res.json({
       success: true,
       data: {
@@ -168,10 +176,57 @@ function sanitizeText(val, maxLen = 100, defaultVal = '') {
 }
 
 // POST /api/itinerary/generate - Generate a new itinerary (supports unauthenticated preview)
-router.post('/generate', optionalAuthenticate, async (req, res) => {
+router.post('/generate', optionalAuthenticate, itineraryRateLimiter, async (req, res) => {
   try {
     const raw = req.body || {};
-    const days = Math.max(1, Math.min(14, Number(raw.days || raw.totalDays || raw.numDays || 3)));
+    // Dynamically calculate available trip duration from explicit dates, properties, or text
+    let userAvailableDays = null;
+
+    // 1. Check date range string (e.g. "2026-11-10 to 2026-11-16")
+    const dateRangeStr = typeof raw.travelDates === 'string' && raw.travelDates.includes(' to ')
+      ? raw.travelDates
+      : (typeof raw.dates === 'string' && raw.dates.includes(' to ') ? raw.dates : '');
+
+    if (dateRangeStr) {
+      const [startPart, endPart] = dateRangeStr.split(' to ');
+      const s = new Date(startPart.trim());
+      const e = new Date(endPart.trim());
+      if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+        userAvailableDays = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      }
+    }
+
+    // 2. Check separate startDate and endDate
+    if (!userAvailableDays && raw.startDate && raw.endDate) {
+      const s = new Date(raw.startDate);
+      const e = new Date(raw.endDate);
+      if (!isNaN(s.getTime()) && !isNaN(e.getTime()) && e >= s) {
+        userAvailableDays = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      }
+    }
+
+    // 3. Check explicit duration numeric properties
+    if (!userAvailableDays) {
+      const explicitDays = Number(
+        raw.totalDays || raw.days || raw.numberOfDays || raw.numDays ||
+        raw.trip_duration || raw.duration || raw.durationDays || raw.availableDays || raw.tripDays
+      );
+      if (Number.isFinite(explicitDays) && explicitDays >= 1) {
+        userAvailableDays = Math.round(explicitDays);
+      }
+    }
+
+    // 4. Check natural language duration in text fields
+    if (!userAvailableDays) {
+      const textToSearch = `${raw.activities || ''} ${raw.prompt || ''} ${raw.notes || ''} ${raw.planningStyle || ''}`;
+      const match = textToSearch.match(/\b(\d{1,2})\s*(?:day|days|d)\b/i);
+      if (match) {
+        const parsed = parseInt(match[1], 10);
+        if (parsed >= 1 && parsed <= 30) userAvailableDays = parsed;
+      }
+    }
+
+    const days = Math.max(1, Math.min(30, userAvailableDays || 3));
     const startD = new Date();
     startD.setDate(startD.getDate() + 7);
     const endD = new Date(startD);
@@ -204,88 +259,9 @@ router.post('/generate', optionalAuthenticate, async (req, res) => {
       transport: sanitizeText(raw.transport || raw.travelMode, 30, 'car')
     };
 
-    // Generate comprehensive route-based place discovery
-    let routeDiscovery = null;
-    try {
-      routeDiscovery = await discoverAndScheduleRoutePlaces({
-        origin: data.start || data.startLocation || data.origin,
-        destination: data.destination,
-        travel_date: data.dates || data.travelDates || data.startDate,
-        start_time: data.startTime || '07:00 AM',
-        trip_duration: data.totalDays || data.numDays || 3,
-        number_of_travelers: data.numberOfTravelers || 1,
-        traveler_type: data.travelCompanionType || data.companionType || 'solo',
-        total_budget: data.budget,
-        travel_mode: data.transport || data.transportMode || 'car',
-        vehicle_details: data.rentalVehicle || { mileage: data.mileage || 15, fuelType: data.fuelType || 'petrol' },
-        preferred_activities: data.activities,
-        preferred_place_types: data.placeType || data.preferredPlaceType
-      });
-    } catch (routeErr) {
-      console.warn('Route place discovery warning:', routeErr.message);
-    }
+    // Generate unified itinerary through central orchestrator
+    const itinerary = await generateUnifiedItinerary(data);
 
-    // Execute Spatiotemporal Multi-Objective Pareto Optimization Engine
-    let spatiotemporalOpt = null;
-    try {
-      spatiotemporalOpt = await optimizeSpatiotemporalJourney({
-        origin: data.start || data.startLocation || data.origin,
-        destination: data.destination,
-        travel_date: data.dates || data.travelDates || data.startDate,
-        start_time: data.startTime || '07:00 AM',
-        trip_duration: data.totalDays || data.numDays || 3,
-        number_of_travelers: data.numberOfTravelers || 1,
-        traveler_type: data.travelCompanionType || data.companionType || 'solo',
-        total_budget: data.budget,
-        travel_mode: data.transport || data.transportMode || 'car',
-        preferred_activities: data.activities,
-        optimization_mode: data.planningMode || data.optimization_mode || 'BALANCED'
-      });
-    } catch (optErr) {
-      console.warn('Spatiotemporal optimization warning:', optErr.message);
-    }
-    
-    // Pass precomputed route discovery into planner to share candidate pool
-    if (routeDiscovery) {
-      data.precomputedRouteDiscovery = routeDiscovery;
-    }
-
-    // Generate itinerary with all data
-    const itinerary = await planner.generateItinerary(data);
-
-    if (routeDiscovery) {
-      itinerary.routeDiscovery = routeDiscovery;
-      itinerary.recommendedPlacesAlongRoute = routeDiscovery.recommendedPlacesAlongRoute;
-      itinerary.preferenceCoverage = routeDiscovery.preferenceCoverage;
-      itinerary.travelerCompatibility = routeDiscovery.travelerCompatibility;
-      itinerary.routeEfficiency = routeDiscovery.routeEfficiency;
-      itinerary.weatherSuitability = routeDiscovery.weatherSuitability;
-      itinerary.trafficSummary = routeDiscovery.trafficSummary;
-      itinerary.rejectedPlaces = routeDiscovery.rejectedPlaces;
-      itinerary.alternativePlaces = routeDiscovery.alternativePlaces;
-      itinerary.routeSummary = routeDiscovery.routeSummary;
-    }
-
-    if (spatiotemporalOpt) {
-      itinerary.spatiotemporalOptimization = spatiotemporalOpt;
-      itinerary.paretoFrontier = spatiotemporalOpt.paretoFrontier;
-      itinerary.optimizationMetrics = spatiotemporalOpt.optimizationMetrics;
-      itinerary.activeItineraryMode = spatiotemporalOpt.activeItineraryMode;
-      itinerary.returnRoutePlan = spatiotemporalOpt.returnRoutePlan;
-      itinerary.validationChecklist = spatiotemporalOpt.validationChecklist;
-      // If routeDiscovery had no route places, fall back to spatiotemporal scheduled places
-      if (!itinerary.recommendedPlacesAlongRoute || itinerary.recommendedPlacesAlongRoute.length === 0) {
-        itinerary.recommendedPlacesAlongRoute = spatiotemporalOpt.recommendedPlacesAlongRoute;
-      }
-    }
-    
-    // Add companion-based recommendations
-    itinerary.recommendations = await planner.generateRecommendations(
-      data.destination,
-      data.travelCompanionType || 'solo',
-      data.numberOfTravelers || 1
-    );
-    
     if (!res.headersSent) {
       res.json({
         success: true,
@@ -304,11 +280,11 @@ router.post('/generate', optionalAuthenticate, async (req, res) => {
 router.post('/save', authenticate, async (req, res) => {
   try {
     const { title, description, itineraryData, plannedTravelDate, tags } = req.body;
-    
+
     if (!title || !itineraryData) {
       return res.status(400).json({ error: 'Title and itinerary data are required' });
     }
-    
+
     const itinerary = await Itinerary.create({
       userId: req.user.id,
       title,
@@ -335,7 +311,7 @@ router.post('/save', authenticate, async (req, res) => {
       plannedTravelDate,
       tags: tags || []
     });
-    
+
     res.status(201).json({
       success: true,
       message: 'Itinerary saved to history',
@@ -485,7 +461,7 @@ router.post('/dynamic-plan', authenticate, async (req, res) => {
       startLocation: startLocation || 'City Center',
       destination: destination || 'Goa',
       travelDate: travelDate ? new Date(travelDate) : new Date(),
-      numberOfDays: Number(numberOfDays) || 3,
+      numberOfDays: Number(numberOfDays || req.body.totalDays || req.body.days || req.body.numDays || req.body.duration) || 3,
       dailyStartTime: dailyStartTime || '08:00',
       dailyEndTime: dailyEndTime || '21:00',
       transportMode: transportMode || 'car',

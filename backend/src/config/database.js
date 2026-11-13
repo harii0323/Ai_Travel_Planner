@@ -175,6 +175,45 @@ const initializeSchema = async () => {
     CREATE INDEX IF NOT EXISTS idx_email_logs_user ON email_logs(user_id);
     CREATE INDEX IF NOT EXISTS idx_email_logs_type ON email_logs(email_type);
 
+    -- Contextual Bandit and Dynamic Re-optimization Tables
+    CREATE TABLE IF NOT EXISTS bandit_model_state (
+      user_id TEXT NOT NULL,
+      arm_id TEXT NOT NULL,
+      a_matrix JSONB NOT NULL,
+      b_vector JSONB NOT NULL,
+      pulls INTEGER NOT NULL DEFAULT 0,
+      total_reward NUMERIC NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, arm_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bandit_model_user ON bandit_model_state(user_id);
+
+    CREATE TABLE IF NOT EXISTS recommendation_feedback (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      recommendation_id TEXT,
+      poi_name TEXT NOT NULL,
+      arm_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      reward NUMERIC NOT NULL,
+      context_vector JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_rec_feedback_user ON recommendation_feedback(user_id);
+    CREATE INDEX IF NOT EXISTS idx_rec_feedback_arm ON recommendation_feedback(arm_id);
+
+    CREATE TABLE IF NOT EXISTS reoptimization_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      itinerary_id TEXT,
+      trigger_type TEXT NOT NULL,
+      delay_minutes INTEGER DEFAULT 0,
+      preserved_stops JSONB NOT NULL DEFAULT '[]'::jsonb,
+      modified_stops JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_reopt_events_user ON reoptimization_events(user_id);
+
     -- Enable and Force Row Level Security (RLS) on user-owned tables
     ALTER TABLE itineraries ENABLE ROW LEVEL SECURITY;
     ALTER TABLE itineraries FORCE ROW LEVEL SECURITY;

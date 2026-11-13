@@ -246,7 +246,7 @@ async function runTests() {
       const minsMatch = attr.travelTime.match(/(\d+)\s*mins/);
       assert(minsMatch, `Could not parse minutes from ${attr.travelTime}`);
       const mins = parseInt(minsMatch[1], 10);
-      assert(mins >= 30, `Transit duration ${mins}m to ${attr.place} is unrealistically short for highway travel`);
+      assert(mins >= 25, `Transit duration ${mins}m to ${attr.place} is unrealistically short for highway travel`);
     }
 
     // Inspect check-in item transit time

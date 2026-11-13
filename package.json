@@ -6,7 +6,9 @@
   "version": "1.0.0",
   "description": "An intelligent, budget-optimized travel itinerary generator designed specifically for students with limited budgets. This full-stack application creates personalized, cost-effective travel plans based on user preferences, locations, and financial constraints.",
   "main": "EXAMPLES.js",
-  "devDependencies": {},
+  "devDependencies": {
+    "eslint": "^10.14.0"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
