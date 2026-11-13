@@ -116,7 +116,7 @@ let cachedGoogleMapsCheck = null;
 let lastMapsCheckTime = 0;
 
 // Health check endpoint (exempt from rate limits, fast and safe)
-app.get('/api/health', async (req, res) => {
+app.get(['/api/health', '/health'], async (req, res) => {
   const hasMapsKey = Boolean(process.env.GOOGLE_MAPS_API_KEY);
   const shouldDeepCheck = req.query.deep === 'true' && (Date.now() - lastMapsCheckTime > 60000);
 

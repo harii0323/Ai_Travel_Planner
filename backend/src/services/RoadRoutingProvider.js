@@ -185,6 +185,26 @@ class RoadRoutingProvider {
       throw new Error('RoadRoutingProvider: Invalid origin or destination coordinates/names.');
     }
 
+    if (options.simulateProviderFailure === true) {
+      return {
+        status: 'UNAVAILABLE',
+        origin: orig,
+        destination: dest,
+        distanceKm: null,
+        totalDistanceKm: null,
+        durationMinutes: null,
+        totalDurationMinutes: null,
+        dataStatus: 'unavailable',
+        dataSource: 'simulated_provider_failure',
+        isLiveVerified: false,
+        isLimitedGraph: false,
+        isEstimate: false,
+        error: 'Simulated routing provider failure',
+        trafficSummary: 'Provider unavailable',
+        timestamp: new Date().toISOString()
+      };
+    }
+
     const departureMinutes = options.departureMinutes !== undefined ? options.departureMinutes : 480; // 08:00 AM
     const transportMode = options.transportMode || 'car';
     const objective = options.objective || 'time';
@@ -491,6 +511,25 @@ class RoadRoutingProvider {
 
         try {
           const res = await this.getRoute(fromLoc, toLoc, options);
+          if (res.status === 'UNAVAILABLE' || res.distanceKm === null) {
+            const unavailableCell = {
+              status: 'UNAVAILABLE',
+              distanceKm: null,
+              totalDistanceKm: null,
+              durationMinutes: null,
+              totalDurationMinutes: null,
+              isLiveVerified: false,
+              dataStatus: 'unavailable',
+              dataSource: res.dataSource || 'provider_failure',
+              trafficSummary: 'Route transition unavailable from provider',
+              error: res.error || 'Provider failed to retrieve route transition',
+              retrievalTimestamp: new Date().toISOString()
+            };
+            matrix[i][j] = unavailableCell;
+            pairCache.set(pairKey, unavailableCell);
+            return;
+          }
+
           const cell = {
             distanceKm: res.distanceKm,
             totalDistanceKm: res.distanceKm,
@@ -505,38 +544,53 @@ class RoadRoutingProvider {
           matrix[i][j] = cell;
           pairCache.set(pairKey, cell);
         } catch (pairErr) {
-          // Never substitute zero on failure! Compute transparent Tier 4 fallback
-          let estDirect = 50;
-          if (fromLoc.lat !== null && toLoc.lat !== null) {
-            estDirect = haversineDistanceKm(fromLoc, toLoc);
-          }
-          const estRoadKm = Math.max(5, Math.round(estDirect * 1.28));
-          const estMins = Math.max(10, Math.round((estRoadKm / 55) * 60));
-
-          const fallbackCell = {
-            distanceKm: estRoadKm,
-            totalDistanceKm: estRoadKm,
-            durationMinutes: estMins,
-            totalDurationMinutes: estMins,
+          // Never substitute zero on failure! Truthful unavailable result
+          const unavailableCell = {
+            status: 'UNAVAILABLE',
+            distanceKm: null,
+            totalDistanceKm: null,
+            durationMinutes: null,
+            totalDurationMinutes: null,
             isLiveVerified: false,
-            dataStatus: 'estimated',
-            dataSource: 'geodesic_haversine_projection_model',
-            trafficSummary: 'Pair routing fallback estimate',
+            dataStatus: 'unavailable',
+            dataSource: 'failed_route_query',
+            trafficSummary: 'Route transition unavailable from provider',
+            error: pairErr?.message || 'Route query failed',
             retrievalTimestamp: new Date().toISOString()
           };
-          matrix[i][j] = fallbackCell;
-          pairCache.set(pairKey, fallbackCell);
+          matrix[i][j] = unavailableCell;
+          pairCache.set(pairKey, unavailableCell);
         }
       }));
     }
 
-    // Numerical 2D arrays for quick algorithmic lookups
-    const distances = matrix.map(row => row.map(cell => cell ? cell.distanceKm : 0));
-    const durations = matrix.map(row => row.map(cell => cell ? cell.durationMinutes : 0));
+    // Numerical 2D arrays: null for unavailable transitions, 0 only for diagonal self-transitions
+    const distances = matrix.map((row, i) => row.map((cell, j) => {
+      if (i === j) return 0;
+      if (!cell || cell.distanceKm === null || cell.dataStatus === 'unavailable') return null;
+      return cell.distanceKm;
+    }));
+    const durations = matrix.map((row, i) => row.map((cell, j) => {
+      if (i === j) return 0;
+      if (!cell || cell.durationMinutes === null || cell.dataStatus === 'unavailable') return null;
+      return cell.durationMinutes;
+    }));
 
-    // Calculate matrix provenance summary
+    // Calculate matrix provenance summary & partial metrics
     const usedSources = new Set();
-    matrix.forEach(row => row.forEach(cell => {
+    let successfulCount = 0;
+    let estimatedCount = 0;
+    let unavailableCount = 0;
+    matrix.forEach((row, i) => row.forEach((cell, j) => {
+      if (i !== j) {
+        if (!cell || cell.dataStatus === 'unavailable' || cell.distanceKm === null) {
+          unavailableCount++;
+        } else if (cell.isLiveVerified || cell.dataStatus === 'provider_retrieved') {
+          successfulCount++;
+        } else {
+          estimatedCount++;
+        }
+      }
       if (cell && cell.dataSource) usedSources.add(cell.dataSource);
     }));
 
@@ -578,13 +632,22 @@ class RoadRoutingProvider {
       return undefined;
     }
 
-    function getTransition(fromLoc, toLoc) {
+    function getTransition(fromLoc, toLoc, opts = {}) {
       const idx1 = resolveIndex(fromLoc);
       const idx2 = resolveIndex(toLoc);
       if (idx1 !== undefined && idx2 !== undefined && matrix[idx1]?.[idx2]) {
-        return matrix[idx1][idx2];
+        const cell = matrix[idx1][idx2];
+        if (cell.dataStatus !== 'unavailable' && cell.distanceKm !== null) {
+          return cell;
+        }
+        if (!opts.allowFallbackEstimate) {
+          return cell;
+        }
       }
-      // Transparent Tier 4 non-zero fallback
+      if (!opts.allowFallbackEstimate) {
+        return null;
+      }
+      // Explicitly permitted Tier 4 non-zero fallback
       const normFrom = self.normalizeLocation(fromLoc);
       const normTo = self.normalizeLocation(toLoc);
       let directKm = 50;
@@ -601,7 +664,7 @@ class RoadRoutingProvider {
         isLiveVerified: false,
         dataStatus: 'estimated',
         dataSource: 'geodesic_haversine_projection_model',
-        trafficSummary: 'Transition cell fallback estimate',
+        trafficSummary: 'Explicit transition fallback estimate',
         retrievalTimestamp: new Date().toISOString()
       };
     }
@@ -616,6 +679,10 @@ class RoadRoutingProvider {
       dataProvenance: {
         sources: Array.from(usedSources),
         pairCount: n * (n - 1),
+        successfulCount,
+        estimatedCount,
+        unavailableCount,
+        isPartial: unavailableCount > 0,
         isAllEstimated: !Array.from(usedSources).some(s => s === 'google_directions_api' || s === 'osrm_open_road_router' || s === 'limited_highway_corridor_graph')
       },
       timestamp: new Date().toISOString(),
@@ -671,10 +738,10 @@ const roadRoutingProviderInstance = new RoadRoutingProvider();
  * Global helper to resolve a pairwise cell from any route transition matrix structure.
  * Handles both rich matrix objects (with getTransition / locationIndexMap) and raw 2D arrays.
  */
-function resolveMatrixCell(matrixObj, fromLoc, toLoc) {
+function resolveMatrixCell(matrixObj, fromLoc, toLoc, options = {}) {
   if (!matrixObj) return null;
   if (typeof matrixObj.getTransition === 'function') {
-    return matrixObj.getTransition(fromLoc, toLoc);
+    return matrixObj.getTransition(fromLoc, toLoc, options);
   }
   const mat = matrixObj.matrix || (Array.isArray(matrixObj) ? matrixObj : null);
   const map = matrixObj.locationIndexMap;
@@ -701,11 +768,17 @@ function resolveMatrixCell(matrixObj, fromLoc, toLoc) {
     const i = resolve(fromLoc);
     const j = resolve(toLoc);
     if (i !== undefined && j !== undefined && mat[i]?.[j]) {
-      return mat[i][j];
+      const c = mat[i][j];
+      if (c && c.dataStatus !== 'unavailable' && c.distanceKm !== null) return c;
+      if (!options.allowFallbackEstimate) return c;
     }
   }
 
-  // Graceful Tier 4 fallback
+  if (!options.allowFallbackEstimate) {
+    return null;
+  }
+
+  // Graceful Tier 4 fallback only when explicitly permitted
   const normFrom = roadRoutingProviderInstance.normalizeLocation(fromLoc);
   const normTo = roadRoutingProviderInstance.normalizeLocation(toLoc);
   let directKm = 50;

@@ -114,6 +114,9 @@ function scheduleDayTimeline({
       travelTime: '0 mins',
       visitDuration: `${bDuration} mins`,
       cost: `₹${120 * travelerCount}`,
+      isCostEstimated: true,
+      calculationMethod: 'meal_benchmark_per_person',
+      dataStatus: 'estimated',
       reason: 'Authentic regional breakfast and hot beverage to energize the morning.'
     });
     currentMinutes += bDuration;
@@ -131,6 +134,9 @@ function scheduleDayTimeline({
       travelTime: '10 mins',
       visitDuration: `${lDuration} mins`,
       cost: `₹${200 * travelerCount}`,
+      isCostEstimated: true,
+      calculationMethod: 'meal_benchmark_per_person',
+      dataStatus: 'estimated',
       reason: 'Authentic regional lunch break and relaxation before afternoon activities.'
     });
     currentMinutes += lDuration;
@@ -160,13 +166,17 @@ function scheduleDayTimeline({
         ? (startCoord ? { name: startLocationName, lat: startCoord.lat, lng: startCoord.lng } : startLocationName)
         : stops[i - 1];
       const toPoint = stop;
-      const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint);
-      if (cell && cell.durationMinutes > 0) {
+      const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint, { allowFallbackEstimate: false });
+      if (cell && cell.distanceKm !== null && cell.durationMinutes !== null && cell.dataStatus !== 'unavailable') {
         transitDistKm = cell.distanceKm;
         effectiveTransitMinutes = cell.durationMinutes;
         transitionDataSource = cell.dataSource || transitionDataSource;
         transitionDataStatus = cell.dataStatus || transitionDataStatus;
         isTransitionVerified = Boolean(cell.isLiveVerified);
+      } else if (cell && cell.dataStatus === 'unavailable') {
+        transitionDataSource = cell.dataSource || 'failed_provider_route';
+        transitionDataStatus = 'unavailable';
+        isTransitionVerified = false;
       }
     }
 
@@ -176,6 +186,9 @@ function scheduleDayTimeline({
       const transit = calculateSegmentDrivingMinutes(currentCoord, stopCoord, currentMinutes, roadType);
       transitDistKm = transit.distanceKm;
       effectiveTransitMinutes = isCorridorDay ? Math.max(30, transit.durationMinutes + detourMinutes) : transit.durationMinutes;
+      transitionDataSource = 'modeled_speed_curve_fallback';
+      transitionDataStatus = 'estimated';
+      isTransitionVerified = false;
     }
 
     totalDrivingKm += transitDistKm;
@@ -192,6 +205,9 @@ function scheduleDayTimeline({
         travelTime: `${Math.round(effectiveTransitMinutes / 2)} mins highway transit`,
         visitDuration: '20 mins',
         cost: `₹${50 * travelerCount}`,
+        isCostEstimated: true,
+        calculationMethod: 'incidentals_benchmark',
+        dataStatus: 'estimated',
         reason: 'Recommended 20-minute highway rest break to prevent driver fatigue after prolonged highway transit.'
       });
       accumulatedDrivingMinutesSinceBreak = 0;
@@ -209,10 +225,37 @@ function scheduleDayTimeline({
       insertLunch(stop.city || (isCorridorDay ? startLocationName : destinationCity));
     }
 
-    // Scheduled Tourist Attraction Activity
-    const visitDuration = Number(stop.estimatedVisitDurationMinutes || stop.durationMinutes || 75);
+    // Scheduled Tourist Attraction Activity (Section 5.3: Visit duration priority)
+    let visitDuration = 60;
+    let durationSource = 'category_planning_estimate';
+    if (stop.officialVisitDurationMinutes != null) {
+      visitDuration = Number(stop.officialVisitDurationMinutes);
+      durationSource = 'official_attraction_reported';
+    } else if (stop.verifiedDurationMinutes != null) {
+      visitDuration = Number(stop.verifiedDurationMinutes);
+      durationSource = 'verified_activity_catalog';
+    } else if (stop.estimatedVisitDurationMinutes != null) {
+      visitDuration = Number(stop.estimatedVisitDurationMinutes);
+      durationSource = 'category_planning_estimate';
+    } else if (stop.durationMinutes != null) {
+      visitDuration = Number(stop.durationMinutes);
+      durationSource = 'category_planning_estimate';
+    } else {
+      visitDuration = 60;
+      durationSource = 'standard_category_default_estimate';
+    }
+
     const stopArrivalStr = formatMinutesTo12(currentMinutes);
     const stopDepartureStr = formatMinutesTo12(currentMinutes + visitDuration);
+
+    const rawFee = stop.entryFee !== undefined && stop.entryFee !== null ? Number(stop.entryFee) : null;
+    const entryFeeVerified = Boolean(stop.entryFeeVerified || stop.isLiveVerified);
+    let costDisplay = '₹0';
+    if (rawFee !== null) {
+      costDisplay = `₹${rawFee * travelerCount}`;
+    } else {
+      costDisplay = 'Fee unconfirmed';
+    }
 
     timeline.push({
       placeId: stop.placeId || (stop.id ? String(stop.id) : null),
@@ -228,8 +271,10 @@ function scheduleDayTimeline({
       distanceKm: transitDistKm,
       durationMinutes: effectiveTransitMinutes,
       visitDuration: `${visitDuration} mins`,
-      cost: stop.entryFee !== undefined ? `₹${Number(stop.entryFee) * travelerCount}` : '₹0',
-      entryFee: Number(stop.entryFee || 0),
+      visitDurationSource: durationSource,
+      cost: costDisplay,
+      entryFee: rawFee,
+      entryFeeVerified,
       rating: Number.isFinite(stop.rating) ? Number(stop.rating) : null,
       preferenceMatch: Number.isFinite(stop.preferenceMatch) ? Number(stop.preferenceMatch) : (Number.isFinite(stop.scoring?.preferenceMatch) ? Number(stop.scoring.preferenceMatch) : null),
       activities: stop.activities || [],
@@ -273,8 +318,8 @@ function scheduleDayTimeline({
       ? stops[stops.length - 1]
       : (startCoord ? { name: startLocationName, lat: startCoord.lat, lng: startCoord.lng } : startLocationName);
     const toPoint = endCoord ? { name: endLocationName, lat: endCoord.lat, lng: endCoord.lng } : endLocationName;
-    const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint);
-    if (cell && cell.durationMinutes > 0) {
+    const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint, { allowFallbackEstimate: false });
+    if (cell && cell.distanceKm !== null && cell.durationMinutes !== null && cell.dataStatus !== 'unavailable') {
       finalDistKm = cell.distanceKm;
       finalDurationMins = cell.durationMinutes;
     }

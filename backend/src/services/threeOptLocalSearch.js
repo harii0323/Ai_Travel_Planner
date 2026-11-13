@@ -20,13 +20,15 @@ const { haversineDistanceKm, highwayRoadGraph } = require('./RoadNetworkGraphEng
 /**
  * Calculates transition distance between two points with road curvature, transition matrix, or highway graph
  */
-function getSegmentRoadDistanceKm(p1, p2, matrix = null, indexMap = null) {
+function getSegmentRoadDistanceKm(p1, p2, matrix = null, indexMap = null, options = {}) {
   if (!p1 || !p2) return 5;
+  if (p1 === p2 || (p1.name && p2.name && p1.name === p2.name)) return 0;
 
   // Rich matrix object with getTransition helper
   if (matrix && typeof matrix.getTransition === 'function') {
-    const cell = matrix.getTransition(p1, p2);
-    if (cell && cell.distanceKm > 0) return cell.distanceKm;
+    const cell = matrix.getTransition(p1, p2, { allowFallbackEstimate: options.allowEstimates !== false });
+    if (cell && cell.distanceKm !== null && cell.dataStatus !== 'unavailable') return cell.distanceKm;
+    if (cell && cell.dataStatus === 'unavailable' && options.allowEstimates === false) return null;
   }
 
   const mat = matrix?.matrix || (Array.isArray(matrix) ? matrix : null);
@@ -47,8 +49,14 @@ function getSegmentRoadDistanceKm(p1, p2, matrix = null, indexMap = null) {
     const i = resolve(p1);
     const j = resolve(p2);
     if (i !== undefined && j !== undefined && mat[i] && mat[i][j]) {
-      return mat[i][j].distanceKm;
+      const cell = mat[i][j];
+      if (cell.distanceKm !== null && cell.dataStatus !== 'unavailable') return cell.distanceKm;
+      if (cell.dataStatus === 'unavailable' && options.allowEstimates === false) return null;
     }
+  }
+
+  if (options.allowEstimates === false) {
+    return null;
   }
 
   // Check limited highway graph
@@ -101,14 +109,24 @@ function evaluateRouteCost(route, options = {}) {
     const from = fullSeq[i];
     const to = fullSeq[i + 1];
 
-    let distKm = getSegmentRoadDistanceKm(from, to, matrixObj, indexMap);
+    let distKm = getSegmentRoadDistanceKm(from, to, matrixObj, indexMap, options);
+    if (distKm === null) {
+      // Unavailable transition! Apply heavy routing penalty
+      penalty += 50000;
+      distKm = 150;
+      if (Array.isArray(options.missingTransitions)) {
+        options.missingTransitions.push({ from: from.name || from.id, to: to.name || to.id });
+      }
+    }
     totalRoadKm += distKm;
 
     let transitMinutes = 0;
     if (matrixObj && typeof matrixObj.getTransition === 'function') {
-      const cell = matrixObj.getTransition(from, to);
+      const cell = matrixObj.getTransition(from, to, { allowFallbackEstimate: options.allowEstimates !== false });
       if (cell && cell.durationMinutes) {
         transitMinutes = cell.durationMinutes;
+      } else if (cell && cell.dataStatus === 'unavailable') {
+        penalty += 50000;
       }
     } else if (matrixObj && indexMap) {
       const mat = matrixObj.matrix || (Array.isArray(matrixObj) ? matrixObj : null);

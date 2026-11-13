@@ -380,13 +380,14 @@ class UnifiedTravelPlanningOrchestrator {
       const prevStopNode = fullSequence[sIdx];
       const currStop = fullSequence[sIdx + 1];
 
-      const cell = resolveMatrixCell(routeTransitionMatrix, prevStopNode, currStop);
-      const distKm = cell ? cell.distanceKm : 25;
-      const durMins = cell ? cell.durationMinutes : 30;
-      const transSource = cell?.dataSource || routeInfo.dataSource || 'road_routing_provider';
-      const transStatus = cell?.dataStatus || routeInfo.dataStatus || 'estimated';
+      const cell = resolveMatrixCell(routeTransitionMatrix, prevStopNode, currStop, { allowFallbackEstimate: false });
+      const isUnavailable = !cell || cell.dataStatus === 'unavailable' || cell.distanceKm === null;
+      const distKm = isUnavailable ? null : cell.distanceKm;
+      const durMins = isUnavailable ? null : cell.durationMinutes;
+      const transSource = cell?.dataSource || (isUnavailable ? 'unavailable' : (routeInfo.dataSource || 'road_routing_provider'));
+      const transStatus = isUnavailable ? 'unavailable' : (cell?.dataStatus || routeInfo.dataStatus || 'estimated');
       const transVerified = Boolean(cell?.isLiveVerified);
-      const conf = transVerified ? 1.0 : (transStatus === 'graph_modeled' ? 0.85 : 0.65);
+      const conf = isUnavailable ? 0 : (transVerified ? 1.0 : (transStatus === 'graph_modeled' ? 0.85 : 0.65));
 
       routeTransitions.push({
         from: prevStopNode.name || prevStopNode.placeName || origin,
@@ -398,9 +399,12 @@ class UnifiedTravelPlanningOrchestrator {
         dataStatus: transStatus,
         isLiveVerified: transVerified,
         retrievalTimestamp: cell?.retrievalTimestamp || new Date().toISOString(),
-        confidence: conf
+        confidence: conf,
+        error: isUnavailable ? (cell?.error || 'Route transition unavailable in matrix') : undefined
       });
     }
+
+    const missingTransitions = routeTransitions.filter(t => t.dataStatus === 'unavailable' || t.distanceKm === null);
 
     // Required Structured Integration Contract (Prompt Section 2)
     const optimizerResult = {
@@ -409,10 +413,11 @@ class UnifiedTravelPlanningOrchestrator {
       selectedMode: activeParetoSolution.mode,
       objectiveScores: activeParetoSolution.objectives || {},
       routeTransitions,
+      missingTransitions,
       feasibilityStatus: {
-        isFeasible: true,
-        status: 'FEASIBLE',
-        score: 100
+        isFeasible: missingTransitions.length === 0,
+        status: missingTransitions.length > 0 ? 'NOT_VERIFIED' : 'FEASIBLE',
+        score: missingTransitions.length > 0 ? 50 : 100
       },
       preferenceCoverage: {},
       diversityMetrics: {
@@ -509,7 +514,10 @@ class UnifiedTravelPlanningOrchestrator {
     const feasibilityAnalysis = evaluateItineraryFeasibility({
       dayPlans,
       userProfile,
-      routeInfo,
+      routeInfo: {
+        ...routeInfo,
+        missingTransitions
+      },
       budgetSummary,
       weatherInfo: normalizedWeather
     });
@@ -576,15 +584,15 @@ class UnifiedTravelPlanningOrchestrator {
           city: s.city || destination,
           category: s.category || 'attraction',
           day: day.day,
-          expectedArrival: s.arrivalTime || '10:00 AM',
-          expectedDeparture: s.departureTime || '11:30 AM',
-          recommendedStay: s.estimatedVisitDuration || '90 mins',
+          expectedArrival: s.arrivalTime || null,
+          expectedDeparture: s.departureTime || null,
+          recommendedStay: s.estimatedVisitDuration || (s.durationMinutes ? `${s.durationMinutes} mins` : null),
           whySelected: s.whySelected || s.preferenceExplanation || `Selected based on high affinity with your ${s.category || 'general'} preferences.`,
           rating: s.rating != null ? Number(s.rating) : null,
           reviews: s.reviews != null ? Number(s.reviews) : (s.userRatingsTotal != null ? Number(s.userRatingsTotal) : null),
           coordinates: s.coordinates || null,
-          dataSource: s.dataSource || 'verified_places_database',
-          dataStatus: s.dataStatus || 'verified_database',
+          dataSource: s.dataSource || 'catalog_database',
+          dataStatus: s.dataStatus || 'unverified_catalog',
           isLiveVerified: Boolean(s.isLiveVerified)
         });
       });

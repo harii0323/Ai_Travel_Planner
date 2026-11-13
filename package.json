@@ -11,6 +11,7 @@
     "test:p0": "node backend/test_remediation_p0_suite.js",
     "test:master": "node backend/test_unified_master_suite.js",
     "test:benchmark": "node backend/scripts/benchmark_suite.js",
+    "postinstall": "npm install --prefix backend && npm install --prefix frontend",
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend"
   },
   "dependencies": {

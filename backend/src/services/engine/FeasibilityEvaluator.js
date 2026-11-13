@@ -214,12 +214,24 @@ function evaluateItineraryFeasibility({
 
   // 9. EVALUATE ROUTE CORRIDOR CONNECTIVITY
   const hasValidDistance = Number(routeInfo.totalDistanceKm || 0) > 0;
-  recordConstraint(
-    'Route Corridor Connectivity',
-    hasValidDistance,
-    hasValidDistance ? `Authoritative road corridor verified (${routeInfo.totalDistanceKm} km)` : 'Routing connectivity between endpoints could not be verified',
-    true
-  );
+  const isRoutingUnavailable = routeInfo.dataStatus === 'unavailable' || (routeInfo.missingTransitions && routeInfo.missingTransitions.length > 0) || !hasValidDistance;
+
+  if (isRoutingUnavailable) {
+    unverifiedItems.push('Routing connectivity between endpoints is unavailable or unverified');
+    recordConstraint(
+      'Route Corridor Connectivity',
+      false,
+      'Routing connectivity between endpoints is unavailable or unverified',
+      false
+    );
+  } else {
+    recordConstraint(
+      'Route Corridor Connectivity',
+      true,
+      `Authoritative road corridor verified (${routeInfo.totalDistanceKm} km)`,
+      true
+    );
+  }
   if (!routeInfo.isLiveVerified) {
     unverifiedItems.push('Road traffic conditions rely on historical diurnal model rather than live sensor feed');
   }
@@ -240,7 +252,21 @@ function evaluateItineraryFeasibility({
   );
 
   // CALCULATE OBJECTIVE SCORE & FINAL FEASIBILITY STATUS
-  const score = totalConstraintsChecked > 0 ? Math.round((passedConstraintsCount / totalConstraintsChecked) * 100) : 100;
+  let verifiedCount = 0;
+  evaluatedConstraints.forEach(c => {
+    if (c.passed && !c.details.includes('unavailable') && !c.details.includes('unverified') && !c.details.includes('historical')) {
+      verifiedCount++;
+    }
+  });
+
+  let score = 100;
+  if (violations.length > 0) {
+    score = Math.max(10, Math.min(45, 100 - (violations.length * 25 + warnings.length * 5)));
+  } else if (unverifiedItems.length > 0) {
+    score = Math.max(50, Math.min(90, 100 - (unverifiedItems.length * 8 + warnings.length * 5)));
+  } else if (warnings.length > 0) {
+    score = Math.max(70, Math.min(95, 100 - warnings.length * 8));
+  }
 
   let status = 'FEASIBLE';
   let isFeasible = true;
@@ -248,9 +274,14 @@ function evaluateItineraryFeasibility({
   if (violations.length > 0) {
     status = 'INFEASIBLE';
     isFeasible = false;
-  } else if (unverifiedItems.length >= 3 && weatherInfo?.status === 'UNAVAILABLE' && !routeInfo.isLiveVerified) {
+  } else if (
+    routeInfo?.dataStatus === 'unavailable' ||
+    !hasValidDistance ||
+    (routeInfo?.missingTransitions && routeInfo.missingTransitions.length > 0) ||
+    (userProfile?.requireVerifiedOnly && (weatherInfo?.status === 'UNAVAILABLE' || unverifiedItems.length > 0))
+  ) {
     status = 'NOT_VERIFIED';
-    isFeasible = true;
+    isFeasible = false;
   } else if (warnings.length > 0 || unverifiedItems.length > 0) {
     status = 'FEASIBLE_WITH_WARNINGS';
     isFeasible = true;
