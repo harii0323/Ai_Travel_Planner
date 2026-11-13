@@ -26,9 +26,11 @@ function getSegmentRoadDistanceKm(p1, p2, matrix = null, indexMap = null, option
 
   // Rich matrix object with getTransition helper
   if (matrix && typeof matrix.getTransition === 'function') {
-    const cell = matrix.getTransition(p1, p2, { allowFallbackEstimate: options.allowEstimates !== false });
+    const cell = matrix.getTransition(p1, p2, { allowFallbackEstimate: options.allowEstimates === true });
     if (cell && cell.distanceKm !== null && cell.dataStatus !== 'unavailable') return cell.distanceKm;
-    if (cell && cell.dataStatus === 'unavailable' && options.allowEstimates === false) return null;
+    if (cell && (cell.dataStatus === 'unavailable' || cell.distanceKm === null)) {
+      if (options.allowEstimates !== true) return null;
+    }
   }
 
   const mat = matrix?.matrix || (Array.isArray(matrix) ? matrix : null);
@@ -50,12 +52,14 @@ function getSegmentRoadDistanceKm(p1, p2, matrix = null, indexMap = null, option
     const j = resolve(p2);
     if (i !== undefined && j !== undefined && mat[i] && mat[i][j]) {
       const cell = mat[i][j];
-      if (cell.distanceKm !== null && cell.dataStatus !== 'unavailable') return cell.distanceKm;
-      if (cell.dataStatus === 'unavailable' && options.allowEstimates === false) return null;
+      if (cell && cell.distanceKm !== null && cell.dataStatus !== 'unavailable') return cell.distanceKm;
+      if (cell && (cell.dataStatus === 'unavailable' || cell.distanceKm === null)) {
+        if (options.allowEstimates !== true) return null;
+      }
     }
   }
 
-  if (options.allowEstimates === false) {
+  if (matrix && options.allowEstimates !== true) {
     return null;
   }
 
@@ -111,22 +115,37 @@ function evaluateRouteCost(route, options = {}) {
 
     let distKm = getSegmentRoadDistanceKm(from, to, matrixObj, indexMap, options);
     if (distKm === null) {
-      // Unavailable transition! Apply heavy routing penalty
-      penalty += 50000;
-      distKm = 150;
       if (Array.isArray(options.missingTransitions)) {
-        options.missingTransitions.push({ from: from.name || from.id, to: to.name || to.id });
+        options.missingTransitions.push({ from: from.name || from.id, to: to.name || to.id, reason: 'Unavailable transition' });
       }
+      if (Array.isArray(options.rejectedCandidates)) {
+        options.rejectedCandidates.push({
+          candidate: fullSeq.map(s => s.name || s.id),
+          reason: `Unavailable road transition between ${from.name || from.id} and ${to.name || to.id}`
+        });
+      }
+      // Strict mode rejects missing transitions with Infinity
+      if (options.allowEstimates !== true) {
+        return Infinity;
+      }
+      penalty += 100000;
+      distKm = 0;
     }
     totalRoadKm += distKm;
 
-    let transitMinutes = 0;
+    let transitMinutes = null;
     if (matrixObj && typeof matrixObj.getTransition === 'function') {
-      const cell = matrixObj.getTransition(from, to, { allowFallbackEstimate: options.allowEstimates !== false });
-      if (cell && cell.durationMinutes) {
+      const cell = matrixObj.getTransition(from, to, { allowFallbackEstimate: options.allowEstimates === true });
+      if (cell && cell.durationMinutes !== null && cell.dataStatus !== 'unavailable') {
         transitMinutes = cell.durationMinutes;
       } else if (cell && cell.dataStatus === 'unavailable') {
-        penalty += 50000;
+        if (options.allowEstimates !== true) {
+          if (Array.isArray(options.missingTransitions)) {
+            options.missingTransitions.push({ from: from.name || from.id, to: to.name || to.id });
+          }
+          return Infinity;
+        }
+        penalty += 100000;
       }
     } else if (matrixObj && indexMap) {
       const mat = matrixObj.matrix || (Array.isArray(matrixObj) ? matrixObj : null);
@@ -143,14 +162,29 @@ function evaluateRouteCost(route, options = {}) {
       };
       const idx1 = resolve(from);
       const idx2 = resolve(to);
-      if (idx1 !== undefined && idx2 !== undefined && mat?.[idx1]?.[idx2]?.durationMinutes) {
+      if (idx1 !== undefined && idx2 !== undefined && mat?.[idx1]?.[idx2]?.durationMinutes !== null && mat?.[idx1]?.[idx2]?.dataStatus !== 'unavailable') {
         transitMinutes = mat[idx1][idx2].durationMinutes;
+      } else if (idx1 !== undefined && idx2 !== undefined && mat?.[idx1]?.[idx2]?.dataStatus === 'unavailable') {
+        if (options.allowEstimates !== true) {
+          if (Array.isArray(options.missingTransitions)) {
+            options.missingTransitions.push({ from: from.name || from.id, to: to.name || to.id });
+          }
+          return Infinity;
+        }
+        penalty += 100000;
       }
     }
 
-    if (!transitMinutes) {
-      const transit = calculateTimeDependentTravelTime(distKm, currentClock);
-      transitMinutes = transit.travelMinutes;
+    if (transitMinutes === null) {
+      if (matrixObj && options.allowEstimates !== true) {
+        return Infinity;
+      }
+      if (distKm > 0) {
+        const transit = calculateTimeDependentTravelTime(distKm, currentClock);
+        transitMinutes = transit.travelMinutes;
+      } else {
+        transitMinutes = 0;
+      }
     }
 
     currentClock += transitMinutes;
@@ -276,13 +310,19 @@ function applyThreeOptLocalSearch(route, options = {}, maybeDestination = null) 
             [...segA, ...revC, ...revB, ...segD]            // 7. Swap and reverse both
           ];
 
-          for (const cand of variants) {
+          for (let vIdx = 0; vIdx < variants.length; vIdx++) {
+            const cand = variants[vIdx];
             const cost = evaluateRouteCost(cand, optConfig);
             if (cost < bestCost - 1.5) {
               bestRoute = cand;
               bestCost = cost;
               improved = true;
               break;
+            } else if (Array.isArray(optConfig.rejectedCandidates)) {
+              optConfig.rejectedCandidates.push({
+                variantIndex: vIdx,
+                reason: cost === Infinity ? 'Contains unavailable road transitions' : `Suboptimal cost (${cost.toFixed(1)} >= ${bestCost.toFixed(1)})`
+              });
             }
           }
           if (improved) break;

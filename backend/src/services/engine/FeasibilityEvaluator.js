@@ -44,13 +44,42 @@ function evaluateItineraryFeasibility({
   let totalConstraintsChecked = 0;
   let passedConstraintsCount = 0;
 
-  function recordConstraint(name, passed, details = '', isHard = true) {
+  function recordConstraint({
+    name,
+    passed,
+    status = null,
+    severity = null,
+    evidence = '',
+    source = 'feasibility_evaluator',
+    explanation = '',
+    recommendedAction = 'None required',
+    isHard = true
+  }) {
     totalConstraintsChecked++;
-    if (passed) passedConstraintsCount++;
-    evaluatedConstraints.push({ name, passed, isHard, details });
-    if (!passed) {
-      if (isHard) violations.push(`[VIOLATION] ${name}: ${details}`);
-      else warnings.push(`[WARNING] ${name}: ${details}`);
+    const resolvedStatus = status || (passed ? 'PASSED' : (isHard ? 'VIOLATION' : 'WARNING'));
+    const resolvedSeverity = severity || (resolvedStatus === 'VIOLATION' ? 'CRITICAL' : (resolvedStatus === 'WARNING' ? 'WARNING' : 'INFO'));
+    if (passed && resolvedStatus === 'PASSED') passedConstraintsCount++;
+
+    const item = {
+      name,
+      status: resolvedStatus,
+      severity: resolvedSeverity,
+      evidence: evidence || explanation,
+      source,
+      explanation,
+      recommendedAction: passed && resolvedStatus === 'PASSED' ? 'None required' : recommendedAction,
+      passed: Boolean(passed && resolvedStatus === 'PASSED'),
+      isHard: Boolean(isHard),
+      details: explanation
+    };
+
+    evaluatedConstraints.push(item);
+    if (resolvedStatus === 'VIOLATION') {
+      violations.push(`[VIOLATION] ${name}: ${explanation}`);
+    } else if (resolvedStatus === 'WARNING') {
+      warnings.push(`[WARNING] ${name}: ${explanation}`);
+    } else if (resolvedStatus === 'NOT_VERIFIED') {
+      unverifiedItems.push(`[NOT_VERIFIED] ${name}: ${explanation}`);
     }
   }
 
@@ -66,19 +95,29 @@ function evaluateItineraryFeasibility({
       fatigueWarningDay = `Day ${day.dayNumber || day.day} (${Math.floor(driveMins / 60)}h ${driveMins % 60}m)`;
     }
   });
-  recordConstraint(
-    'Daily Driving Time Cap',
-    !excessiveDrivingDay,
-    excessiveDrivingDay ? `Exceeds 10-hour/700km safety limit on ${excessiveDrivingDay}` : 'All days within safe driving limits',
-    true
-  );
+  recordConstraint({
+    name: 'Daily Driving Time Cap',
+    passed: !excessiveDrivingDay,
+    status: excessiveDrivingDay ? 'VIOLATION' : 'PASSED',
+    severity: excessiveDrivingDay ? 'CRITICAL' : 'INFO',
+    evidence: excessiveDrivingDay ? `Exceeded cap: ${excessiveDrivingDay}` : 'All days <= 12 hours driving',
+    source: 'road_matrix_and_daily_scheduler',
+    explanation: excessiveDrivingDay ? `Exceeds 12-hour/850km safety limit on ${excessiveDrivingDay}` : 'All days within safe driving limits',
+    recommendedAction: excessiveDrivingDay ? 'Split long driving day with intermediate overnight halt' : 'None required',
+    isHard: true
+  });
   if (fatigueWarningDay) {
-    recordConstraint(
-      'Driver Fatigue Threshold',
-      false,
-      `High driving volume on ${fatigueWarningDay}; ensure scheduled driver rest breaks`,
-      false
-    );
+    recordConstraint({
+      name: 'Driver Fatigue Threshold',
+      passed: false,
+      status: 'WARNING',
+      severity: 'WARNING',
+      evidence: fatigueWarningDay,
+      source: 'road_matrix_and_daily_scheduler',
+      explanation: `High driving volume on ${fatigueWarningDay}; ensure scheduled driver rest breaks`,
+      recommendedAction: 'Schedule driver rest halts every 3 hours of continuous highway driving',
+      isHard: false
+    });
   }
 
   // 2. EVALUATE OPENING HOURS COMPLIANCE
@@ -102,15 +141,43 @@ function evaluateItineraryFeasibility({
       }
     });
   });
-  if (unverifiedHoursCount > 0) {
-    unverifiedItems.push(`${unverifiedHoursCount} attraction stop(s) have unverified seasonal operating hours`);
+  if (openingHoursViolation) {
+    recordConstraint({
+      name: 'Operating Hours Compliance',
+      passed: false,
+      status: 'VIOLATION',
+      severity: 'CRITICAL',
+      evidence: openingHoursViolation,
+      source: 'attraction_schedule',
+      explanation: openingHoursViolation,
+      recommendedAction: 'Adjust arrival time or replace with attraction open during visiting window',
+      isHard: true
+    });
+  } else if (unverifiedHoursCount > 0) {
+    recordConstraint({
+      name: 'Operating Hours Compliance',
+      passed: true,
+      status: 'WARNING',
+      severity: 'WARNING',
+      evidence: `${unverifiedHoursCount} attraction(s) lack official opening hours`,
+      source: 'attraction_catalog',
+      explanation: `${unverifiedHoursCount} attraction stop(s) have unverified seasonal operating hours`,
+      recommendedAction: 'Verify operating hours with venue before travel',
+      isHard: false
+    });
+  } else {
+    recordConstraint({
+      name: 'Operating Hours Compliance',
+      passed: true,
+      status: 'PASSED',
+      severity: 'INFO',
+      evidence: 'All scheduled attractions have verified operating hours',
+      source: 'attraction_schedule',
+      explanation: 'All visits scheduled within official operating windows',
+      recommendedAction: 'None required',
+      isHard: false
+    });
   }
-  recordConstraint(
-    'Operating Hours Compliance',
-    !openingHoursViolation,
-    openingHoursViolation || 'All visits scheduled within official operating windows',
-    false
-  );
 
   // 3. EVALUATE MEAL HALTS & REST WINDOWS
   let missingMealDays = [];
@@ -120,12 +187,17 @@ function evaluateItineraryFeasibility({
       missingMealDays.push(day.dayNumber || day.day);
     }
   });
-  recordConstraint(
-    'Mandatory Meal Halts',
-    missingMealDays.length === 0,
-    missingMealDays.length > 0 ? `Missing dedicated meal stops on Day(s): ${missingMealDays.join(', ')}` : 'Timely meal halts scheduled for all travel days',
-    false
-  );
+  recordConstraint({
+    name: 'Mandatory Meal Halts',
+    passed: missingMealDays.length === 0,
+    status: missingMealDays.length === 0 ? 'PASSED' : 'WARNING',
+    severity: missingMealDays.length === 0 ? 'INFO' : 'WARNING',
+    evidence: missingMealDays.length > 0 ? `Missing lunch on Day(s): ${missingMealDays.join(', ')}` : 'Dedicated meal breaks scheduled daily',
+    source: 'daily_timeline',
+    explanation: missingMealDays.length > 0 ? `Missing dedicated meal stops on Day(s): ${missingMealDays.join(', ')}` : 'Timely meal halts scheduled for all travel days',
+    recommendedAction: missingMealDays.length > 0 ? 'Insert dedicated 45-60 minute dining halts' : 'None required',
+    isHard: false
+  });
 
   // 4. EVALUATE BUDGET CONSTRAINTS
   const userBudget = Number(userProfile.totalBudget || userProfile.budget || 0);
@@ -133,14 +205,21 @@ function evaluateItineraryFeasibility({
   if (userBudget > 0 && totalCost > 0) {
     const isSevereOverrun = totalCost > userBudget * 1.35;
     const isMildOverrun = totalCost > userBudget;
-    recordConstraint(
-      'Budget Limit Feasibility',
-      !isSevereOverrun,
-      isSevereOverrun
+    recordConstraint({
+      name: 'Budget Limit Feasibility',
+      passed: !isSevereOverrun,
+      status: isSevereOverrun ? 'VIOLATION' : (isMildOverrun ? 'WARNING' : 'PASSED'),
+      severity: isSevereOverrun ? 'CRITICAL' : (isMildOverrun ? 'WARNING' : 'INFO'),
+      evidence: `Trip cost ₹${totalCost.toLocaleString('en-IN')} vs User budget ₹${userBudget.toLocaleString('en-IN')}`,
+      source: 'budget_calculation_engine',
+      explanation: isSevereOverrun
         ? `Trip expenditure (₹${totalCost.toLocaleString('en-IN')}) exceeds budget (₹${userBudget.toLocaleString('en-IN')}) by >35%`
         : (isMildOverrun ? `Trip cost (₹${totalCost.toLocaleString('en-IN')}) slightly exceeds budget (₹${userBudget.toLocaleString('en-IN')})` : 'Trip is fully within budget'),
-      isSevereOverrun
-    );
+      recommendedAction: isSevereOverrun
+        ? 'Select budget accommodations, switch travel modes, or reduce trip duration'
+        : (isMildOverrun ? 'Apply trade-off recommendations to bring cost within budget' : 'None required'),
+      isHard: isSevereOverrun
+    });
   }
 
   // 5. EVALUATE NEGATIVE PREFERENCES & PLACES TO AVOID
@@ -159,28 +238,63 @@ function evaluateItineraryFeasibility({
       });
     });
   }
-  recordConstraint(
-    'Negative Preferences Adherence',
-    !avoidedStopEncountered,
-    avoidedStopEncountered || 'No avoided categories or locations included',
-    true
-  );
+  recordConstraint({
+    name: 'Negative Preferences Adherence',
+    passed: !avoidedStopEncountered,
+    status: avoidedStopEncountered ? 'VIOLATION' : 'PASSED',
+    severity: avoidedStopEncountered ? 'CRITICAL' : 'INFO',
+    evidence: avoidedStopEncountered || 'Zero avoided places or categories matched',
+    source: 'user_preferences',
+    explanation: avoidedStopEncountered || 'No avoided categories or locations included',
+    recommendedAction: avoidedStopEncountered ? 'Filter out avoided places from candidate selection' : 'None required',
+    isHard: true
+  });
 
   // 6. EVALUATE WEATHER SAFETY RESTRICTIONS
   let weatherFeasible = true;
   let weatherDetails = 'Weather conditions verified favorable';
   const weatherCondStr = weatherInfo?.condition || weatherInfo?.conditions || '';
+  const isSafetyCriticalWeather = Boolean(userProfile?.requireVerifiedOnly || weatherInfo?.isCritical);
   if (!weatherInfo || weatherInfo.status === 'UNAVAILABLE' || weatherInfo.status === 'UNKNOWN' || weatherCondStr === 'Unavailable' || weatherCondStr === 'Unknown') {
     weatherFeasible = true;
     weatherDetails = 'Weather data unavailable for travel dates; outdoor feasibility cannot be verified';
-    unverifiedItems.push(weatherDetails);
-    recordConstraint('Weather Data Availability', false, weatherDetails, false);
+    recordConstraint({
+      name: 'Weather Safety Clearance',
+      passed: !isSafetyCriticalWeather,
+      status: isSafetyCriticalWeather ? 'NOT_VERIFIED' : 'WARNING',
+      severity: isSafetyCriticalWeather ? 'CRITICAL' : 'WARNING',
+      evidence: 'Weather data unavailable',
+      source: 'open_weather_api',
+      explanation: weatherDetails,
+      recommendedAction: 'Check regional meteorological forecasts before commencing outdoor activities',
+      isHard: isSafetyCriticalWeather
+    });
   } else if (/storm|cyclone|monsoon|heavy.*rain|flood/i.test(weatherCondStr)) {
     weatherFeasible = false;
     weatherDetails = `Hazardous weather alert: ${weatherCondStr}. Outdoor treks and waterfalls restricted.`;
-    recordConstraint('Weather Safety Clearance', false, weatherDetails, true);
+    recordConstraint({
+      name: 'Weather Safety Clearance',
+      passed: false,
+      status: 'VIOLATION',
+      severity: 'CRITICAL',
+      evidence: `Hazardous weather: ${weatherCondStr}`,
+      source: 'weather_alert_system',
+      explanation: weatherDetails,
+      recommendedAction: 'Postpone trip or substitute outdoor activities with indoor attractions',
+      isHard: true
+    });
   } else {
-    recordConstraint('Weather Safety Clearance', true, `Weather conditions verified favorable (${weatherCondStr})`, true);
+    recordConstraint({
+      name: 'Weather Safety Clearance',
+      passed: true,
+      status: 'PASSED',
+      severity: 'INFO',
+      evidence: `Verified favorable: ${weatherCondStr}`,
+      source: 'open_weather_api',
+      explanation: `Weather conditions verified favorable (${weatherCondStr})`,
+      recommendedAction: 'None required',
+      isHard: true
+    });
   }
 
   // 7. EVALUATE UNBROKEN LOCATION CONTINUITY
@@ -193,23 +307,33 @@ function evaluateItineraryFeasibility({
       break;
     }
   }
-  recordConstraint(
-    'Location Continuity',
-    !continuityBroken,
-    continuityBroken || 'Unbroken location continuity confirmed across all consecutive days',
-    true
-  );
+  recordConstraint({
+    name: 'Location Continuity',
+    passed: !continuityBroken,
+    status: continuityBroken ? 'VIOLATION' : 'PASSED',
+    severity: continuityBroken ? 'CRITICAL' : 'INFO',
+    evidence: continuityBroken || 'Continuous day-to-day route chain confirmed',
+    source: 'daily_itinerary_scheduler',
+    explanation: continuityBroken || 'Unbroken location continuity confirmed across all consecutive days',
+    recommendedAction: continuityBroken ? 'Align Day N+1 start location with Day N overnight end location' : 'None required',
+    isHard: true
+  });
 
   // 8. EVALUATE TRIP DIRECTION INTEGRITY
   const isOneWay = userProfile.isRoundTrip === false || userProfile.tripDirection === 'one_way';
   if (isOneWay && dayPlans.length > 0) {
     const returnPhasePresent = dayPlans.some(d => d.journeyPhase === 'RETURN' || d.phase === 'Return Journey');
-    recordConstraint(
-      'One-Way Direction Integrity',
-      !returnPhasePresent,
-      returnPhasePresent ? 'One-way trip incorrectly scheduled a return journey' : 'One-way trip terminates at destination with zero return days',
-      true
-    );
+    recordConstraint({
+      name: 'One-Way Direction Integrity',
+      passed: !returnPhasePresent,
+      status: returnPhasePresent ? 'VIOLATION' : 'PASSED',
+      severity: returnPhasePresent ? 'CRITICAL' : 'INFO',
+      evidence: returnPhasePresent ? 'Return phase found in one-way trip' : 'Zero return days scheduled',
+      source: 'daily_itinerary_scheduler',
+      explanation: returnPhasePresent ? 'One-way trip incorrectly scheduled a return journey' : 'One-way trip terminates at destination with zero return days',
+      recommendedAction: returnPhasePresent ? 'Remove return journey phase from one-way itinerary' : 'None required',
+      isHard: true
+    });
   }
 
   // 9. EVALUATE ROUTE CORRIDOR CONNECTIVITY
@@ -217,20 +341,29 @@ function evaluateItineraryFeasibility({
   const isRoutingUnavailable = routeInfo.dataStatus === 'unavailable' || (routeInfo.missingTransitions && routeInfo.missingTransitions.length > 0) || !hasValidDistance;
 
   if (isRoutingUnavailable) {
-    unverifiedItems.push('Routing connectivity between endpoints is unavailable or unverified');
-    recordConstraint(
-      'Route Corridor Connectivity',
-      false,
-      'Routing connectivity between endpoints is unavailable or unverified',
-      false
-    );
+    recordConstraint({
+      name: 'Route Corridor Connectivity',
+      passed: false,
+      status: 'NOT_VERIFIED',
+      severity: 'CRITICAL',
+      evidence: 'Missing or unavailable route matrix transition',
+      source: 'road_routing_provider',
+      explanation: 'Routing connectivity between endpoints is unavailable or unverified',
+      recommendedAction: 'Verify road provider credentials or verify node coordinates',
+      isHard: true
+    });
   } else {
-    recordConstraint(
-      'Route Corridor Connectivity',
-      true,
-      `Authoritative road corridor verified (${routeInfo.totalDistanceKm} km)`,
-      true
-    );
+    recordConstraint({
+      name: 'Route Corridor Connectivity',
+      passed: true,
+      status: 'PASSED',
+      severity: 'INFO',
+      evidence: `Authoritative road distance: ${routeInfo.totalDistanceKm} km`,
+      source: 'road_routing_provider',
+      explanation: `Authoritative road corridor verified (${routeInfo.totalDistanceKm} km)`,
+      recommendedAction: 'None required',
+      isHard: true
+    });
   }
   if (!routeInfo.isLiveVerified) {
     unverifiedItems.push('Road traffic conditions rely on historical diurnal model rather than live sensor feed');
@@ -244,17 +377,22 @@ function evaluateItineraryFeasibility({
       if (dur < 25) rushedVisits.push(stop.name);
     });
   });
-  recordConstraint(
-    'Minimum Visit Duration Feasibility',
-    rushedVisits.length === 0,
-    rushedVisits.length > 0 ? `Abnormally rushed visits (<25m) scheduled at: ${rushedVisits.join(', ')}` : 'Adequate visit durations allocated across all scheduled attractions',
-    false
-  );
+  recordConstraint({
+    name: 'Minimum Visit Duration Feasibility',
+    passed: rushedVisits.length === 0,
+    status: rushedVisits.length === 0 ? 'PASSED' : 'WARNING',
+    severity: rushedVisits.length === 0 ? 'INFO' : 'WARNING',
+    evidence: rushedVisits.length > 0 ? `Rushed stops: ${rushedVisits.join(', ')}` : 'Adequate visit durations (>25 mins) allocated',
+    source: 'attraction_schedule',
+    explanation: rushedVisits.length > 0 ? `Abnormally rushed visits (<25m) scheduled at: ${rushedVisits.join(', ')}` : 'Adequate visit durations allocated across all scheduled attractions',
+    recommendedAction: rushedVisits.length > 0 ? 'Increase time allocation or remove low-priority stops' : 'None required',
+    isHard: false
+  });
 
   // CALCULATE OBJECTIVE SCORE & FINAL FEASIBILITY STATUS
   let verifiedCount = 0;
   evaluatedConstraints.forEach(c => {
-    if (c.passed && !c.details.includes('unavailable') && !c.details.includes('unverified') && !c.details.includes('historical')) {
+    if (c.passed && c.status === 'PASSED') {
       verifiedCount++;
     }
   });
@@ -271,21 +409,34 @@ function evaluateItineraryFeasibility({
   let status = 'FEASIBLE';
   let isFeasible = true;
 
+  const hasCriticalNotVerified = evaluatedConstraints.some(c => c.status === 'NOT_VERIFIED' && (c.severity === 'CRITICAL' || c.isHard));
   if (violations.length > 0) {
     status = 'INFEASIBLE';
     isFeasible = false;
   } else if (
-    routeInfo?.dataStatus === 'unavailable' ||
-    !hasValidDistance ||
-    (routeInfo?.missingTransitions && routeInfo.missingTransitions.length > 0) ||
+    isRoutingUnavailable ||
+    hasCriticalNotVerified ||
     (userProfile?.requireVerifiedOnly && (weatherInfo?.status === 'UNAVAILABLE' || unverifiedItems.length > 0))
   ) {
     status = 'NOT_VERIFIED';
     isFeasible = false;
-  } else if (warnings.length > 0 || unverifiedItems.length > 0) {
+  } else if (warnings.length > 0 || unverifiedItems.length > 0 || evaluatedConstraints.some(c => c.status === 'WARNING')) {
     status = 'FEASIBLE_WITH_WARNINGS';
     isFeasible = true;
   }
+
+  return {
+    status,
+    isFeasible,
+    score,
+    evaluatedConstraints,
+    unverifiedItems,
+    violations,
+    warnings,
+    recommendations: violations.length > 0
+      ? ['Adjust trip constraints or increase available travel days to achieve full operational feasibility.']
+      : (warnings.length > 0 ? ['Review scheduled warning items for optimal comfort.'] : ['Itinerary meets all operational, safety, and preference constraints.'])
+  };
 
   return {
     status,

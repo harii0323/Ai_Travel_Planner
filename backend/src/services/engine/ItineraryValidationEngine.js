@@ -60,30 +60,36 @@ function validateAndEnforceOutputContract({
   const validatedDailyItinerary = dayPlans.map(d => {
     const mealBreaks = (d.timeline || []).filter(t => t.category === 'meal');
     const restBreaks = (d.timeline || []).filter(t => t.category === 'rest');
-    const attractionStops = (d.stops || []).map(s => ({
-      placeId: s.placeId || `POI_${s.name.replace(/[^a-z0-9]/gi, '_')}`,
-      placeName: s.placeName || s.name,
-      name: s.placeName || s.name,
-      coordinates: s.coordinates || null,
-      category: s.category || 'sightseeing',
-      taxonomyCategory: s.taxonomyCategory || 'historical_cultural',
-      types: s.types || [s.category || 'sightseeing'],
-      rating: s.rating != null ? Number(s.rating) : null,
-      googleRating: s.googleRating != null ? Number(s.googleRating) : (s.rating != null ? Number(s.rating) : null),
-      arrivalTime: s.arrivalTime || null,
-      departureTime: s.departureTime || null,
-      estimatedVisitDuration: s.estimatedVisitDuration || (s.durationMinutes ? `${s.durationMinutes} mins` : null),
-      estimatedCost: s.estimatedCost || (s.entryFee != null ? `₹${Number(s.entryFee)}` : 'Fee unconfirmed'),
-      entryFee: (s.entryFee !== undefined && s.entryFee !== null) ? Number(s.entryFee) : null,
-      preferenceMatch: s.preferenceMatch != null ? Number(s.preferenceMatch) : null,
-      sourceInformation: s.sourceInformation || s.dataSource || 'catalog_database',
-      dataSource: s.dataSource || s.sourceInformation || 'catalog_database',
-      dataStatus: s.dataStatus || 'unverified_catalog',
-      isLiveVerified: Boolean(s.isLiveVerified),
-      whySelected: s.whySelected || s.reason || `Selected for ${s.category || 'attraction'} matching your travel preferences.`,
-      isSupplementary: Boolean(s.isSupplementary),
-      description: s.description || s.whySelected || ''
-    }));
+    const attractionStops = (d.stops || []).map(s => {
+      const hasRealPlaceId = Boolean(s.placeId && !String(s.placeId).startsWith('POI_') && !String(s.placeId).startsWith('INTERNAL_'));
+      const rawFee = (s.entryFee !== undefined && s.entryFee !== null) ? Number(s.entryFee) : null;
+      return {
+        placeId: hasRealPlaceId ? s.placeId : null,
+        internalGeneratedId: s.internalGeneratedId || s.id || `INTERNAL_${s.name ? s.name.replace(/[^a-z0-9]/gi, '_') : 'POI'}`,
+        placeName: s.placeName || s.name,
+        name: s.placeName || s.name,
+        coordinates: s.coordinates || null,
+        category: s.category || 'sightseeing',
+        taxonomyCategory: s.taxonomyCategory || 'historical_cultural',
+        types: s.types || [s.category || 'sightseeing'],
+        rating: s.rating != null ? Number(s.rating) : null,
+        googleRating: s.googleRating != null ? Number(s.googleRating) : (s.rating != null ? Number(s.rating) : null),
+        arrivalTime: s.arrivalTime || null,
+        departureTime: s.departureTime || null,
+        estimatedVisitDuration: s.estimatedVisitDuration || (s.durationMinutes ? `${s.durationMinutes} mins` : null),
+        estimatedCost: s.estimatedCost || (rawFee !== null ? `₹${rawFee}` : null),
+        entryFee: rawFee,
+        entryFeeVerified: Boolean(s.entryFeeVerified || (s.isFreeAdmissionVerified && rawFee === 0)),
+        preferenceMatch: s.preferenceMatch != null ? Number(s.preferenceMatch) : null,
+        sourceInformation: s.sourceInformation || s.dataSource || null,
+        dataSource: s.dataSource || s.sourceInformation || null,
+        dataStatus: s.dataStatus || (rawFee === null ? 'unknown' : 'estimated'),
+        isLiveVerified: Boolean(s.isLiveVerified),
+        whySelected: s.whySelected || s.reason || `Selected for ${s.category || 'attraction'} matching your travel preferences.`,
+        isSupplementary: Boolean(s.isSupplementary),
+        description: s.description || s.whySelected || ''
+      };
+    });
 
     return {
       dayNumber: d.day,
@@ -115,8 +121,8 @@ function validateAndEnforceOutputContract({
       mealBreaks,
       restBreaks,
       overnightLocation: d.endLocation,
-      estimatedDailyCost: d.cost || (budgetSummary.costSummary?.dayWise?.[d.day - 1] ? { dayTotal: budgetSummary.costSummary.dayWise[d.day - 1].dayTotal } : { dayTotal: 0 }),
-      cost: d.cost || (budgetSummary.costSummary?.dayWise?.[d.day - 1] || { day: d.day, dayTotal: 0, fuel: 0, tolls: 0, accommodation: 0, food: 0, entryFees: 0, activities: 0, parking: 0, other: 0 }),
+      estimatedDailyCost: d.cost || (budgetSummary.costSummary?.dayWise?.[d.day - 1] ? { dayTotal: budgetSummary.costSummary.dayWise[d.day - 1].dayTotal } : null),
+      cost: d.cost || (budgetSummary.costSummary?.dayWise?.[d.day - 1] || null),
       plan: d.plan
     };
   });
@@ -342,6 +348,12 @@ function validateAndEnforceOutputContract({
     accommodationDetails: {
       preference: userProfile.accommodationPreference,
       estimatedTotalCost: costBreakdown.accommodation?.amount || 0
+    },
+    budgetSummary: budgetSummary || {
+      totalEstimatedCost: totalTripCost,
+      budgetStatus: budgetSummary?.budgetStatus || 'WITHIN_BUDGET',
+      isOverBudget: Boolean(budgetSummary?.isOverBudget),
+      costBreakdown
     },
     costBreakdown,
     costSummary,

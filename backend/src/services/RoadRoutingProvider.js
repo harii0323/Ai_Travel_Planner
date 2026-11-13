@@ -208,10 +208,32 @@ class RoadRoutingProvider {
     const departureMinutes = options.departureMinutes !== undefined ? options.departureMinutes : 480; // 08:00 AM
     const transportMode = options.transportMode || 'car';
     const objective = options.objective || 'time';
+    const routingMode = options.routingMode || (options.strictProvider ? 'STRICT_PROVIDER' : (options.allowEstimates ? 'ALLOW_ESTIMATES' : null));
 
-    const origKey = orig.lat !== null && orig.lng !== null ? `${orig.lat.toFixed(4)},${orig.lng.toFixed(4)}` : orig.name.toLowerCase();
-    const destKey = dest.lat !== null && dest.lng !== null ? `${dest.lat.toFixed(4)},${dest.lng.toFixed(4)}` : dest.name.toLowerCase();
-    const cacheKey = `${origKey}_to_${destKey}_${transportMode}_${Math.floor(departureMinutes / 60)}_${objective}`;
+    // Endpoint coordinate validation: missing coordinates return explicit UNAVAILABLE
+    if (orig.lat === null || orig.lng === null || dest.lat === null || dest.lng === null) {
+      return {
+        status: 'UNAVAILABLE',
+        origin: orig,
+        destination: dest,
+        distanceKm: null,
+        totalDistanceKm: null,
+        durationMinutes: null,
+        totalDurationMinutes: null,
+        dataStatus: 'unavailable',
+        dataSource: 'missing_coordinates',
+        isLiveVerified: false,
+        isLimitedGraph: false,
+        isEstimate: false,
+        error: 'Missing coordinates for one or both route endpoints',
+        trafficSummary: 'Route endpoints lack valid coordinates',
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    const origKey = `${orig.lat.toFixed(4)},${orig.lng.toFixed(4)}`;
+    const destKey = `${dest.lat.toFixed(4)},${dest.lng.toFixed(4)}`;
+    const cacheKey = `${origKey}_to_${destKey}_${transportMode}_${Math.floor(departureMinutes / 60)}_${objective}_${routingMode || 'default'}`;
 
     if (routeCache.has(cacheKey)) {
       const cached = routeCache.get(cacheKey);
@@ -305,8 +327,28 @@ class RoadRoutingProvider {
           return result;
         }
       } catch (err) {
-        // Fall through to Tier 3
+        // Fall through to Tier 3 / strict check
       }
+    }
+
+    if (routingMode === 'STRICT_PROVIDER') {
+      return {
+        status: 'UNAVAILABLE',
+        origin: orig,
+        destination: dest,
+        distanceKm: null,
+        totalDistanceKm: null,
+        durationMinutes: null,
+        totalDurationMinutes: null,
+        dataStatus: 'unavailable',
+        dataSource: 'provider_unavailable',
+        isLiveVerified: false,
+        isLimitedGraph: false,
+        isEstimate: false,
+        error: 'Authoritative routing provider unavailable in STRICT_PROVIDER mode',
+        trafficSummary: 'Provider unavailable in strict mode',
+        timestamp: new Date().toISOString()
+      };
     }
 
     // =========================================================================
@@ -349,16 +391,31 @@ class RoadRoutingProvider {
       }
     }
 
+    if (routingMode === 'OFFLINE_GRAPH') {
+      return {
+        status: 'UNAVAILABLE',
+        origin: orig,
+        destination: dest,
+        distanceKm: null,
+        totalDistanceKm: null,
+        durationMinutes: null,
+        totalDurationMinutes: null,
+        dataStatus: 'unavailable',
+        dataSource: 'offline_graph_unconnected',
+        isLiveVerified: false,
+        isLimitedGraph: true,
+        isEstimate: false,
+        error: 'Endpoints not connected in OFFLINE_GRAPH network',
+        trafficSummary: 'Highway graph path unavailable',
+        timestamp: new Date().toISOString()
+      };
+    }
+
     // =========================================================================
     // TIER 4: GEOGRAPHIC ESTIMATE (Haversine Projection Approximation)
     // Explicitly marked as estimated, NEVER claimed as live_verified
     // =========================================================================
-    let directKm = 50;
-    if (orig.lat !== null && orig.lng !== null && dest.lat !== null && dest.lng !== null) {
-      directKm = haversineDistanceKm(orig, dest);
-    } else {
-      directKm = 100; // Baseline default when coordinates absent
-    }
+    const directKm = haversineDistanceKm(orig, dest);
 
     // Winding road factor (1.25 for plains, 1.35 for ghat/hilly terrain)
     const roadKm = Math.max(5, Math.round(directKm * 1.28));
@@ -438,7 +495,28 @@ class RoadRoutingProvider {
     const normLocations = locations.map(l => this.normalizeLocation(l));
     const matrix = Array.from({ length: n }, () => Array.from({ length: n }, () => null));
 
-    // Deterministic locationIndexMap mapping ID, placeId, placeKey, coords, and names
+    // Detect genuinely ambiguous names (names shared across distinct locations)
+    const nameToLocations = new Map();
+    normLocations.forEach((loc, idx) => {
+      if (!loc || !loc.name) return;
+      const raw = loc.name.trim();
+      const lower = raw.toLowerCase();
+      const simple = raw.split(',')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+      [raw, lower, simple].forEach(k => {
+        if (!k) return;
+        if (!nameToLocations.has(k)) nameToLocations.set(k, new Set());
+        nameToLocations.get(k).add(idx);
+      });
+    });
+
+    const ambiguousNames = new Set();
+    nameToLocations.forEach((locIndices, key) => {
+      if (locIndices.size > 1) {
+        ambiguousNames.add(key);
+      }
+    });
+
+    // Deterministic locationIndexMap mapping ID, nodeId, placeId, placeKey, coords, and UNAMBIGUOUS names
     const locationIndexMap = new Map();
     normLocations.forEach((loc, idx) => {
       if (!loc) return;
@@ -462,11 +540,18 @@ class RoadRoutingProvider {
         locationIndexMap.set(`${loc.lat.toFixed(4)},${loc.lng.toFixed(4)}`, idx);
       }
       if (loc.name) {
-        locationIndexMap.set(loc.name, idx);
-        locationIndexMap.set(loc.name.toLowerCase().trim(), idx);
-        const simpleName = loc.name.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
-        if (simpleName) {
-          locationIndexMap.set(simpleName, idx);
+        const raw = loc.name.trim();
+        const lower = raw.toLowerCase();
+        const simple = raw.split(',')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+        // Ambiguous names are rejected from the map to prevent colliding lookups
+        if (!ambiguousNames.has(raw)) {
+          locationIndexMap.set(raw, idx);
+        }
+        if (!ambiguousNames.has(lower)) {
+          locationIndexMap.set(lower, idx);
+        }
+        if (simple && !ambiguousNames.has(simple)) {
+          locationIndexMap.set(simple, idx);
         }
       }
     });
@@ -599,10 +684,16 @@ class RoadRoutingProvider {
       if (loc === null || loc === undefined) return undefined;
       if (typeof loc === 'number' && loc >= 0 && loc < n) return loc;
       if (typeof loc === 'string') {
-        if (locationIndexMap.has(loc)) return locationIndexMap.get(loc);
-        if (locationIndexMap.has(loc.toLowerCase().trim())) return locationIndexMap.get(loc.toLowerCase().trim());
-        const simple = loc.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
-        if (locationIndexMap.has(simple)) return locationIndexMap.get(simple);
+        const raw = loc.trim();
+        const lower = raw.toLowerCase();
+        const simple = raw.split(',')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+        // Detect ambiguous name-based lookups and reject them
+        if (ambiguousNames.has(raw) || ambiguousNames.has(lower) || (simple && ambiguousNames.has(simple))) {
+          return undefined; // Ambiguous name rejected: must disambiguate with ID or coordinates
+        }
+        if (locationIndexMap.has(raw)) return locationIndexMap.get(raw);
+        if (locationIndexMap.has(lower)) return locationIndexMap.get(lower);
+        if (simple && locationIndexMap.has(simple)) return locationIndexMap.get(simple);
         return undefined;
       }
       if (typeof loc === 'object') {
@@ -623,10 +714,12 @@ class RoadRoutingProvider {
         }
         const name = loc.name || loc.placeName || loc.city;
         if (name) {
-          if (locationIndexMap.has(name)) return locationIndexMap.get(name);
-          if (locationIndexMap.has(name.toLowerCase().trim())) return locationIndexMap.get(name.toLowerCase().trim());
-          const simple = name.split(',')[0].toLowerCase().trim().replace(/[^a-z0-9]/g, '');
-          if (locationIndexMap.has(simple)) return locationIndexMap.get(simple);
+          const raw = name.trim();
+          const lower = raw.toLowerCase();
+          const simple = raw.split(',')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!ambiguousNames.has(raw) && locationIndexMap.has(raw)) return locationIndexMap.get(raw);
+          if (!ambiguousNames.has(lower) && locationIndexMap.has(lower)) return locationIndexMap.get(lower);
+          if (simple && !ambiguousNames.has(simple) && locationIndexMap.has(simple)) return locationIndexMap.get(simple);
         }
       }
       return undefined;
@@ -640,20 +733,44 @@ class RoadRoutingProvider {
         if (cell.dataStatus !== 'unavailable' && cell.distanceKm !== null) {
           return cell;
         }
-        if (!opts.allowFallbackEstimate) {
+        if (!opts.allowFallbackEstimate && !opts.allowEstimates) {
           return cell;
         }
       }
-      if (!opts.allowFallbackEstimate) {
-        return null;
+      if (!opts.allowFallbackEstimate && !opts.allowEstimates) {
+        return {
+          status: 'UNAVAILABLE',
+          distanceKm: null,
+          totalDistanceKm: null,
+          durationMinutes: null,
+          totalDurationMinutes: null,
+          isLiveVerified: false,
+          isEstimate: false,
+          dataStatus: 'unavailable',
+          dataSource: 'missing_matrix_transition',
+          trafficSummary: 'Transition unavailable without explicit estimation permission',
+          retrievalTimestamp: null
+        };
       }
       // Explicitly permitted Tier 4 non-zero fallback
       const normFrom = self.normalizeLocation(fromLoc);
       const normTo = self.normalizeLocation(toLoc);
-      let directKm = 50;
-      if (normFrom && normTo && normFrom.lat !== null && normTo.lat !== null) {
-        directKm = haversineDistanceKm(normFrom, normTo);
+      if (!normFrom || !normTo || normFrom.lat === null || normTo.lat === null) {
+        return {
+          status: 'UNAVAILABLE',
+          distanceKm: null,
+          totalDistanceKm: null,
+          durationMinutes: null,
+          totalDurationMinutes: null,
+          isLiveVerified: false,
+          isEstimate: false,
+          dataStatus: 'unavailable',
+          dataSource: 'missing_coordinates',
+          trafficSummary: 'Endpoints lack coordinates for geodesic calculation',
+          retrievalTimestamp: null
+        };
       }
+      const directKm = haversineDistanceKm(normFrom, normTo);
       const roadKm = Math.max(5, Math.round(directKm * 1.28));
       const durMins = Math.max(10, Math.round((roadKm / 55) * 60));
       return {
@@ -662,6 +779,7 @@ class RoadRoutingProvider {
         durationMinutes: durMins,
         totalDurationMinutes: durMins,
         isLiveVerified: false,
+        isEstimate: true,
         dataStatus: 'estimated',
         dataSource: 'geodesic_haversine_projection_model',
         trafficSummary: 'Explicit transition fallback estimate',

@@ -109,7 +109,7 @@ function scheduleDayTimeline({
     const bDuration = 40;
     timeline.push({
       time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(currentMinutes + bDuration)}`,
-      place: `Highway Breakfast Halt (${hubName || destinationCity || 'Corridor'})`,
+      place: `Highway Breakfast Halt (Suggested Service Area Rest Halt - ${hubName || destinationCity || 'Corridor'})`,
       category: 'meal',
       travelTime: '0 mins',
       visitDuration: `${bDuration} mins`,
@@ -117,7 +117,7 @@ function scheduleDayTimeline({
       isCostEstimated: true,
       calculationMethod: 'meal_benchmark_per_person',
       dataStatus: 'estimated',
-      reason: 'Authentic regional breakfast and hot beverage to energize the morning.'
+      reason: 'Suggested service area breakfast stop and hot beverage to energize the morning.'
     });
     currentMinutes += bDuration;
     hadBreakfast = true;
@@ -129,7 +129,7 @@ function scheduleDayTimeline({
     const lunchLocation = hubName || (isCorridorDay ? `${startLocationName} Corridor` : destinationCity || 'Sightseeing Corridor');
     timeline.push({
       time: `${formatMinutesTo12(currentMinutes)} – ${formatMinutesTo12(currentMinutes + lDuration)}`,
-      place: `Regional Lunch Break (${lunchLocation})`,
+      place: `Regional Lunch Break (Suggested Service Area Halt - ${lunchLocation})`,
       category: 'meal',
       travelTime: '10 mins',
       visitDuration: `${lDuration} mins`,
@@ -137,7 +137,7 @@ function scheduleDayTimeline({
       isCostEstimated: true,
       calculationMethod: 'meal_benchmark_per_person',
       dataStatus: 'estimated',
-      reason: 'Authentic regional lunch break and relaxation before afternoon activities.'
+      reason: 'Suggested regional dining halt and relaxation before afternoon activities.'
     });
     currentMinutes += lDuration;
     hadLunch = true;
@@ -155,9 +155,9 @@ function scheduleDayTimeline({
     const roadType = isHill ? 'hillGhat' : (isCorridorDay || segDist > 45) ? 'expressway' : (segDist > 15 ? 'stateHighway' : 'urbanCity');
 
     // Calculate transit to this stop using authoritative transition matrix when available
-    let transitDistKm = 0;
-    let effectiveTransitMinutes = 0;
-    let transitionDataSource = 'geodesic_speed_curve_model';
+    let transitDistKm = null;
+    let effectiveTransitMinutes = null;
+    let transitionDataSource = 'modeled_speed_curve_fallback';
     let transitionDataStatus = 'estimated';
     let isTransitionVerified = false;
 
@@ -173,14 +173,16 @@ function scheduleDayTimeline({
         transitionDataSource = cell.dataSource || transitionDataSource;
         transitionDataStatus = cell.dataStatus || transitionDataStatus;
         isTransitionVerified = Boolean(cell.isLiveVerified);
-      } else if (cell && cell.dataStatus === 'unavailable') {
+      } else if (cell && (cell.dataStatus === 'unavailable' || cell.distanceKm === null)) {
         transitionDataSource = cell.dataSource || 'failed_provider_route';
         transitionDataStatus = 'unavailable';
         isTransitionVerified = false;
+        transitDistKm = null;
+        effectiveTransitMinutes = null;
       }
     }
 
-    if (effectiveTransitMinutes === 0) {
+    if (effectiveTransitMinutes === null && transitionDataStatus !== 'unavailable') {
       const detourKm = Number(stop.distanceFromRouteKm || 5);
       const detourMinutes = isCorridorDay ? Math.min(25, Math.max(8, Math.round((detourKm / 45) * 60))) : 0;
       const transit = calculateSegmentDrivingMinutes(currentCoord, stopCoord, currentMinutes, roadType);
@@ -191,29 +193,31 @@ function scheduleDayTimeline({
       isTransitionVerified = false;
     }
 
-    totalDrivingKm += transitDistKm;
-    totalDrivingMinutes += effectiveTransitMinutes;
-    accumulatedDrivingMinutesSinceBreak += effectiveTransitMinutes;
+    if (effectiveTransitMinutes !== null) {
+      totalDrivingKm += (transitDistKm || 0);
+      totalDrivingMinutes += effectiveTransitMinutes;
+      accumulatedDrivingMinutesSinceBreak += effectiveTransitMinutes;
 
-    // Driver fatigue break on long continuous highway drives (>180 mins continuous transit without stop)
-    if (effectiveTransitMinutes >= 180 && !hadLunch) {
-      currentMinutes += 20;
-      timeline.push({
-        time: `${formatMinutesTo12(currentMinutes - 20)} – ${formatMinutesTo12(currentMinutes)}`,
-        place: 'Highway Driver Rest Halt & Refreshment Break',
-        category: 'travel',
-        travelTime: `${Math.round(effectiveTransitMinutes / 2)} mins highway transit`,
-        visitDuration: '20 mins',
-        cost: `₹${50 * travelerCount}`,
-        isCostEstimated: true,
-        calculationMethod: 'incidentals_benchmark',
-        dataStatus: 'estimated',
-        reason: 'Recommended 20-minute highway rest break to prevent driver fatigue after prolonged highway transit.'
-      });
-      accumulatedDrivingMinutesSinceBreak = 0;
+      // Driver fatigue break on long continuous highway drives (>180 mins continuous transit without stop)
+      if (effectiveTransitMinutes >= 180 && !hadLunch) {
+        currentMinutes += 20;
+        timeline.push({
+          time: `${formatMinutesTo12(currentMinutes - 20)} – ${formatMinutesTo12(currentMinutes)}`,
+          place: 'Highway Driver Rest Halt & Refreshment Break (Suggested Service Area Halt)',
+          category: 'travel',
+          travelTime: `${Math.round(effectiveTransitMinutes / 2)} mins highway transit`,
+          visitDuration: '20 mins',
+          cost: `₹${50 * travelerCount}`,
+          isCostEstimated: true,
+          calculationMethod: 'incidentals_benchmark',
+          dataStatus: 'estimated',
+          reason: 'Recommended 20-minute highway rest break to prevent driver fatigue after prolonged highway transit.'
+        });
+        accumulatedDrivingMinutesSinceBreak = 0;
+      }
+
+      currentMinutes += effectiveTransitMinutes;
     }
-
-    currentMinutes += effectiveTransitMinutes;
 
     // Breakfast halt (08:00 AM - 09:30 AM)
     if (!hadBreakfast && currentMinutes >= 8 * 60 && currentMinutes <= 10 * 60) {
@@ -225,40 +229,49 @@ function scheduleDayTimeline({
       insertLunch(stop.city || (isCorridorDay ? startLocationName : destinationCity));
     }
 
-    // Scheduled Tourist Attraction Activity (Section 5.3: Visit duration priority)
+    // Scheduled Tourist Attraction Activity: Visit duration priority hierarchy
     let visitDuration = 60;
-    let durationSource = 'category_planning_estimate';
+    let durationSource = 'disclosed_category_estimate';
+    let isDurationEstimated = true;
     if (stop.officialVisitDurationMinutes != null) {
       visitDuration = Number(stop.officialVisitDurationMinutes);
       durationSource = 'official_attraction_reported';
+      isDurationEstimated = false;
     } else if (stop.verifiedDurationMinutes != null) {
       visitDuration = Number(stop.verifiedDurationMinutes);
       durationSource = 'verified_activity_catalog';
+      isDurationEstimated = false;
     } else if (stop.estimatedVisitDurationMinutes != null) {
       visitDuration = Number(stop.estimatedVisitDurationMinutes);
-      durationSource = 'category_planning_estimate';
+      durationSource = 'disclosed_category_estimate';
+      isDurationEstimated = true;
     } else if (stop.durationMinutes != null) {
       visitDuration = Number(stop.durationMinutes);
-      durationSource = 'category_planning_estimate';
+      durationSource = 'disclosed_category_estimate';
+      isDurationEstimated = true;
     } else {
       visitDuration = 60;
-      durationSource = 'standard_category_default_estimate';
+      durationSource = 'disclosed_category_estimate';
+      isDurationEstimated = true;
     }
 
     const stopArrivalStr = formatMinutesTo12(currentMinutes);
     const stopDepartureStr = formatMinutesTo12(currentMinutes + visitDuration);
 
-    const rawFee = stop.entryFee !== undefined && stop.entryFee !== null ? Number(stop.entryFee) : null;
-    const entryFeeVerified = Boolean(stop.entryFeeVerified || stop.isLiveVerified);
-    let costDisplay = '₹0';
+    const rawFee = (stop.entryFee !== undefined && stop.entryFee !== null) ? Number(stop.entryFee) : null;
+    const entryFeeVerified = Boolean(
+      stop.isOfficialVerifiedFee ||
+      stop.entryFeeVerifiedOfficial ||
+      (stop.isFreeAdmissionVerified && rawFee === 0) ||
+      (stop.isLiveVerified && rawFee !== null)
+    );
+    let costDisplay = 'Fee unconfirmed';
     if (rawFee !== null) {
       costDisplay = `₹${rawFee * travelerCount}`;
-    } else {
-      costDisplay = 'Fee unconfirmed';
     }
 
     timeline.push({
-      placeId: stop.placeId || (stop.id ? String(stop.id) : null),
+      placeId: stop.placeId || null,
       name: stop.name,
       place: stop.name,
       coordinates: (stop.coordinates && (stop.coordinates.lat !== 0 || stop.coordinates.lng !== 0)) ? stop.coordinates : null,
@@ -267,11 +280,14 @@ function scheduleDayTimeline({
       time: `${stopArrivalStr} – ${stopDepartureStr}`,
       arrivalTime: stopArrivalStr,
       departureTime: stopDepartureStr,
-      travelTime: `${effectiveTransitMinutes} mins (${transitDistKm} km road transit)`,
+      travelTime: transitionDataStatus === 'unavailable'
+        ? 'Unavailable road transit'
+        : `${effectiveTransitMinutes} mins (${transitDistKm} km road transit)`,
       distanceKm: transitDistKm,
       durationMinutes: effectiveTransitMinutes,
       visitDuration: `${visitDuration} mins`,
       visitDurationSource: durationSource,
+      isDurationEstimated,
       cost: costDisplay,
       entryFee: rawFee,
       entryFeeVerified,
