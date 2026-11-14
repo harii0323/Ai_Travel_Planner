@@ -13,15 +13,28 @@
 const { calculateHaversineDistanceKm } = require('./RouteDiscoveryEngine');
 
 /**
- * Calculates total tour distance for an array of ordered coordinates.
+ * Resolves distance between two stops using transition matrix when available,
+ * falling back to Haversine distance.
  */
-function calculateTourDistanceKm(stops = []) {
+function getDistanceBetween(p1, p2, matrix = null) {
+  if (!p1 || !p2) return 0;
+  if (matrix && typeof matrix.getTransition === 'function') {
+    const cell = matrix.getTransition(p1, p2, { allowFallbackEstimate: true });
+    if (cell && cell.distanceKm !== null && cell.dataStatus !== 'unavailable') return cell.distanceKm;
+  }
+  const c1 = p1.coordinates || p1;
+  const c2 = p2.coordinates || p2;
+  return calculateHaversineDistanceKm(c1, c2);
+}
+
+/**
+ * Calculates total tour distance for an array of ordered coordinates/stops.
+ */
+function calculateTourDistanceKm(stops = [], matrix = null) {
   if (stops.length <= 1) return 0;
   let total = 0;
   for (let i = 0; i < stops.length - 1; i++) {
-    const c1 = stops[i].coordinates || stops[i];
-    const c2 = stops[i + 1].coordinates || stops[i + 1];
-    total += calculateHaversineDistanceKm(c1, c2);
+    total += getDistanceBetween(stops[i], stops[i + 1], matrix);
   }
   return total;
 }
@@ -29,20 +42,19 @@ function calculateTourDistanceKm(stops = []) {
 /**
  * Optimizes stop sequence using Nearest Neighbor heuristic.
  */
-function nearestNeighborSort(startPoint, stops = []) {
+function nearestNeighborSort(startPoint, stops = [], matrix = null) {
   if (stops.length <= 1) return [...stops];
 
   const unvisited = [...stops];
   const ordered = [];
-  let currentCoord = startPoint.coordinates || startPoint;
+  let currentStop = startPoint;
 
   while (unvisited.length > 0) {
     let bestIdx = 0;
     let minDistance = 999999;
 
     for (let i = 0; i < unvisited.length; i++) {
-      const targetCoord = unvisited[i].coordinates || unvisited[i];
-      const dist = calculateHaversineDistanceKm(currentCoord, targetCoord);
+      const dist = getDistanceBetween(currentStop, unvisited[i], matrix);
       if (dist < minDistance) {
         minDistance = dist;
         bestIdx = i;
@@ -51,7 +63,7 @@ function nearestNeighborSort(startPoint, stops = []) {
 
     const nextStop = unvisited.splice(bestIdx, 1)[0];
     ordered.push(nextStop);
-    currentCoord = nextStop.coordinates || nextStop;
+    currentStop = nextStop;
   }
 
   return ordered;
@@ -60,7 +72,7 @@ function nearestNeighborSort(startPoint, stops = []) {
 /**
  * 2-Opt Local Search Heuristic for sequence improvement.
  */
-function twoOptOptimize(orderedStops = []) {
+function twoOptOptimize(orderedStops = [], matrix = null) {
   if (orderedStops.length <= 2) return orderedStops;
 
   let stops = [...orderedStops];
@@ -74,14 +86,14 @@ function twoOptOptimize(orderedStops = []) {
 
     for (let i = 0; i < stops.length - 1; i++) {
       for (let j = i + 1; j < stops.length; j++) {
-        const originalDistance = calculateTourDistanceKm(stops);
+        const originalDistance = calculateTourDistanceKm(stops, matrix);
         // Reverse sub-segment between i and j
         const newTour = [
           ...stops.slice(0, i),
           ...stops.slice(i, j + 1).reverse(),
           ...stops.slice(j + 1)
         ];
-        const newDistance = calculateTourDistanceKm(newTour);
+        const newDistance = calculateTourDistanceKm(newTour, matrix);
 
         if (newDistance < originalDistance - 0.5) {
           stops = newTour;
@@ -124,7 +136,7 @@ function sortCorridorStopsAlongVector(originCoord, destCoord, candidateStops = [
 /**
  * Main Route Optimization function for a single travel day's stops.
  */
-function optimizeDayStopSequence(startLocationCoords, endLocationCoords, dayStops = [], isCorridorDay = false) {
+function optimizeDayStopSequence(startLocationCoords, endLocationCoords, dayStops = [], isCorridorDay = false, transitionMatrix = null) {
   if (dayStops.length <= 1) return dayStops;
 
   if (isCorridorDay && startLocationCoords && endLocationCoords) {
@@ -137,13 +149,14 @@ function optimizeDayStopSequence(startLocationCoords, endLocationCoords, dayStop
   if (hasTrek && !isCorridorDay) {
     const treks = dayStops.filter(s => String(s.category).includes('trek') || (s.subCategories || []).some(sub => sub.includes('trek')));
     const others = dayStops.filter(s => !treks.includes(s));
-    const sortedOthers = others.length > 0 ? twoOptOptimize(nearestNeighborSort(treks[treks.length - 1].coordinates, others)) : [];
+    const sortedOthers = others.length > 0 ? twoOptOptimize(nearestNeighborSort(treks[treks.length - 1], others, transitionMatrix), transitionMatrix) : [];
     return [...treks, ...sortedOthers];
   }
 
   // Nearest Neighbor followed by 2-Opt for destination cluster days
-  const nnSorted = nearestNeighborSort(startLocationCoords || dayStops[0].coordinates, dayStops);
-  return twoOptOptimize(nnSorted);
+  const startRef = startLocationCoords?.coordinates ? startLocationCoords : { coordinates: startLocationCoords };
+  const nnSorted = nearestNeighborSort(startRef, dayStops, transitionMatrix);
+  return twoOptOptimize(nnSorted, transitionMatrix);
 }
 
 module.exports = {

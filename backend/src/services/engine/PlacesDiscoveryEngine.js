@@ -4852,7 +4852,16 @@ async function searchGooglePlaces(queryText) {
  *  - overallScore: weighted combination
  */
 function calculatePlaceScores(place, userProfile = {}) {
-  const interests = userProfile.normalizedInterests || {};
+  let interests = userProfile.normalizedInterests || {};
+  if (Object.keys(interests).length === 0) {
+    const rawActs = userProfile.activities || userProfile.interests || [];
+    if (Array.isArray(rawActs) && rawActs.length > 0) {
+      interests = {};
+      rawActs.forEach(act => {
+        interests[String(act).toLowerCase().trim()] = 1.0;
+      });
+    }
+  }
   const companion = (userProfile.companionType || userProfile.travelCompanionType || 'friends').toLowerCase();
 
   // 1. Preference Score (0.10 to 1.00)
@@ -5007,7 +5016,7 @@ function isPlaceInDestinationRegion(place, destinationStr, destCoords = null, ma
       if (reg.cities.some(c => pc.includes(c.toLowerCase()) || c.toLowerCase().includes(pc))) {
         return true;
       }
-      if (pr === regName || ps.toLowerCase() === reg.state.toLowerCase()) {
+      if (pr === regName) {
         return true;
       }
     }
@@ -5110,8 +5119,23 @@ function discoverCorridorPlaces(routeWaypoints = [], origin = '', destination = 
     let minDistance = 9999;
     for (let i = 0; i < routeWaypoints.length - 1; i++) {
       const p1 = routeWaypoints[i];
-      const dist = calculateHaversineDistanceKm(place.coordinates, p1);
-      if (dist < minDistance) minDistance = dist;
+      const p2 = routeWaypoints[i + 1];
+      if (!p1 || !p2 || !p1.lat || !p2.lat) {
+        if (p1 && p1.lat) {
+          const d = calculateHaversineDistanceKm(place.coordinates, p1);
+          if (d < minDistance) minDistance = d;
+        }
+        continue;
+      }
+      for (let s = 0; s <= 5; s++) {
+        const frac = s / 5;
+        const pt = {
+          lat: p1.lat + frac * (p2.lat - p1.lat),
+          lng: p1.lng + frac * (p2.lng - p1.lng)
+        };
+        const dist = calculateHaversineDistanceKm(place.coordinates, pt);
+        if (dist < minDistance) minDistance = dist;
+      }
     }
 
     if (minDistance <= corridorBufferKm) {
@@ -5210,9 +5234,14 @@ async function discoverPlaces(params = {}, legacyUserProfile = null) {
     };
   });
 
-  // 5. Attraction Diversity Enforcement (Prompt Section 3.5)
-  // Ensure that diverse categories (natural, scenic, adventure, spiritual, historical, coastal)
-  // are preserved and food/supporting services are segregated.
+  // 5. Attraction Diversity & Taxonomy Segregation (Section 7 Master Prompt)
+  // Segregate supporting services (restaurants, hotels, fuel) from tourist attractions
+  const touristPlaces = scoredPlaces.filter(p => {
+    const isFood = p.category === 'food' || p.category === 'restaurant' || p.taxonomyCategory === 'supporting_services' ||
+      /restaurant|dining|food court|cafe/i.test(`${p.name || ''} ${p.category || ''}`);
+    return !isFood;
+  });
+
   const categorizedPool = {
     natural: [],
     scenic_photography: [],
@@ -5222,33 +5251,121 @@ async function discoverPlaces(params = {}, legacyUserProfile = null) {
     coastal: []
   };
 
-  scoredPlaces.forEach(p => {
+  touristPlaces.forEach(p => {
     const taxCat = p.taxonomyCategory || 'historical_cultural';
     if (categorizedPool[taxCat]) {
       categorizedPool[taxCat].push(p);
     } else {
       categorizedPool.historical_cultural.push(p);
     }
+
+    // Attach field-level provenance schema (Section 8 Static Tourism Database Provenance)
+    p.provenance = {
+      coordinates: {
+        value: p.coordinates || null,
+        source: p.dataSource || 'catalog_database',
+        verificationStatus: (p.coordinates && (p.coordinates.lat !== 0 || p.coordinates.lng !== 0)) ? 'catalog_verified' : 'unknown'
+      },
+      rating: {
+        value: p.rating != null ? Number(p.rating) : null,
+        source: p.dataSource || 'catalog_database',
+        retrievedAt: p.isLiveVerified ? new Date().toISOString() : null
+      },
+      openingHours: {
+        value: p.openHours || null,
+        source: p.dataSource || 'catalog_database',
+        verificationStatus: p.openHours ? 'catalog_reported' : 'unknown'
+      },
+      entryFee: {
+        value: p.entryFee != null ? Number(p.entryFee) : null,
+        source: p.entryFeeSource || 'catalog_reported',
+        verificationStatus: p.entryFeeVerificationState || (p.isOfficialVerifiedFee ? 'verified_official' : 'estimated')
+      },
+      operatingStatus: {
+        value: p.operatingStatus || 'unknown',
+        source: p.dataSource || 'catalog_database',
+        applicableDate: null
+      },
+      seasonalAvailability: {
+        value: p.bestVisitWindow?.type || p.bestTimeToVisit || 'Year-round',
+        source: 'regional_tourism_catalog'
+      }
+    };
   });
 
-  // 6. Partition into structured categories
-  const preferredPlaces = scoredPlaces
+  // 6. Diversity-Aware Candidate Ordering (Section 7.2)
+  // Re-rank candidates using submodular marginal utility per category so that
+  // diverse categories matching traveler preferences are represented without crowding
+  const selectedKeys = new Set();
+  const categoryUsage = {};
+  const diverseRankedPlaces = [];
+
+  // Pass 1: High-affinity must-visit attractions first (weighted by traveler preferences)
+  const mustVisitSorted = touristPlaces
+    .filter(p => p.isMustVisit || p.mustVisitScore >= 0.85)
+    .sort((a, b) => {
+      const scoreA = (a.mustVisitScore || 0.8) + (a.preferenceScore || 0) * 1.5;
+      const scoreB = (b.mustVisitScore || 0.8) + (b.preferenceScore || 0) * 1.5;
+      return scoreB - scoreA;
+    });
+
+  mustVisitSorted.forEach(p => {
+    if (!selectedKeys.has(p.placeId || p.name)) {
+      selectedKeys.add(p.placeId || p.name);
+      const cat = p.taxonomyCategory || 'historical_cultural';
+      categoryUsage[cat] = (categoryUsage[cat] || 0) + 1;
+      diverseRankedPlaces.push(p);
+    }
+  });
+
+  // Pass 2: Diversity and preference-balanced candidate selection
+  const remaining = touristPlaces.filter(p => !selectedKeys.has(p.placeId || p.name));
+  while (remaining.length > 0) {
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const p = remaining[i];
+      const cat = p.taxonomyCategory || 'historical_cultural';
+      const usage = categoryUsage[cat] || 0;
+      // Diminishing returns penalty for repeated categories (prevents single-category domination)
+      const diversityDiscount = Math.exp(-0.30 * usage);
+      const marginalScore = p.overallScore * diversityDiscount + (p.preferenceScore * 0.25);
+
+      if (marginalScore > bestScore) {
+        bestScore = marginalScore;
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx >= 0) {
+      const chosen = remaining.splice(bestIdx, 1)[0];
+      selectedKeys.add(chosen.placeId || chosen.name);
+      const cat = chosen.taxonomyCategory || 'historical_cultural';
+      categoryUsage[cat] = (categoryUsage[cat] || 0) + 1;
+      diverseRankedPlaces.push(chosen);
+    } else {
+      break;
+    }
+  }
+
+  // 7. Partition into structured categories
+  const preferredPlaces = diverseRankedPlaces
     .filter(p => p.preferenceScore >= 0.60)
     .sort((a, b) => b.preferenceScore - a.preferenceScore);
 
-  const mustVisitPlaces = scoredPlaces
+  const mustVisitPlaces = diverseRankedPlaces
     .filter(p => p.isMustVisit || p.mustVisitScore >= 0.80)
     .sort((a, b) => b.mustVisitScore - a.mustVisitScore);
 
-  const corridorPlaces = scoredPlaces
+  const corridorPlaces = diverseRankedPlaces
     .filter(p => p.distanceFromRouteKm !== undefined)
     .sort((a, b) => (a.distanceFromRouteKm || 0) - (b.distanceFromRouteKm || 0));
 
-  const recommendedPlaces = scoredPlaces
-    .filter(p => !preferredPlaces.some(pr => pr.placeId === p.placeId))
-    .sort((a, b) => b.overallScore - a.overallScore);
+  const recommendedPlaces = diverseRankedPlaces
+    .filter(p => !preferredPlaces.some(pr => pr.placeId === p.placeId));
 
-  const allPlaces = [...scoredPlaces].sort((a, b) => b.overallScore - a.overallScore);
+  const allPlaces = diverseRankedPlaces;
 
   return {
     destinationRegion,

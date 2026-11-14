@@ -71,7 +71,8 @@ function scheduleDayTimeline({
   isReturnDay = false,
   travelerCount = 1,
   transitionMatrix = null,
-  locationIndexMap = null
+  locationIndexMap = null,
+  routingMode = 'STRICT_PROVIDER'
 }) {
   const timeline = [];
   const isCorridorDay = phaseLabel === 'Onward Journey' || phaseLabel === 'Return Journey';
@@ -182,15 +183,25 @@ function scheduleDayTimeline({
       }
     }
 
+    const isStrict = routingMode === 'STRICT_PROVIDER';
     if (effectiveTransitMinutes === null && transitionDataStatus !== 'unavailable') {
-      const detourKm = Number(stop.distanceFromRouteKm || 5);
-      const detourMinutes = isCorridorDay ? Math.min(25, Math.max(8, Math.round((detourKm / 45) * 60))) : 0;
-      const transit = calculateSegmentDrivingMinutes(currentCoord, stopCoord, currentMinutes, roadType);
-      transitDistKm = transit.distanceKm;
-      effectiveTransitMinutes = isCorridorDay ? Math.max(30, transit.durationMinutes + detourMinutes) : transit.durationMinutes;
-      transitionDataSource = 'modeled_speed_curve_fallback';
-      transitionDataStatus = 'estimated';
-      isTransitionVerified = false;
+      if (isStrict) {
+        // STRICT_PROVIDER: Missing transition means unavailable; do NOT calculate a substitute driving duration
+        transitionDataStatus = 'unavailable';
+        transitionDataSource = 'missing_provider_transition';
+        isTransitionVerified = false;
+        transitDistKm = null;
+        effectiveTransitMinutes = null;
+      } else {
+        const detourKm = Number(stop.distanceFromRouteKm || 5);
+        const detourMinutes = isCorridorDay ? Math.min(25, Math.max(8, Math.round((detourKm / 45) * 60))) : 0;
+        const transit = calculateSegmentDrivingMinutes(currentCoord, stopCoord, currentMinutes, roadType);
+        transitDistKm = transit.distanceKm;
+        effectiveTransitMinutes = isCorridorDay ? Math.max(30, transit.durationMinutes + detourMinutes) : transit.durationMinutes;
+        transitionDataSource = 'modeled_speed_curve_estimate';
+        transitionDataStatus = 'estimated';
+        isTransitionVerified = false;
+      }
     }
 
     if (effectiveTransitMinutes !== null) {
@@ -329,24 +340,32 @@ function scheduleDayTimeline({
   // 3. Drive to End Location / Hotel Check-in
   let finalDistKm = 0;
   let finalDurationMins = 0;
+  let finalTransitionStatus = 'exact_zero';
   if (transitionMatrix) {
     const fromPoint = stops.length > 0
       ? stops[stops.length - 1]
       : (startCoord ? { name: startLocationName, lat: startCoord.lat, lng: startCoord.lng } : startLocationName);
     const toPoint = endCoord ? { name: endLocationName, lat: endCoord.lat, lng: endCoord.lng } : endLocationName;
-    const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint, { allowFallbackEstimate: false });
+    const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint, { allowFallbackEstimate: routingMode === 'ALLOW_ESTIMATES' });
     if (cell && cell.distanceKm !== null && cell.durationMinutes !== null && cell.dataStatus !== 'unavailable') {
       finalDistKm = cell.distanceKm;
       finalDurationMins = cell.durationMinutes;
+      finalTransitionStatus = cell.dataStatus;
+    } else if (cell && (cell.dataStatus === 'unavailable' || cell.distanceKm === null)) {
+      finalTransitionStatus = 'unavailable';
     }
   }
 
-  if (finalDurationMins === 0) {
+  if (finalDurationMins === 0 && finalTransitionStatus !== 'unavailable') {
     const endDist = calculateHaversineDistanceKm(currentCoord, endCoord);
-    const finalRoadType = (String(destinationCity).toLowerCase().includes('manali') || String(destinationCity).toLowerCase().includes('munnar')) ? 'hillGhat' : (isCorridorDay || endDist > 45) ? 'expressway' : (endDist > 15 ? 'stateHighway' : 'urbanCity');
-    const finalTransit = calculateSegmentDrivingMinutes(currentCoord, endCoord, currentMinutes, finalRoadType);
-    finalDistKm = finalTransit.distanceKm;
-    finalDurationMins = finalTransit.durationMinutes;
+    if (endDist > 1.0) {
+      if (routingMode !== 'STRICT_PROVIDER') {
+        const finalRoadType = (String(destinationCity).toLowerCase().includes('manali') || String(destinationCity).toLowerCase().includes('munnar')) ? 'hillGhat' : (isCorridorDay || endDist > 45) ? 'expressway' : (endDist > 15 ? 'stateHighway' : 'urbanCity');
+        const finalTransit = calculateSegmentDrivingMinutes(currentCoord, endCoord, currentMinutes, finalRoadType);
+        finalDistKm = finalTransit.distanceKm;
+        finalDurationMins = finalTransit.durationMinutes;
+      }
+    }
   }
 
   totalDrivingKm += finalDistKm;

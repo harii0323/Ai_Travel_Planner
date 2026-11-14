@@ -275,7 +275,8 @@ async function scheduleDailyItineraries({
       dayStartCoord,
       dayEndCoord,
       selectedStops,
-      isCorridorDay
+      isCorridorDay,
+      routeTransitionMatrix
     );
 
     // Schedule chronological timeline with driving times, meal breaks, and fatigue halts
@@ -294,7 +295,8 @@ async function scheduleDailyItineraries({
       isReturnFinalArrival,
       travelerCount: numberOfTravelers,
       transitionMatrix: routeTransitionMatrix,
-      locationIndexMap
+      locationIndexMap,
+      routingMode: userProfile.routingMode || (userProfile.allowEstimates ? 'ALLOW_ESTIMATES' : 'STRICT_PROVIDER')
     });
 
     // Compute itemized daily expenditure using authoritative benchmarks
@@ -339,8 +341,10 @@ async function scheduleDailyItineraries({
       } else if (/waterfall/i.test(s.name)) {
         cat = 'waterfall';
       }
+      const hasRealPlaceId = Boolean(s.placeId && !String(s.placeId).startsWith('POI_') && !String(s.placeId).startsWith('INTERNAL_'));
       return {
-        placeId: s.placeId || `POI_D${dayMeta.dayNumber}_${sIdx + 1}`,
+        placeId: hasRealPlaceId ? s.placeId : null,
+        internalGeneratedId: s.internalGeneratedId || s.id || `POI_D${dayMeta.dayNumber}_${sIdx + 1}`,
         placeName: s.name,
         name: s.name,
         coordinates: s.coordinates || null,
@@ -366,6 +370,7 @@ async function scheduleDailyItineraries({
     // Extract separate, structured activity documents (Prompt Section 3.6)
     const activityDocuments = [];
     optimizedStops.forEach((s, sIdx) => {
+      const hasRealPlaceId = Boolean(s.placeId && !String(s.placeId).startsWith('POI_') && !String(s.placeId).startsWith('INTERNAL_'));
       const acts = Array.isArray(s.activities) && s.activities.length > 0
         ? s.activities
         : [
@@ -390,12 +395,13 @@ async function scheduleDailyItineraries({
           activityId: act.activityId || `ACT_D${dayMeta.dayNumber}_${sIdx + 1}_${aIdx + 1}`,
           activityName: act.name,
           name: act.name,
-          placeId: s.placeId || `POI_D${dayMeta.dayNumber}_${sIdx + 1}`,
+          placeId: hasRealPlaceId ? s.placeId : null,
+          internalGeneratedId: s.internalGeneratedId || s.id || `POI_D${dayMeta.dayNumber}_${sIdx + 1}`,
           placeName: s.name,
           category: act.category || s.category || 'sightseeing',
           types: s.subCategories || [s.category || 'sightseeing'],
-          rating: s.rating || 4.5,
-          googleRating: s.rating || 4.5,
+          rating: s.rating != null ? Number(s.rating) : null,
+          googleRating: s.googleRating != null ? Number(s.googleRating) : (s.rating != null ? Number(s.rating) : null),
           verificationStatus: act.verificationStatus || 'verified',
           operatingStatus: act.operatingStatus || 'OPERATIONAL',
           estimatedDurationMinutes: act.estimatedDurationMinutes || 60,

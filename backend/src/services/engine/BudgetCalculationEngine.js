@@ -90,43 +90,117 @@ function determineEntryFeeVerificationState(stop = {}) {
  * Calculates itemized, mathematically verifiable trip cost.
  */
 function calculateTripBudget({
-  userProfile,
-  routeInfo,
+  userProfile = {},
+  routeInfo = {},
   dayPlans = []
 }) {
   const travelers = Math.max(1, userProfile.numberOfTravelers || 1);
   const totalDays = Math.max(1, userProfile.totalDays || 1);
   const nights = Math.max(0, totalDays - 1);
-  const userBudget = Number(userProfile.totalBudget || userProfile.budget || 25000);
 
-  // Total driving distance across all scheduled days
-  const totalDistanceKm = dayPlans.reduce((sum, d) => sum + (d.totalDayDistanceKm || 0), 0) || routeInfo.totalDistanceKm || 500;
+  // User budget: Never fabricate default ₹25,000 if not specified by user!
+  const rawBudget = userProfile.totalBudget !== undefined ? userProfile.totalBudget : (userProfile.budget !== undefined ? userProfile.budget : null);
+  const userBudget = (rawBudget !== null && !isNaN(Number(rawBudget)) && Number(rawBudget) > 0) ? Number(rawBudget) : null;
+
+  // Total driving distance: Never silently fabricate 500 km default!
+  const dayPlanDist = (dayPlans || []).reduce((sum, d) => sum + (Number(d.totalDayDistanceKm) || 0), 0);
+  const totalDistanceKm = dayPlanDist > 0
+    ? dayPlanDist
+    : (routeInfo.totalDistanceKm !== undefined && routeInfo.totalDistanceKm !== null ? Number(routeInfo.totalDistanceKm) : null);
+
+  const unknownExpenseCategories = [];
 
   // 1. Fuel / Transportation Cost
-  let fuelCost = 0;
-  let litersUsed = 0;
-  const isPersonalVehicle = userProfile.transportDetails?.isPersonalVehicle !== false;
-  const fuelType = userProfile.vehicleDetails?.fuelType || 'petrol';
-  const mileage = userProfile.vehicleDetails?.mileage || 15;
-  const fuelPrice = FUEL_BENCHMARKS[fuelType] || FUEL_BENCHMARKS.petrol;
+  let fuelCost = null;
+  let fuelDataStatus = 'unknown';
+  let fuelUnit = 'Transportation Transit';
+  let fuelCalculationMethod = null;
+  let fuelProvenance = null;
+  const isPersonalVehicle = userProfile.transportDetails?.isPersonalVehicle !== false &&
+    userProfile.transportMode !== 'bus' &&
+    userProfile.transportMode !== 'train' &&
+    userProfile.transportMode !== 'flight';
 
-  if (isPersonalVehicle) {
-    litersUsed = Math.round((totalDistanceKm / mileage) * 10) / 10;
-    fuelCost = Math.round(litersUsed * fuelPrice);
+  const fuelType = (userProfile.vehicleDetails?.fuelType || 'petrol').toLowerCase();
+  const fuelPrice = FUEL_BENCHMARKS[fuelType] || FUEL_BENCHMARKS.petrol;
+  const userMileage = userProfile.vehicleDetails?.mileage;
+  const hasUserMileage = userMileage !== undefined && userMileage !== null && !isNaN(Number(userMileage)) && Number(userMileage) > 0;
+  const mileage = hasUserMileage ? Number(userMileage) : 15;
+
+  const fuelAssumptions = [];
+
+  if (totalDistanceKm === null) {
+    fuelCost = null;
+    fuelDataStatus = 'unknown';
+    unknownExpenseCategories.push('fuel_and_transport');
+    fuelAssumptions.push('Route distance is unavailable; fuel cost cannot be calculated.');
+  } else if (isPersonalVehicle) {
+    if (!hasUserMileage) {
+      fuelAssumptions.push('Vehicle mileage not specified by user; benchmark 15 km/L economy assumed.');
+    }
+    if (fuelType === 'electric') {
+      const kwhUsed = Math.round((totalDistanceKm * 0.16) * 10) / 10;
+      fuelCost = Math.round(kwhUsed * fuelPrice);
+      fuelUnit = `${kwhUsed} kWh at ₹${fuelPrice}/kWh`;
+      fuelCalculationMethod = 'distance_times_kwh_per_km_times_electricity_price';
+      fuelProvenance = 'electric_vehicle_consumption_benchmark';
+      fuelDataStatus = 'estimated';
+      fuelAssumptions.push(`EV electricity benchmark: ₹${fuelPrice}/kWh, 16 kWh/100km consumption rate.`);
+    } else if (fuelType === 'cng') {
+      const kgUsed = Math.round((totalDistanceKm / mileage) * 10) / 10;
+      fuelCost = Math.round(kgUsed * fuelPrice);
+      fuelUnit = `${kgUsed} kg CNG at ₹${fuelPrice}/kg`;
+      fuelCalculationMethod = 'distance_divided_by_mileage_times_cng_price';
+      fuelProvenance = 'cng_consumption_benchmark';
+      fuelDataStatus = 'estimated';
+      fuelAssumptions.push(`CNG rate benchmark: ₹${fuelPrice}/kg, economy ${mileage} km/kg.`);
+    } else {
+      const litersUsed = Math.round((totalDistanceKm / mileage) * 10) / 10;
+      fuelCost = Math.round(litersUsed * fuelPrice);
+      fuelUnit = `${litersUsed} Liters at ₹${fuelPrice}/L`;
+      fuelCalculationMethod = 'distance_divided_by_mileage_times_fuel_price';
+      fuelProvenance = hasUserMileage ? 'user_mileage_and_fuel_benchmark' : 'benchmark_mileage_and_fuel';
+      fuelDataStatus = 'estimated';
+      fuelAssumptions.push(`Fuel rate: ₹${fuelPrice}/L for ${fuelType.toUpperCase()} (Benchmark rate, no live retrieval).`);
+    }
   } else {
-    // Public transport (bus/train fares)
+    // Public transport fares
     const perPersonTransit = Math.round(totalDistanceKm * 1.25);
     fuelCost = perPersonTransit * travelers;
+    fuelUnit = `Public transit tickets (${travelers} travelers)`;
+    fuelCalculationMethod = 'distance_times_transit_rate_times_travelers';
+    fuelProvenance = 'public_transit_benchmark';
+    fuelDataStatus = 'estimated';
+    fuelAssumptions.push(`Public transport transit model: ~₹1.25/km/person across scheduled corridor.`);
   }
 
   // 2. Highway Tolls
-  let tollCost = 0;
-  if (isPersonalVehicle && userProfile.vehicleDetails?.vehicleType !== 'bike') {
-    tollCost = Math.round(totalDistanceKm * 1.15); // Average NHAI 4-lane rate
+  let tollCost = null;
+  let tollDataStatus = 'unknown';
+  const tollAssumptions = [];
+  if (totalDistanceKm === null) {
+    tollCost = null;
+    tollDataStatus = 'unknown';
+    unknownExpenseCategories.push('highway_tolls');
+    tollAssumptions.push('Route distance unavailable; toll expenses cannot be calculated.');
+  } else if (isPersonalVehicle && userProfile.vehicleDetails?.vehicleType !== 'bike') {
+    if (routeInfo.totalTolls !== undefined && routeInfo.totalTolls !== null) {
+      tollCost = Math.round(Number(routeInfo.totalTolls));
+      tollDataStatus = 'provider_retrieved';
+      tollAssumptions.push(`Highway toll plazas identified along route corridor.`);
+    } else {
+      tollCost = Math.round(totalDistanceKm * 1.15); // Average NHAI 4-lane rate
+      tollDataStatus = 'estimated';
+      tollAssumptions.push(`Highway toll benchmark: ~₹1.15/km along NHAI express corridors (Benchmark estimate).`);
+    }
+  } else {
+    tollCost = 0;
+    tollDataStatus = 'exact_zero';
+    tollAssumptions.push('No tolls applicable for bikes or public transit.');
   }
 
   // 3. Accommodation Cost (Based on room capacity and night count)
-  const accType = userProfile.accommodationPreference || 'budgetHotel';
+  const accType = userProfile.accommodationPreference || (userProfile.travelCompanionType === 'solo' ? 'hostel' : 'budgetHotel');
   const accConfig = ACCOMMODATION_BENCHMARKS[accType] || ACCOMMODATION_BENCHMARKS.budgetHotel;
   const roomsNeeded = Math.ceil(travelers / (accConfig.capacity || 2));
   const accommodationCost = nights * roomsNeeded * accConfig.ratePerRoom;
@@ -136,7 +210,7 @@ function calculateTripBudget({
   const dailyFoodPerPerson = mealRate.breakfast + mealRate.lunch + mealRate.dinner;
   const foodCost = totalDays * travelers * dailyFoodPerPerson;
 
-  // 5. Entry Tickets & Activity Fees (Section 5 Master Prompt)
+  // 5. Entry Tickets & Activity Fees (5-Tier Verification State)
   let verifiedFeesSubtotal = 0;
   let estimatedFeesSubtotal = 0;
   let verifiedFeesCount = 0;
@@ -160,31 +234,29 @@ function calculateTripBudget({
   });
 
   const totalAttractionTickets = verifiedFeesSubtotal + estimatedFeesSubtotal;
-
-  // 6. Local Transport & Parking Buffer
-  const parkingAndBuffer = totalDays * 100 + (isPersonalVehicle ? 200 : 0);
-
-  // Unknown expense categories
-  const unknownExpenseCategories = [];
   if (unknownFeesCount > 0) {
     unknownExpenseCategories.push('attraction_entry_fees');
   }
 
-  // Explicit Estimation Assumptions Array (No fabricated live timestamps)
+  // 6. Local Transport & Parking Buffer
+  const parkingAndBuffer = totalDays * 100 + (isPersonalVehicle ? 200 : 0);
+
+  // Assumptions list
   const assumptions = [
-    `Fuel rate: ₹${fuelPrice}/L for ${fuelType.toUpperCase()} (Benchmark rate, no live retrieval)`,
-    `Vehicle economy: ${mileage} km/L (${isPersonalVehicle ? 'Personal Vehicle' : 'Public Transport Transit Model'})`,
-    `Highway toll benchmark: ~₹1.15/km along NHAI express corridors (Benchmark estimate)`,
-    `Accommodation rate: ₹${accConfig.ratePerRoom}/night per room for ${accConfig.label} (Benchmark rate)`,
+    ...fuelAssumptions,
+    ...tollAssumptions,
+    `Accommodation rate: ₹${accConfig.ratePerRoom}/night per room for ${accConfig.label} (Benchmark rate, no live booking rate)`,
     `Dining expense: ₹${dailyFoodPerPerson}/person/day (${userProfile.travelPace || 'standard'} pace model)`
   ];
   if (unknownFeesCount > 0) {
     assumptions.push(`${unknownFeesCount} attraction stop(s) have unknown/unconfirmed entry fees; not treated as free admission.`);
   }
 
-  // Grand Total Reconciliation (Section 5F: Total = Fuel + Tolls + Accommodation + Food + Entry Fees + Activities + Parking + Local Transport + Other)
+  // Subtotals and Grand Total Reconciliation
   const confirmedSubtotal = verifiedFeesSubtotal;
-  const estimatedSubtotal = Math.round(fuelCost + tollCost + accommodationCost + foodCost + estimatedFeesSubtotal + parkingAndBuffer);
+  const safeFuelCost = fuelCost !== null ? fuelCost : 0;
+  const safeTollCost = tollCost !== null ? tollCost : 0;
+  const estimatedSubtotal = Math.round(safeFuelCost + safeTollCost + accommodationCost + foodCost + estimatedFeesSubtotal + parkingAndBuffer);
   const totalEstimatedCost = confirmedSubtotal + estimatedSubtotal;
   const perPersonCost = Math.round(totalEstimatedCost / travelers);
 
@@ -197,23 +269,40 @@ function calculateTripBudget({
   };
 
   // Budget Status & Constraint Evaluation
-  const isOverBudget = totalEstimatedCost > userBudget;
-  const budgetGap = Math.max(0, totalEstimatedCost - userBudget);
-  const budgetUtilizationPercent = Math.round((totalEstimatedCost / userBudget) * 100);
-  const budgetDecisionUncertainty = unknownExpenseCategories.length > 0 || (budgetGap > 0 && budgetGap <= unknownBufferMax);
+  let isOverBudget = null;
+  let budgetGap = null;
+  let budgetVariance = null;
+  let budgetUtilizationPercent = null;
+  let budgetStatus = 'INSUFFICIENT_DATA';
 
-  let budgetStatus = 'WITHIN_BUDGET';
-  if (totalEstimatedCost > userBudget * 1.25) {
-    budgetStatus = 'SIGNIFICANTLY_OVER_BUDGET';
-  } else if (isOverBudget) {
-    budgetStatus = 'SLIGHTLY_OVER_BUDGET';
-  } else if (budgetDecisionUncertainty && totalEstimatedCost + unknownBufferMax > userBudget) {
-    budgetStatus = 'UNCERTAIN_BUDGET';
+  const budgetDecisionUncertainty = unknownExpenseCategories.length > 0 || (userBudget !== null && totalEstimatedCost + unknownBufferMax > userBudget);
+
+  if (userBudget === null) {
+    budgetStatus = 'INSUFFICIENT_DATA';
+    isOverBudget = null;
+    budgetGap = null;
+    budgetVariance = null;
+    budgetUtilizationPercent = null;
+  } else {
+    isOverBudget = totalEstimatedCost > userBudget;
+    budgetGap = Math.max(0, totalEstimatedCost - userBudget);
+    budgetVariance = totalEstimatedCost - userBudget;
+    budgetUtilizationPercent = Math.round((totalEstimatedCost / userBudget) * 100);
+
+    if (totalEstimatedCost > userBudget * 1.25) {
+      budgetStatus = 'SIGNIFICANTLY_OVER_BUDGET';
+    } else if (isOverBudget) {
+      budgetStatus = 'OVER_BUDGET';
+    } else if (budgetDecisionUncertainty && totalEstimatedCost + unknownBufferMax > userBudget) {
+      budgetStatus = 'UNCERTAIN_BUDGET';
+    } else {
+      budgetStatus = 'WITHIN_BUDGET';
+    }
   }
 
   // Optimization Trade-offs if over budget
   const tradeOffRecommendations = [];
-  if (isOverBudget) {
+  if (isOverBudget && userBudget !== null) {
     if (accType !== 'hostel' && nights > 0) {
       const hostelSavings = accommodationCost - (nights * travelers * ACCOMMODATION_BENCHMARKS.hostel.ratePerRoom);
       if (hostelSavings > 0) {
@@ -233,18 +322,20 @@ function calculateTripBudget({
       });
     }
 
-    tradeOffRecommendations.push({
-      area: 'Route & Fuel',
-      savings: Math.round(tollCost * 0.3),
-      suggestion: 'Maintain steady highway cruise speeds (75-80 km/h) to maximize vehicle fuel economy.'
-    });
+    if (safeTollCost > 0) {
+      tradeOffRecommendations.push({
+        area: 'Route & Fuel',
+        savings: Math.round(safeTollCost * 0.3),
+        suggestion: 'Maintain steady highway cruise speeds (75-80 km/h) to maximize vehicle fuel economy.'
+      });
+    }
   }
 
   let activityStatus = 'estimated';
   if (verifiedFeesCount > 0 && estimatedFeesCount === 0 && unknownFeesCount === 0) {
-    activityStatus = 'verified_from_official_source';
+    activityStatus = 'verified_official';
   } else if (unknownFeesCount > 0) {
-    activityStatus = 'unknown_fees_present';
+    activityStatus = 'unknown';
   }
 
   return {
@@ -258,7 +349,7 @@ function calculateTripBudget({
     perPersonEstimate: perPersonCost,
     originalBudget: userBudget,
     userBudget,
-    budgetVariance: totalEstimatedCost - userBudget,
+    budgetVariance,
     budgetStatus,
     isOverBudget,
     budgetGap,
@@ -267,28 +358,32 @@ function calculateTripBudget({
       fuel: {
         amount: fuelCost,
         currency: 'INR',
-        unit: `${litersUsed} Liters at ₹${fuelPrice}/L`,
-        dataSource: 'fuel_consumption_formula',
-        dataStatus: 'estimated',
+        unit: fuelUnit,
+        dataSource: isPersonalVehicle ? 'fuel_consumption_formula' : 'public_transit_rate_model',
+        dataStatus: fuelDataStatus,
         isLiveVerified: false,
-        isEstimated: true,
-        calculationMethod: 'distance_divided_by_mileage_times_fuel_price',
-        provenance: 'benchmark_mileage_fuel',
-        assumptions: [`Fuel price ₹${fuelPrice}/L for ${fuelType.toUpperCase()}`, `Vehicle mileage ${mileage} km/L`],
-        retrievalTimestamp: null // No fabricated live timestamp for static benchmark
+        isEstimated: fuelDataStatus === 'estimated',
+        calculationMethod: fuelCalculationMethod,
+        provenance: fuelProvenance,
+        assumptions: fuelAssumptions,
+        retrievedAt: null,
+        applicableDate: null,
+        confidence: fuelCost !== null ? 0.85 : 0
       },
       tolls: {
         amount: tollCost,
         currency: 'INR',
         unit: 'Highway Corridor Tolls',
         dataSource: 'nhai_expressway_rate_benchmark',
-        dataStatus: 'estimated',
+        dataStatus: tollDataStatus,
         isLiveVerified: false,
-        isEstimated: true,
+        isEstimated: tollDataStatus === 'estimated',
         calculationMethod: 'nhai_corridor_benchmark_rate',
         provenance: 'nhai_corridor_benchmark',
-        assumptions: ['Estimated ₹1.15/km expressway toll benchmark along NH corridors'],
-        retrievalTimestamp: null // No fabricated live timestamp
+        assumptions: tollAssumptions,
+        retrievedAt: null,
+        applicableDate: null,
+        confidence: tollCost !== null ? 0.80 : 0
       },
       accommodation: {
         amount: accommodationCost,
@@ -301,7 +396,9 @@ function calculateTripBudget({
         calculationMethod: 'nights_times_rooms_times_rate_per_room',
         provenance: 'destination_hotel_benchmark',
         assumptions: [`₹${accConfig.ratePerRoom}/night per room`, `${roomsNeeded} rooms for ${travelers} travelers (${accConfig.capacity} persons/room)`],
-        retrievalTimestamp: null // No fabricated live timestamp
+        retrievedAt: null,
+        applicableDate: null,
+        confidence: 0.80
       },
       food: {
         amount: foodCost,
@@ -314,7 +411,9 @@ function calculateTripBudget({
         calculationMethod: 'travelers_times_days_times_daily_meal_rate',
         provenance: 'regional_dining_benchmark',
         assumptions: [`₹${dailyFoodPerPerson}/person/day (${userProfile.travelPace || 'standard'} pace model)`],
-        retrievalTimestamp: null // No fabricated live timestamp
+        retrievedAt: null,
+        applicableDate: null,
+        confidence: 0.85
       },
       activities: {
         amount: totalAttractionTickets,
@@ -322,14 +421,17 @@ function calculateTripBudget({
         unit: 'Attraction Admission & Entry Tickets',
         dataSource: verifiedFeesCount > 0 ? 'attraction_admission_catalog' : 'catalog_estimates',
         dataStatus: activityStatus,
-        isLiveVerified: false,
+        isLiveVerified: activityStatus === 'verified_official',
         isEstimated: estimatedFeesCount > 0 || unknownFeesCount > 0,
         calculationMethod: 'sum_of_stop_entry_fees_times_travelers',
         provenance: 'places_catalog_rates',
         assumptions: unknownFeesCount > 0
           ? [`${unknownFeesCount} stop(s) have unconfirmed admission fees; not treated as free admission`]
           : (estimatedFeesCount > 0 ? [`${estimatedFeesCount} stop(s) use catalog benchmark fee estimates`] : ['All admission fees verified from official source']),
-        retrievalTimestamp: null
+        retrievalTimestamp: null,
+        retrievedAt: null,
+        applicableDate: null,
+        confidence: unknownFeesCount === 0 ? 0.90 : 0.60
       },
       parkingAndBuffer: {
         amount: parkingAndBuffer,
@@ -342,7 +444,10 @@ function calculateTripBudget({
         calculationMethod: 'daily_parking_and_contingency_buffer',
         provenance: 'incidentals_benchmark',
         assumptions: ['₹100/day parking + ₹200 vehicle incidental contingency'],
-        retrievalTimestamp: null
+        retrievalTimestamp: null,
+        retrievedAt: null,
+        applicableDate: null,
+        confidence: 0.75
       }
     },
     assumptions,

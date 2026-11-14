@@ -123,8 +123,17 @@ const HIGHWAY_EDGES = [
   { from: 'anantapur', to: 'bengaluru', distanceKm: 215, baseMinutes: 175, roadType: 'expressway', highway: 'NH 44', toll: 240 },
   { from: 'bengaluru', to: 'salem', distanceKm: 202, baseMinutes: 170, roadType: 'expressway', highway: 'NH 44', toll: 220 },
   { from: 'salem', to: 'dindigul', distanceKm: 172, baseMinutes: 140, roadType: 'expressway', highway: 'NH 44', toll: 175 },
+  { from: 'dindigul', to: 'madurai', distanceKm: 65, baseMinutes: 55, roadType: 'expressway', highway: 'NH 44', toll: 60 },
   { from: 'dindigul', to: 'theni', distanceKm: 74, baseMinutes: 75, roadType: 'stateHighway', highway: 'NH 83', toll: 0 },
   { from: 'theni', to: 'munnar', distanceKm: 85, baseMinutes: 145, roadType: 'ghatRoad', highway: 'NH 85 (Bodimettu Ghat)', toll: 0 },
+
+  // Andhra Rayalaseema & Corridor Hubs: Nandyal, Kadapa, Tirupati
+  { from: 'kurnool', to: 'nandyal', distanceKm: 74, baseMinutes: 70, roadType: 'nationalHighway', highway: 'NH 40', toll: 65 },
+  { from: 'nandyal', to: 'kadapa', distanceKm: 118, baseMinutes: 110, roadType: 'nationalHighway', highway: 'NH 40', toll: 95 },
+  { from: 'kadapa', to: 'tirupati', distanceKm: 136, baseMinutes: 125, roadType: 'nationalHighway', highway: 'NH 716', toll: 110 },
+  { from: 'anantapur', to: 'kadapa', distanceKm: 142, baseMinutes: 130, roadType: 'nationalHighway', highway: 'NH 716', toll: 80 },
+  { from: 'hyderabad', to: 'nalgonda', distanceKm: 98, baseMinutes: 85, roadType: 'nationalHighway', highway: 'NH 65', toll: 75 },
+  { from: 'nalgonda', to: 'suryapet', distanceKm: 42, baseMinutes: 40, roadType: 'stateHighway', highway: 'SH 19', toll: 0 },
 
   // Kerala Corridor: Munnar -> Kochi -> Alleppey
   { from: 'munnar', to: 'kochi', distanceKm: 125, baseMinutes: 195, roadType: 'ghatRoad', highway: 'NH 85 (Neriamangalam Ghat)', toll: 0 },

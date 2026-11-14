@@ -84,7 +84,7 @@ const { validateAndEnforceOutputContract } = require('./engine/ItineraryValidati
 const { generateRecommendationRationale, runFinalValidationChecklist } = require('./validationEngine');
 const { normalizeUserPreferences, resolveDestination } = require('./userPreferenceNormalizer');
 const { generateRecommendations } = require('./planner');
-const { generateAlternativeReturnRoutes } = require('./routeDiversityEngine');
+const { generateAlternativeReturnRoutes, calculateRouteOverlap } = require('./routeDiversityEngine');
 
 /**
  * Normalizes input weather into the authoritative VISTA Weather Contract.
@@ -152,13 +152,18 @@ class UnifiedTravelPlanningOrchestrator {
     const totalDays = userProfile.totalDays;
     const isRoundTrip = userProfile.isRoundTrip;
 
+    // Authoritative Routing Mode (Prompt Section 3.1): Default to STRICT_PROVIDER
+    const routingMode = rawInput.routingMode || (rawInput.allowEstimates ? 'ALLOW_ESTIMATES' : (rawInput.offlineGraph ? 'OFFLINE_GRAPH' : 'STRICT_PROVIDER'));
+    userProfile.routingMode = routingMode;
+
     // =========================================================================
     // STAGE 2: BUILD ROUTE CORRIDOR & ROAD NETWORK GRAPH VIA ROADROUTINGPROVIDER
     // =========================================================================
     const primaryRoute = await roadRoutingProvider.getRoute(origin, destination, {
       departureMinutes: 450, // 07:30 AM
       transportMode: userProfile.transportMode,
-      objective: 'time'
+      objective: 'time',
+      routingMode
     });
 
     const originCoords = (primaryRoute.origin && primaryRoute.origin.lat != null)
@@ -175,7 +180,7 @@ class UnifiedTravelPlanningOrchestrator {
       originCoordinates: originCoords,
       destinationCoordinates: destCoords,
       waypoints: primaryRoute.waypoints || [],
-      corridorBufferKm: Math.min(80, Math.max(35, Math.round((primaryRoute.totalDistanceKm || primaryRoute.distanceKm || 300) * 0.08))),
+      corridorBufferKm: Math.min(80, Math.max(45, Math.round((primaryRoute.totalDistanceKm || primaryRoute.distanceKm || 300) * 0.10))),
       dataSource: primaryRoute.dataSource,
       dataStatus: primaryRoute.dataStatus,
       tier: primaryRoute.tier,
@@ -266,7 +271,8 @@ class UnifiedTravelPlanningOrchestrator {
     const matrixCandidates = [originNode, ...diversePool, destNode];
     const routeTransitionMatrix = await roadRoutingProvider.getRouteMatrix(matrixCandidates, {
       departureMinutes: 450,
-      transportMode: userProfile.transportMode
+      transportMode: userProfile.transportMode,
+      routingMode
     });
 
     const tripOptimizationContext = {
@@ -281,6 +287,8 @@ class UnifiedTravelPlanningOrchestrator {
       startMinutes: 450,
       weatherCondition: normalizedWeather.condition,
       normalizedWeather,
+      routingMode,
+      allowEstimates: routingMode === 'ALLOW_ESTIMATES',
       matrix: routeTransitionMatrix,
       routeTransitionMatrix,
       locationIndexMap: routeTransitionMatrix?.locationIndexMap
@@ -488,13 +496,23 @@ class UnifiedTravelPlanningOrchestrator {
         numTravelers: userProfile.numberOfTravelers
       });
 
+      const outboundStops = dayPlans.filter(d => d.journeyPhase === 'ONWARD').flatMap(d => d.stops || []);
+      const returnStops = dayPlans.filter(d => d.journeyPhase === 'RETURN').flatMap(d => d.stops || []);
+      const dynamicOverlap = calculateRouteOverlap(
+        outboundStops.length > 0 ? outboundStops : routeInfo.waypoints?.map(w => ({ name: w.name || w })),
+        returnStops.length > 0 ? returnStops : returnRouteAlternatives[0]?.waypoints?.map(w => ({ name: w.name || w })),
+        routeInfo.totalDistanceKm,
+        returnRouteAlternatives[0]?.distanceKm || routeInfo.totalDistanceKm
+      );
+
       returnRoutePlan = {
         isRoundTrip: true,
         tripDirection: 'round_trip',
         origin,
         destination,
         alternativeRoutes: returnRouteAlternatives,
-        routeOverlapPercent: returnRouteAlternatives[1]?.routeOverlapPercent || 48
+        routeOverlapPercent: dynamicOverlap.overlapPercent,
+        routeOverlapDetails: dynamicOverlap
       };
     } else {
       returnRoutePlan = {

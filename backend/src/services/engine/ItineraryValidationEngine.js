@@ -66,12 +66,13 @@ function validateAndEnforceOutputContract({
       return {
         placeId: hasRealPlaceId ? s.placeId : null,
         internalGeneratedId: s.internalGeneratedId || s.id || `INTERNAL_${s.name ? s.name.replace(/[^a-z0-9]/gi, '_') : 'POI'}`,
+        sourcePlaceId: s.sourcePlaceId || (s.placeId && String(s.placeId).startsWith('POI_') ? s.placeId : null),
         placeName: s.placeName || s.name,
         name: s.placeName || s.name,
         coordinates: s.coordinates || null,
-        category: s.category || 'sightseeing',
-        taxonomyCategory: s.taxonomyCategory || 'historical_cultural',
-        types: s.types || [s.category || 'sightseeing'],
+        category: s.category || 'unknown',
+        taxonomyCategory: s.taxonomyCategory || (s.category && s.category !== 'unknown' ? s.category : 'unknown'),
+        types: s.types || (s.category ? [s.category] : ['unknown']),
         rating: s.rating != null ? Number(s.rating) : null,
         googleRating: s.googleRating != null ? Number(s.googleRating) : (s.rating != null ? Number(s.rating) : null),
         arrivalTime: s.arrivalTime || null,
@@ -85,6 +86,7 @@ function validateAndEnforceOutputContract({
         dataSource: s.dataSource || s.sourceInformation || null,
         dataStatus: s.dataStatus || (rawFee === null ? 'unknown' : 'estimated'),
         isLiveVerified: Boolean(s.isLiveVerified),
+        provenance: s.provenance || null,
         whySelected: s.whySelected || s.reason || `Selected for ${s.category || 'attraction'} matching your travel preferences.`,
         isSupplementary: Boolean(s.isSupplementary),
         description: s.description || s.whySelected || ''
@@ -128,11 +130,11 @@ function validateAndEnforceOutputContract({
   });
 
   const tripSummary = {
-    origin: userProfile.origin,
-    destination: userProfile.destination,
-    destinationCity: userProfile.destinationCity,
-    startDate: userProfile.startDate.toISOString().split('T')[0],
-    endDate: userProfile.endDate.toISOString().split('T')[0],
+    origin: userProfile.origin || null,
+    destination: userProfile.destination || null,
+    destinationCity: userProfile.destinationCity || null,
+    startDate: userProfile.startDate?.toISOString ? userProfile.startDate.toISOString().split('T')[0] : (userProfile.startDate ? String(userProfile.startDate) : null),
+    endDate: userProfile.endDate?.toISOString ? userProfile.endDate.toISOString().split('T')[0] : (userProfile.endDate ? String(userProfile.endDate) : null),
     totalDays: userProfile.totalDays,
     numberOfTravelers: userProfile.numberOfTravelers,
     companionType: userProfile.travelCompanionType,
@@ -375,20 +377,20 @@ function validateAndEnforceOutputContract({
 
     // Legacy backwards compatibility aliases for existing frontend components:
     summary: {
-      startLocation: userProfile.origin,
-      destination: userProfile.destination,
-      destinationCity: userProfile.destinationCity,
-      startDate: userProfile.startDate.toISOString().split('T')[0],
-      endDate: userProfile.endDate.toISOString().split('T')[0],
+      startLocation: userProfile.origin || null,
+      destination: userProfile.destination || null,
+      destinationCity: userProfile.destinationCity || null,
+      startDate: userProfile.startDate?.toISOString ? userProfile.startDate.toISOString().split('T')[0] : (userProfile.startDate ? String(userProfile.startDate) : null),
+      endDate: userProfile.endDate?.toISOString ? userProfile.endDate.toISOString().split('T')[0] : (userProfile.endDate ? String(userProfile.endDate) : null),
       totalDays: userProfile.totalDays,
       originalBudget: userProfile.totalBudget,
       withinBudget: !budgetSummary.isOverBudget
     },
     details: {
-      startLocation: userProfile.origin,
-      transportMode: userProfile.transportMode,
-      accommodationType: userProfile.accommodationPreference,
-      preferredActivities: Object.entries(userProfile.normalizedInterests)
+      startLocation: userProfile.origin || null,
+      transportMode: userProfile.transportMode || null,
+      accommodationType: userProfile.accommodationPreference || null,
+      preferredActivities: Object.entries(userProfile.normalizedInterests || {})
         .filter(([_, w]) => w >= 0.7)
         .map(([k]) => k)
         .join(', ')

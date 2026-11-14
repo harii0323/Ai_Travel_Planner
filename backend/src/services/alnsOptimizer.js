@@ -338,6 +338,10 @@ function runAdaptiveLargeNeighborhoodSearch(arg1 = {}, candidatePoolArg = [], or
 
     // 4. Evaluate solution
     const candidateCost = evaluateRouteCost(candidateRoute, tripContext);
+    if (!Number.isFinite(candidateCost) || candidateCost === Infinity) {
+      // Reject candidates with unavailable transitions or severe constraint violations in strict mode
+      continue;
+    }
     const delta = candidateCost - currentCost;
 
     let scoreReward = 0;

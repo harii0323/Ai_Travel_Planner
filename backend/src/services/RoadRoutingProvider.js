@@ -208,7 +208,7 @@ class RoadRoutingProvider {
     const departureMinutes = options.departureMinutes !== undefined ? options.departureMinutes : 480; // 08:00 AM
     const transportMode = options.transportMode || 'car';
     const objective = options.objective || 'time';
-    const routingMode = options.routingMode || (options.strictProvider ? 'STRICT_PROVIDER' : (options.allowEstimates ? 'ALLOW_ESTIMATES' : null));
+    const routingMode = options.routingMode || (options.strictProvider ? 'STRICT_PROVIDER' : (options.allowEstimates ? 'ALLOW_ESTIMATES' : (options.offlineGraph ? 'OFFLINE_GRAPH' : null)));
 
     // Endpoint coordinate validation: missing coordinates return explicit UNAVAILABLE
     if (orig.lat === null || orig.lng === null || dest.lat === null || dest.lng === null) {
@@ -331,6 +331,94 @@ class RoadRoutingProvider {
       }
     }
 
+    // =========================================================================
+    // TIER 3: LIMITED HIGHWAY GRAPH (RoadNetworkGraphEngine)
+    // Disclosed clearly as a limited graph path, NOT a full national map
+    // =========================================================================
+    let origNodeKey = highwayRoadGraph.resolveNodeKey(orig.name) ||
+      (orig.city && highwayRoadGraph.resolveNodeKey(orig.city)) ||
+      (orig.region && highwayRoadGraph.resolveNodeKey(orig.region));
+    if (!origNodeKey && orig.lat !== null && orig.lng !== null) {
+      const nearest = highwayRoadGraph.findNearestNode(orig);
+      if (nearest && nearest.distanceKm <= 75) {
+        origNodeKey = nearest.node.id;
+      }
+    }
+
+    let destNodeKey = highwayRoadGraph.resolveNodeKey(dest.name) ||
+      (dest.city && highwayRoadGraph.resolveNodeKey(dest.city)) ||
+      (dest.region && highwayRoadGraph.resolveNodeKey(dest.region));
+    if (!destNodeKey && dest.lat !== null && dest.lng !== null) {
+      const nearest = highwayRoadGraph.findNearestNode(dest);
+      if (nearest && nearest.distanceKm <= 75) {
+        destNodeKey = nearest.node.id;
+      }
+    }
+
+    if (origNodeKey && destNodeKey) {
+      if (origNodeKey !== destNodeKey) {
+        const graphRoute = objective === 'distance'
+          ? highwayRoadGraph.findShortestPathDijkstra(origNodeKey, destNodeKey, 'distance', departureMinutes)
+          : highwayRoadGraph.findShortestPathAStar(origNodeKey, destNodeKey, 'time', departureMinutes);
+
+        if (graphRoute && graphRoute.found && graphRoute.totalDistanceKm > 0) {
+          const result = {
+            origin: orig,
+            destination: dest,
+            distanceKm: graphRoute.totalDistanceKm,
+            totalDistanceKm: graphRoute.totalDistanceKm,
+            durationMinutes: graphRoute.durationMinutes || graphRoute.totalDurationMinutes,
+            totalDurationMinutes: graphRoute.durationMinutes || graphRoute.totalDurationMinutes,
+            formattedDuration: `${Math.floor((graphRoute.durationMinutes || graphRoute.totalDurationMinutes) / 60)}h ${(graphRoute.durationMinutes || graphRoute.totalDurationMinutes) % 60}m`,
+            totalTolls: graphRoute.totalTolls || 0,
+            waypoints: graphRoute.waypoints || [],
+            pathNodes: graphRoute.path,
+            tier: 'Tier 3 (Limited Highway Corridor Graph)',
+            dataSource: 'limited_highway_corridor_graph',
+            dataStatus: 'graph_modeled',
+            isLiveVerified: false,
+            isLimitedGraph: true,
+            isEstimate: false,
+            routingLimitation: 'Calculated along known national highway backbone; local town streets are approximated.',
+            trafficSummary: 'Diurnal Highway Traffic Model',
+            timestamp: new Date().toISOString()
+          };
+
+          routeCache.set(cacheKey, { timestamp: Date.now(), data: result });
+          return result;
+        }
+      } else {
+        // Both endpoints within the same corridor destination/hub node
+        const directDist = haversineDistanceKm(orig, dest);
+        if (directDist <= 35) {
+          const localRoadKm = Math.max(0.5, Math.round(directDist * 1.35 * 10) / 10);
+          const localDurationMins = Math.max(5, Math.round((localRoadKm / 30) * 60));
+          const result = {
+            origin: orig,
+            destination: dest,
+            distanceKm: localRoadKm,
+            totalDistanceKm: localRoadKm,
+            durationMinutes: localDurationMins,
+            totalDurationMinutes: localDurationMins,
+            formattedDuration: `${Math.floor(localDurationMins / 60)}h ${localDurationMins % 60}m`,
+            totalTolls: 0,
+            tier: 'Tier 3 (Limited Highway Corridor Graph - Local Sector)',
+            dataSource: 'limited_highway_corridor_graph',
+            dataStatus: 'graph_modeled',
+            isLiveVerified: false,
+            isLimitedGraph: true,
+            isEstimate: false,
+            routingLimitation: 'Local destination transit modeled via regional sector curvature factor (1.35x).',
+            trafficSummary: 'Local Sector Highway Model',
+            timestamp: new Date().toISOString()
+          };
+
+          routeCache.set(cacheKey, { timestamp: Date.now(), data: result });
+          return result;
+        }
+      }
+    }
+
     if (routingMode === 'STRICT_PROVIDER') {
       return {
         status: 'UNAVAILABLE',
@@ -345,50 +433,10 @@ class RoadRoutingProvider {
         isLiveVerified: false,
         isLimitedGraph: false,
         isEstimate: false,
-        error: 'Authoritative routing provider unavailable in STRICT_PROVIDER mode',
+        error: 'Authoritative routing provider or highway graph unavailable in STRICT_PROVIDER mode',
         trafficSummary: 'Provider unavailable in strict mode',
         timestamp: new Date().toISOString()
       };
-    }
-
-    // =========================================================================
-    // TIER 3: LIMITED HIGHWAY GRAPH (RoadNetworkGraphEngine)
-    // Disclosed clearly as a limited graph path, NOT a full national map
-    // =========================================================================
-    const origNodeKey = highwayRoadGraph.resolveNodeKey(orig.name);
-    const destNodeKey = highwayRoadGraph.resolveNodeKey(dest.name);
-
-    if (origNodeKey && destNodeKey && origNodeKey !== destNodeKey) {
-      const graphRoute = objective === 'distance'
-        ? highwayRoadGraph.findShortestPathDijkstra(origNodeKey, destNodeKey, 'distance', departureMinutes)
-        : highwayRoadGraph.findShortestPathAStar(origNodeKey, destNodeKey, 'time', departureMinutes);
-
-      if (graphRoute && graphRoute.found && graphRoute.totalDistanceKm > 0) {
-        const result = {
-          origin: orig,
-          destination: dest,
-          distanceKm: graphRoute.totalDistanceKm,
-          totalDistanceKm: graphRoute.totalDistanceKm,
-          durationMinutes: graphRoute.durationMinutes || graphRoute.totalDurationMinutes,
-          totalDurationMinutes: graphRoute.durationMinutes || graphRoute.totalDurationMinutes,
-          formattedDuration: `${Math.floor((graphRoute.durationMinutes || graphRoute.totalDurationMinutes) / 60)}h ${(graphRoute.durationMinutes || graphRoute.totalDurationMinutes) % 60}m`,
-          totalTolls: graphRoute.totalTolls || 0,
-          waypoints: graphRoute.waypoints || [],
-          pathNodes: graphRoute.path,
-          tier: 'Tier 3 (Limited Highway Corridor Graph)',
-          dataSource: 'limited_highway_corridor_graph',
-          dataStatus: 'graph_modeled',
-          isLiveVerified: false,
-          isLimitedGraph: true,
-          isEstimate: false,
-          routingLimitation: 'Calculated along known 25-node national highway backbone; local town streets are approximated.',
-          trafficSummary: 'Diurnal Highway Traffic Model',
-          timestamp: new Date().toISOString()
-        };
-
-        routeCache.set(cacheKey, { timestamp: Date.now(), data: result });
-        return result;
-      }
     }
 
     if (routingMode === 'OFFLINE_GRAPH') {
@@ -413,8 +461,29 @@ class RoadRoutingProvider {
 
     // =========================================================================
     // TIER 4: GEOGRAPHIC ESTIMATE (Haversine Projection Approximation)
-    // Explicitly marked as estimated, NEVER claimed as live_verified
+    // Permitted ONLY when routingMode === 'ALLOW_ESTIMATES' or allowEstimates: true
     // =========================================================================
+    if (routingMode !== 'ALLOW_ESTIMATES' && options.allowEstimates !== true && options.allowFallbackEstimate !== true) {
+      return {
+        status: 'UNAVAILABLE',
+        origin: orig,
+        destination: dest,
+        distanceKm: null,
+        totalDistanceKm: null,
+        durationMinutes: null,
+        totalDurationMinutes: null,
+        dataStatus: 'unavailable',
+        dataSource: 'no_route_available',
+        isLiveVerified: false,
+        isLimitedGraph: false,
+        isEstimate: false,
+        error: 'No live provider or highway graph route available, and estimates are not permitted',
+        trafficSummary: 'Route transition unavailable without explicit estimate permission',
+        retrievalTimestamp: null,
+        timestamp: new Date().toISOString()
+      };
+    }
+
     const directKm = haversineDistanceKm(orig, dest);
 
     // Winding road factor (1.25 for plains, 1.35 for ghat/hilly terrain)
@@ -446,6 +515,9 @@ class RoadRoutingProvider {
       isLiveVerified: false,
       isLimitedGraph: false,
       isEstimate: true,
+      estimationMethod: 'haversine_winding_factor_model',
+      assumptions: ['Haversine straight-line multiplied by 1.28 road winding factor', '55 km/h average speed model'],
+      retrievalTimestamp: null,
       routingLimitation: orig.lat === null || dest.lat === null
         ? 'Coordinates unavailable for one or both endpoints; distance and duration are modeled estimates.'
         : 'No live provider or highway graph route available; distance and duration are modeled estimates.',
@@ -595,8 +667,29 @@ class RoadRoutingProvider {
         }
 
         try {
-          const res = await this.getRoute(fromLoc, toLoc, options);
-          if (res.status === 'UNAVAILABLE' || res.distanceKm === null) {
+          let res = null;
+          const maxRetries = options.maxRetries || 2;
+          for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+              res = await this.getRoute(fromLoc, toLoc, options);
+              if (res && res.status !== 'UNAVAILABLE' && res.distanceKm !== null) {
+                break;
+              }
+              if (res && res.status === 'UNAVAILABLE' && (res.dataSource === 'missing_coordinates' || res.dataSource === 'simulated_provider_failure')) {
+                break; // Deterministic failure, no retry
+              }
+            } catch (queryErr) {
+              if (attempt < maxRetries) {
+                const jitter = Math.floor(Math.random() * 50);
+                const backoffMs = (40 * Math.pow(2, attempt)) + jitter;
+                await new Promise(r => setTimeout(r, backoffMs));
+              } else {
+                throw queryErr;
+              }
+            }
+          }
+
+          if (!res || res.status === 'UNAVAILABLE' || res.distanceKm === null) {
             const unavailableCell = {
               status: 'UNAVAILABLE',
               distanceKm: null,
@@ -605,10 +698,10 @@ class RoadRoutingProvider {
               totalDurationMinutes: null,
               isLiveVerified: false,
               dataStatus: 'unavailable',
-              dataSource: res.dataSource || 'provider_failure',
+              dataSource: res?.dataSource || 'provider_failure',
               trafficSummary: 'Route transition unavailable from provider',
-              error: res.error || 'Provider failed to retrieve route transition',
-              retrievalTimestamp: new Date().toISOString()
+              error: res?.error || 'Provider failed to retrieve route transition',
+              retrievalTimestamp: null
             };
             matrix[i][j] = unavailableCell;
             pairCache.set(pairKey, unavailableCell);
@@ -624,7 +717,7 @@ class RoadRoutingProvider {
             dataStatus: res.dataStatus || 'estimated',
             dataSource: res.dataSource || 'geodesic_haversine_projection_model',
             trafficSummary: res.trafficSummary || 'Modeled Flow Estimate',
-            retrievalTimestamp: new Date().toISOString()
+            retrievalTimestamp: (res.isLiveVerified || res.dataStatus === 'provider_retrieved') ? (res.retrievalTimestamp || new Date().toISOString()) : null
           };
           matrix[i][j] = cell;
           pairCache.set(pairKey, cell);
@@ -641,7 +734,7 @@ class RoadRoutingProvider {
             dataSource: 'failed_route_query',
             trafficSummary: 'Route transition unavailable from provider',
             error: pairErr?.message || 'Route query failed',
-            retrievalTimestamp: new Date().toISOString()
+            retrievalTimestamp: null
           };
           matrix[i][j] = unavailableCell;
           pairCache.set(pairKey, unavailableCell);
@@ -783,7 +876,7 @@ class RoadRoutingProvider {
         dataStatus: 'estimated',
         dataSource: 'geodesic_haversine_projection_model',
         trafficSummary: 'Explicit transition fallback estimate',
-        retrievalTimestamp: new Date().toISOString()
+        retrievalTimestamp: null
       };
     }
 
@@ -892,17 +985,39 @@ function resolveMatrixCell(matrixObj, fromLoc, toLoc, options = {}) {
     }
   }
 
-  if (!options.allowFallbackEstimate) {
-    return null;
+  if (!options.allowFallbackEstimate && !options.allowEstimates) {
+    return {
+      status: 'UNAVAILABLE',
+      distanceKm: null,
+      totalDistanceKm: null,
+      durationMinutes: null,
+      totalDurationMinutes: null,
+      isLiveVerified: false,
+      dataStatus: 'unavailable',
+      dataSource: 'missing_matrix_transition',
+      trafficSummary: 'Transition unavailable without explicit estimation permission',
+      retrievalTimestamp: null
+    };
   }
 
   // Graceful Tier 4 fallback only when explicitly permitted
   const normFrom = roadRoutingProviderInstance.normalizeLocation(fromLoc);
   const normTo = roadRoutingProviderInstance.normalizeLocation(toLoc);
-  let directKm = 50;
-  if (normFrom && normTo && normFrom.lat !== null && normTo.lat !== null) {
-    directKm = haversineDistanceKm(normFrom, normTo);
+  if (!normFrom || !normTo || normFrom.lat === null || normTo.lat === null) {
+    return {
+      status: 'UNAVAILABLE',
+      distanceKm: null,
+      totalDistanceKm: null,
+      durationMinutes: null,
+      totalDurationMinutes: null,
+      isLiveVerified: false,
+      dataStatus: 'unavailable',
+      dataSource: 'missing_coordinates',
+      trafficSummary: 'Endpoints lack valid coordinates for fallback estimation',
+      retrievalTimestamp: null
+    };
   }
+  const directKm = haversineDistanceKm(normFrom, normTo);
   const roadKm = Math.max(5, Math.round(directKm * 1.28));
   const durMins = Math.max(10, Math.round((roadKm / 55) * 60));
   return {
@@ -913,8 +1028,10 @@ function resolveMatrixCell(matrixObj, fromLoc, toLoc, options = {}) {
     isLiveVerified: false,
     dataStatus: 'estimated',
     dataSource: 'geodesic_haversine_projection_model',
+    estimationMethod: 'haversine_winding_factor_model',
+    assumptions: ['Explicit transition fallback estimate with 1.28 winding factor'],
     trafficSummary: 'Matrix cell resolution fallback estimate',
-    retrievalTimestamp: new Date().toISOString()
+    retrievalTimestamp: null
   };
 }
 

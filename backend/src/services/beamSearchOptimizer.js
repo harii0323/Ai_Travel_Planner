@@ -108,13 +108,19 @@ function computeObjectiveVector(state, userProfile) {
   const stops = state.sequence;
   const userEmbedding = userProfile.semanticEmbedding;
 
-  const f1 = evaluateSubmodularExperienceUtility(stops, userEmbedding);
+  const avgPref = stops.length > 0 ? (stops.reduce((sum, s) => sum + (s.preferenceScore != null ? Number(s.preferenceScore) : (s.preferenceMatchScore != null ? Number(s.preferenceMatchScore) : 0.5)), 0) / stops.length) : 0.5;
+  const f1 = evaluateSubmodularExperienceUtility(stops, userEmbedding) * (0.5 + 0.5 * avgPref);
   const catCount = Object.keys(state.visitedCategories).length;
   const f2 = Math.min(1.0, catCount / Math.max(1, stops.length));
 
   let totalSem = 0;
   stops.forEach(s => {
-    totalSem += s.semanticScore || (s.semanticEmbedding ? calculateCosineSimilarity(userEmbedding, s.semanticEmbedding) : 0.65);
+    const pref = s.preferenceScore != null ? Number(s.preferenceScore) : (s.preferenceMatchScore != null ? Number(s.preferenceMatchScore) : null);
+    if (pref !== null) {
+      totalSem += pref;
+    } else {
+      totalSem += s.semanticScore || (s.semanticEmbedding ? calculateCosineSimilarity(userEmbedding, s.semanticEmbedding) : 0.65);
+    }
   });
   const f3 = stops.length > 0 ? (totalSem / stops.length) : 0.50;
 
@@ -232,21 +238,30 @@ function runBeamSearchOptimization({
           state.currentNode,
           cand,
           tripContext.routeTransitionMatrix,
-          tripContext.locationIndexMap
+          tripContext.locationIndexMap,
+          { allowEstimates: tripContext.allowEstimates === true }
         );
+
+        if (stepRoadKm === null) {
+          totalStatesPruned++;
+          continue; // Unavailable transition in strict mode: reject candidate immediately
+        }
 
         // Reject impossible jump transitions within a single day's sightseeing sequence (> 280 km)
         if (stepRoadKm > 280 && state.sequence.length > 0) continue;
 
         let stepTransitMinutes = null;
         if (tripContext.routeTransitionMatrix && typeof tripContext.routeTransitionMatrix.getTransition === 'function') {
-          const cell = tripContext.routeTransitionMatrix.getTransition(state.currentNode, cand);
-          if (cell && cell.durationMinutes) {
+          const cell = tripContext.routeTransitionMatrix.getTransition(state.currentNode, cand, { allowFallbackEstimate: tripContext.allowEstimates === true });
+          if (cell && cell.durationMinutes !== null && cell.dataStatus !== 'unavailable') {
             stepTransitMinutes = cell.durationMinutes;
+          } else if (cell && (cell.dataStatus === 'unavailable' || cell.durationMinutes === null) && tripContext.allowEstimates !== true) {
+            totalStatesPruned++;
+            continue; // Unavailable transition in strict mode
           }
         }
         const transit = stepTransitMinutes != null
-          ? { travelMinutes: stepTransitMinutes }
+          ? { travelMinutes: stepTransitMinutes, delayMinutes: 0 }
           : calculateTimeDependentTravelTime(stepRoadKm, state.currentTime);
         const effectiveTransitMinutes = Math.round(transit.travelMinutes * weatherCheck.transitMultiplier);
         const expectedArrival = state.currentTime + effectiveTransitMinutes;
@@ -290,7 +305,8 @@ function runBeamSearchOptimization({
           }
         ];
 
-        const nextExp = evaluateSubmodularExperienceUtility(nextStops, userProfile.semanticEmbedding);
+        const avgPref = nextStops.reduce((sum, s) => sum + (s.preferenceScore != null ? Number(s.preferenceScore) : 0.5), 0) / nextStops.length;
+        const nextExp = evaluateSubmodularExperienceUtility(nextStops, userProfile.semanticEmbedding) * (0.3 + 1.4 * avgPref);
 
         const nextCovered = new Set(state.coveredPreferences);
         (cand.tags || []).forEach(t => nextCovered.add(t));

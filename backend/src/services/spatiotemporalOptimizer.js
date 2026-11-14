@@ -175,12 +175,27 @@ function evaluateNormalizedObjectiveVector(routeStops, userProfile, tripContext 
   const routeEfficiencyScore = Math.max(50, Math.min(98, Math.round(100 - (totalDetourKm / Math.max(60, totalDetourKm * 2.5)) * 100)));
   const routeEfficiency = routeEfficiencyScore / 100;
 
+  // Authoritative road travel time & cost evaluation via evaluateRouteCost
+  let roadRouteCost = null;
+  const matrix = tripContext.routeTransitionMatrix || tripContext.matrix;
+  if (matrix) {
+    roadRouteCost = evaluateRouteCost(routeStops, {
+      ...tripContext,
+      origin: tripContext.originNode || tripContext.origin,
+      destination: tripContext.destNode || tripContext.destination
+    });
+  }
+  const isRouteInfeasible = roadRouteCost === Infinity;
+
   // Travel time & Cost
-  const totalTravelMinutes = routeStops.reduce((sum, s) => sum + Math.round((s.detourKm || 5) * 1.5), 0);
-  const travelTimeScore = Math.max(0.1, Math.min(1.0, Math.round((1.0 - totalTravelMinutes / 720) * 100) / 100));
+  const totalTravelMinutes = (roadRouteCost && Number.isFinite(roadRouteCost))
+    ? Math.round(roadRouteCost * 0.7)
+    : routeStops.reduce((sum, s) => sum + Math.round((s.detourKm || 5) * 1.5), 0);
+  const travelTimeScore = isRouteInfeasible ? 0 : Math.max(0.1, Math.min(1.0, Math.round((1.0 - totalTravelMinutes / 720) * 100) / 100));
 
   const totalCost = routeStops.reduce((sum, s) => sum + Math.round((s.detourKm || 5) * 8.5) + (s.entryFee || 25), 0);
-  const costScore = Math.max(0.1, Math.min(1.0, Math.round((1.0 - totalCost / Math.max(1000, maxBudget)) * 100) / 100));
+  const costScore = isRouteInfeasible ? 0 : Math.max(0.1, Math.min(1.0, Math.round((1.0 - totalCost / Math.max(1000, maxBudget)) * 100) / 100));
+  const effectiveRouteEfficiency = isRouteInfeasible ? 0 : routeEfficiency;
 
   // Time Window Compliance
   let idealCount = 0;
@@ -203,12 +218,13 @@ function evaluateNormalizedObjectiveVector(routeStops, userProfile, tripContext 
     normalized: {
       preferenceSatisfaction,
       experienceDiversity,
-      routeEfficiency,
+      routeEfficiency: effectiveRouteEfficiency,
       travelTimeScore,
       costScore,
       detourScore,
       timeWindowCompliance,
-      travelerComfort
+      travelerComfort,
+      isFeasible: !isRouteInfeasible
     }
   };
 }
