@@ -13,6 +13,7 @@
 
 const { scorePlace } = require('./PlaceScoringEngine');
 const { calculateHaversineDistanceKm } = require('./RouteDiscoveryEngine');
+const { roadRoutingProvider } = require('../RoadRoutingProvider');
 
 /**
  * Discovers candidate places along the forward travel corridor.
@@ -92,9 +93,20 @@ function discoverOnwardCorridorPlaces({
 function planOnwardJourney(params = {}) {
   const onwardDays = params.onwardDays || 1;
   const origin = params.origin || params.userProfile?.origin || 'Origin';
-  const originCoord = params.originCoord || params.routeInfo?.originCoordinates || { lat: 17.3850, lng: 78.4867 };
+  const rawOrigCoord = params.originCoord || params.routeInfo?.originCoordinates || (params.origin ? roadRoutingProvider.normalizeLocation(params.origin) : null);
+  const originCoord = (rawOrigCoord && Number.isFinite(Number(rawOrigCoord.lat)) && Number.isFinite(Number(rawOrigCoord.lng)))
+    ? { lat: Number(rawOrigCoord.lat), lng: Number(rawOrigCoord.lng) }
+    : null;
+
   const destination = params.destination || params.userProfile?.destinationCity || 'Destination';
-  const destinationCoord = params.destinationCoord || params.routeInfo?.destinationCoordinates || { lat: 10.0889, lng: 77.0595 };
+  const rawDestCoord = params.destinationCoord || params.routeInfo?.destinationCoordinates || (params.destination ? roadRoutingProvider.normalizeLocation(params.destination) : null);
+  const destinationCoord = (rawDestCoord && Number.isFinite(Number(rawDestCoord.lat)) && Number.isFinite(Number(rawDestCoord.lng)))
+    ? { lat: Number(rawDestCoord.lat), lng: Number(rawDestCoord.lng) }
+    : null;
+
+  if (!originCoord || !destinationCoord) {
+    return [];
+  }
   const routeWaypoints = params.routeWaypoints && params.routeWaypoints.length > 0
     ? params.routeWaypoints
     : (params.routeInfo?.waypoints || []);

@@ -240,31 +240,66 @@ function scheduleDayTimeline({
       insertLunch(stop.city || (isCorridorDay ? startLocationName : destinationCity));
     }
 
-    // Scheduled Tourist Attraction Activity: Visit duration priority hierarchy
-    let visitDuration = 60;
-    let durationSource = 'disclosed_category_estimate';
-    let isDurationEstimated = true;
-    if (stop.officialVisitDurationMinutes != null) {
-      visitDuration = Number(stop.officialVisitDurationMinutes);
-      durationSource = 'official_attraction_reported';
-      isDurationEstimated = false;
-    } else if (stop.verifiedDurationMinutes != null) {
-      visitDuration = Number(stop.verifiedDurationMinutes);
-      durationSource = 'verified_activity_catalog';
-      isDurationEstimated = false;
-    } else if (stop.estimatedVisitDurationMinutes != null) {
-      visitDuration = Number(stop.estimatedVisitDurationMinutes);
-      durationSource = 'disclosed_category_estimate';
-      isDurationEstimated = true;
-    } else if (stop.durationMinutes != null) {
-      visitDuration = Number(stop.durationMinutes);
-      durationSource = 'disclosed_category_estimate';
-      isDurationEstimated = true;
-    } else {
-      visitDuration = 60;
-      durationSource = 'disclosed_category_estimate';
-      isDurationEstimated = true;
+    // Scheduled Tourist Attraction Activity: Explicit 5-tier visit duration priority hierarchy
+    let durationSchema = {
+      value: 60,
+      unit: 'minutes',
+      source: 'disclosed_category_estimate',
+      dataStatus: 'estimated',
+      isEstimated: true,
+      confidence: 0.50
+    };
+
+    if (stop.officialVisitDurationMinutes != null && !isNaN(Number(stop.officialVisitDurationMinutes))) {
+      durationSchema = {
+        value: Number(stop.officialVisitDurationMinutes),
+        unit: 'minutes',
+        source: 'official_venue_reported',
+        dataStatus: 'verified_official',
+        isEstimated: false,
+        confidence: 1.0
+      };
+    } else if (stop.verifiedDurationMinutes != null && !isNaN(Number(stop.verifiedDurationMinutes))) {
+      durationSchema = {
+        value: Number(stop.verifiedDurationMinutes),
+        unit: 'minutes',
+        source: 'verified_activity_catalog',
+        dataStatus: 'verified_catalog',
+        isEstimated: false,
+        confidence: 0.95
+      };
+    } else if (stop.providerDurationMinutes != null && !isNaN(Number(stop.providerDurationMinutes))) {
+      durationSchema = {
+        value: Number(stop.providerDurationMinutes),
+        unit: 'minutes',
+        source: stop.provider || 'places_provider_api',
+        dataStatus: 'provider_retrieved',
+        isEstimated: false,
+        confidence: 0.85
+      };
+    } else if (stop.estimatedVisitDurationMinutes != null && !isNaN(Number(stop.estimatedVisitDurationMinutes))) {
+      durationSchema = {
+        value: Number(stop.estimatedVisitDurationMinutes),
+        unit: 'minutes',
+        source: 'disclosed_category_estimate',
+        dataStatus: 'estimated',
+        isEstimated: true,
+        confidence: 0.65
+      };
+    } else if (stop.durationMinutes != null && !isNaN(Number(stop.durationMinutes))) {
+      durationSchema = {
+        value: Number(stop.durationMinutes),
+        unit: 'minutes',
+        source: 'disclosed_category_estimate',
+        dataStatus: 'estimated',
+        isEstimated: true,
+        confidence: 0.65
+      };
     }
+
+    const visitDuration = durationSchema.value !== null ? durationSchema.value : 60;
+    const durationSource = durationSchema.source;
+    const isDurationEstimated = durationSchema.isEstimated;
 
     const stopArrivalStr = formatMinutesTo12(currentMinutes);
     const stopDepartureStr = formatMinutesTo12(currentMinutes + visitDuration);
@@ -287,7 +322,7 @@ function scheduleDayTimeline({
       place: stop.name,
       coordinates: (stop.coordinates && (stop.coordinates.lat !== 0 || stop.coordinates.lng !== 0)) ? stop.coordinates : null,
       category: stop.category || 'sightseeing',
-      taxonomyCategory: stop.taxonomyCategory || 'historical_cultural',
+      taxonomyCategory: stop.taxonomyCategory || (stop.category && stop.category !== 'sightseeing' ? stop.category : 'unknown'),
       time: `${stopArrivalStr} – ${stopDepartureStr}`,
       arrivalTime: stopArrivalStr,
       departureTime: stopDepartureStr,
@@ -296,7 +331,9 @@ function scheduleDayTimeline({
         : `${effectiveTransitMinutes} mins (${transitDistKm} km road transit)`,
       distanceKm: transitDistKm,
       durationMinutes: effectiveTransitMinutes,
-      visitDuration: `${visitDuration} mins`,
+      visitDuration: durationSchema.value !== null ? `${durationSchema.value} mins` : 'Unknown duration',
+      visitDurationMinutes: durationSchema.value,
+      visitDurationDetails: durationSchema,
       visitDurationSource: durationSource,
       isDurationEstimated,
       cost: costDisplay,
@@ -340,37 +377,62 @@ function scheduleDayTimeline({
   // 3. Drive to End Location / Hotel Check-in
   let finalDistKm = 0;
   let finalDurationMins = 0;
-  let finalTransitionStatus = 'exact_zero';
-  if (transitionMatrix) {
-    const fromPoint = stops.length > 0
-      ? stops[stops.length - 1]
-      : (startCoord ? { name: startLocationName, lat: startCoord.lat, lng: startCoord.lng } : startLocationName);
-    const toPoint = endCoord ? { name: endLocationName, lat: endCoord.lat, lng: endCoord.lng } : endLocationName;
-    const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint, { allowFallbackEstimate: routingMode === 'ALLOW_ESTIMATES' });
-    if (cell && cell.distanceKm !== null && cell.durationMinutes !== null && cell.dataStatus !== 'unavailable') {
-      finalDistKm = cell.distanceKm;
-      finalDurationMins = cell.durationMinutes;
-      finalTransitionStatus = cell.dataStatus;
-    } else if (cell && (cell.dataStatus === 'unavailable' || cell.distanceKm === null)) {
-      finalTransitionStatus = 'unavailable';
+  let finalTransitionStatus = 'unavailable';
+  let isSameLocation = false;
+
+  const fromPoint = stops.length > 0
+    ? stops[stops.length - 1]
+    : (startCoord ? { name: startLocationName, lat: startCoord.lat, lng: startCoord.lng } : startLocationName);
+  const toPoint = endCoord ? { name: endLocationName, lat: endCoord.lat, lng: endCoord.lng } : endLocationName;
+
+  if (currentCoord && endCoord) {
+    const directEndDist = calculateHaversineDistanceKm(currentCoord, endCoord);
+    if (directEndDist <= 0.05) {
+      finalDistKm = 0;
+      finalDurationMins = 0;
+      finalTransitionStatus = 'exact_zero';
+      isSameLocation = true;
     }
   }
 
-  if (finalDurationMins === 0 && finalTransitionStatus !== 'unavailable') {
-    const endDist = calculateHaversineDistanceKm(currentCoord, endCoord);
-    if (endDist > 1.0) {
-      if (routingMode !== 'STRICT_PROVIDER') {
+  if (!isSameLocation) {
+    if (transitionMatrix) {
+      const cell = resolveMatrixCell(transitionMatrix, fromPoint, toPoint, {
+        allowFallbackEstimate: routingMode === 'ALLOW_ESTIMATES',
+        routingMode
+      });
+      if (cell && cell.distanceKm !== null && cell.durationMinutes !== null && cell.dataStatus !== 'unavailable') {
+        finalDistKm = cell.distanceKm;
+        finalDurationMins = cell.durationMinutes;
+        finalTransitionStatus = cell.dataStatus;
+      } else if (cell && (cell.dataStatus === 'unavailable' || cell.distanceKm === null)) {
+        finalTransitionStatus = 'unavailable';
+        finalDistKm = null;
+        finalDurationMins = null;
+      }
+    }
+
+    if (finalTransitionStatus === 'unavailable' || (finalDistKm === null && routingMode !== 'STRICT_PROVIDER')) {
+      if (routingMode === 'ALLOW_ESTIMATES' && currentCoord && endCoord) {
+        const endDist = calculateHaversineDistanceKm(currentCoord, endCoord);
         const finalRoadType = (String(destinationCity).toLowerCase().includes('manali') || String(destinationCity).toLowerCase().includes('munnar')) ? 'hillGhat' : (isCorridorDay || endDist > 45) ? 'expressway' : (endDist > 15 ? 'stateHighway' : 'urbanCity');
         const finalTransit = calculateSegmentDrivingMinutes(currentCoord, endCoord, currentMinutes, finalRoadType);
         finalDistKm = finalTransit.distanceKm;
         finalDurationMins = finalTransit.durationMinutes;
+        finalTransitionStatus = 'estimated';
+      } else if (routingMode === 'STRICT_PROVIDER') {
+        finalDistKm = null;
+        finalDurationMins = null;
+        finalTransitionStatus = 'unavailable';
       }
     }
   }
 
-  totalDrivingKm += finalDistKm;
-  totalDrivingMinutes += finalDurationMins;
-  currentMinutes += finalDurationMins;
+  if (finalDistKm !== null) totalDrivingKm += finalDistKm;
+  if (finalDurationMins !== null) {
+    totalDrivingMinutes += finalDurationMins;
+    currentMinutes += finalDurationMins;
+  }
 
   // 4. Hotel Check-in & Evening Leisure (if arriving before 07:00 PM)
   if (currentMinutes < 19 * 60) {

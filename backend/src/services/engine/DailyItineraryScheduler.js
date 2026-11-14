@@ -170,7 +170,9 @@ async function scheduleDailyItineraries({
     try {
       const returnStartCity = destinationCity || lastDestHub;
       const returnRoute = await calculateIndependentReturnRoute(returnStartCity, origin, {
-        transportMode: userProfile.transportMode
+        transportMode: userProfile.transportMode,
+        routingMode: userProfile.routingMode || userProfile.routingPolicy || 'ALLOW_ESTIMATES',
+        routingPolicy: userProfile.routingMode || userProfile.routingPolicy || 'ALLOW_ESTIMATES'
       });
       if (returnRoute && Array.isArray(returnRoute.waypoints) && returnRoute.waypoints.length > 0) {
         returnWaypoints = returnRoute.waypoints;

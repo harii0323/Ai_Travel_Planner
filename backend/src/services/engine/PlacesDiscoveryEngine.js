@@ -5200,7 +5200,7 @@ async function discoverPlaces(params = {}, legacyUserProfile = null) {
     state: '',
     cities: [destination],
     zones: ['general_exploration'],
-    centerCoordinates: destinationCoords || { lat: 17.3850, lng: 78.4867 }
+    centerCoordinates: destinationCoords || null
   };
 
   const centerCoords = destinationCoords || destinationRegion.centerCoordinates;
@@ -5248,15 +5248,16 @@ async function discoverPlaces(params = {}, legacyUserProfile = null) {
     adventure_outdoor: [],
     spiritual_religious: [],
     historical_cultural: [],
-    coastal: []
+    coastal: [],
+    unknown: []
   };
 
   touristPlaces.forEach(p => {
-    const taxCat = p.taxonomyCategory || 'historical_cultural';
+    const taxCat = p.taxonomyCategory || 'unknown';
     if (categorizedPool[taxCat]) {
       categorizedPool[taxCat].push(p);
     } else {
-      categorizedPool.historical_cultural.push(p);
+      categorizedPool.unknown.push(p);
     }
 
     // Attach field-level provenance schema (Section 8 Static Tourism Database Provenance)
@@ -5312,7 +5313,7 @@ async function discoverPlaces(params = {}, legacyUserProfile = null) {
   mustVisitSorted.forEach(p => {
     if (!selectedKeys.has(p.placeId || p.name)) {
       selectedKeys.add(p.placeId || p.name);
-      const cat = p.taxonomyCategory || 'historical_cultural';
+      const cat = p.taxonomyCategory || 'unknown';
       categoryUsage[cat] = (categoryUsage[cat] || 0) + 1;
       diverseRankedPlaces.push(p);
     }
@@ -5326,7 +5327,7 @@ async function discoverPlaces(params = {}, legacyUserProfile = null) {
 
     for (let i = 0; i < remaining.length; i++) {
       const p = remaining[i];
-      const cat = p.taxonomyCategory || 'historical_cultural';
+      const cat = p.taxonomyCategory || 'unknown';
       const usage = categoryUsage[cat] || 0;
       // Diminishing returns penalty for repeated categories (prevents single-category domination)
       const diversityDiscount = Math.exp(-0.30 * usage);
@@ -5341,7 +5342,7 @@ async function discoverPlaces(params = {}, legacyUserProfile = null) {
     if (bestIdx >= 0) {
       const chosen = remaining.splice(bestIdx, 1)[0];
       selectedKeys.add(chosen.placeId || chosen.name);
-      const cat = chosen.taxonomyCategory || 'historical_cultural';
+      const cat = chosen.taxonomyCategory || 'unknown';
       categoryUsage[cat] = (categoryUsage[cat] || 0) + 1;
       diverseRankedPlaces.push(chosen);
     } else {
@@ -5412,7 +5413,7 @@ module.exports = {
   calculatePlaceScores,
   deduplicatePlaces,
   searchGooglePlaces,
-  classifyAttractionTaxonomy: (place) => place.taxonomyCategory || 'historical_cultural',
+  classifyAttractionTaxonomy: (place) => place.taxonomyCategory || 'unknown',
   ATTRACTION_TAXONOMY,
   SUPPORTING_SERVICES,
   VERIFIED_PLACES_DATABASE: ENRICHED_PLACES_DATABASE,

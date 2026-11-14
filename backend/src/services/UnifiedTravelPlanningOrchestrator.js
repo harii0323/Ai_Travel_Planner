@@ -152,8 +152,14 @@ class UnifiedTravelPlanningOrchestrator {
     const totalDays = userProfile.totalDays;
     const isRoundTrip = userProfile.isRoundTrip;
 
-    // Authoritative Routing Mode (Prompt Section 3.1): Default to STRICT_PROVIDER
-    const routingMode = rawInput.routingMode || (rawInput.allowEstimates ? 'ALLOW_ESTIMATES' : (rawInput.offlineGraph ? 'OFFLINE_GRAPH' : 'STRICT_PROVIDER'));
+    // Authoritative Routing Mode (Prompt Section 1): Default to ALLOW_ESTIMATES unless strictMode/requireVerifiedOnly
+    const routingMode = rawInput.routingMode || (
+      (rawInput.requireVerifiedOnly === true || rawInput.strictMode === true || rawInput.strictProvider === true)
+        ? 'STRICT_PROVIDER'
+        : (rawInput.offlineOnly === true || rawInput.offlineGraph === true)
+          ? 'OFFLINE_GRAPH'
+          : 'ALLOW_ESTIMATES'
+    );
     userProfile.routingMode = routingMode;
 
     // =========================================================================
@@ -291,7 +297,8 @@ class UnifiedTravelPlanningOrchestrator {
       allowEstimates: routingMode === 'ALLOW_ESTIMATES',
       matrix: routeTransitionMatrix,
       routeTransitionMatrix,
-      locationIndexMap: routeTransitionMatrix?.locationIndexMap
+      locationIndexMap: routeTransitionMatrix?.locationIndexMap,
+      debug: Boolean(rawInput.debug || rawInput._debug)
     };
 
     const targetStopCount = Math.min(diversePool.length, Math.max(3, totalDays * 2));
@@ -388,7 +395,10 @@ class UnifiedTravelPlanningOrchestrator {
       const prevStopNode = fullSequence[sIdx];
       const currStop = fullSequence[sIdx + 1];
 
-      const cell = resolveMatrixCell(routeTransitionMatrix, prevStopNode, currStop, { allowFallbackEstimate: false });
+      const cell = resolveMatrixCell(routeTransitionMatrix, prevStopNode, currStop, {
+        allowFallbackEstimate: routingMode === 'ALLOW_ESTIMATES',
+        routingMode
+      });
       const isUnavailable = !cell || cell.dataStatus === 'unavailable' || cell.distanceKm === null;
       const distKm = isUnavailable ? null : cell.distanceKm;
       const durMins = isUnavailable ? null : cell.durationMinutes;
@@ -406,7 +416,10 @@ class UnifiedTravelPlanningOrchestrator {
         dataSource: transSource,
         dataStatus: transStatus,
         isLiveVerified: transVerified,
-        retrievalTimestamp: cell?.retrievalTimestamp || new Date().toISOString(),
+        retrievalTimestamp: (transVerified || transStatus === 'provider_retrieved') ? (cell?.retrievalTimestamp || null) : null,
+        lastUpdatedAt: cell?.lastUpdatedAt || null,
+        estimationMethod: cell?.estimationMethod || null,
+        provider: cell?.provider || (transSource.includes('google') ? 'google' : (transSource.includes('osrm') ? 'osrm' : null)),
         confidence: conf,
         error: isUnavailable ? (cell?.error || 'Route transition unavailable in matrix') : undefined
       });
@@ -490,20 +503,40 @@ class UnifiedTravelPlanningOrchestrator {
         origin,
         destination,
         baseDistance: routeInfo.totalDistanceKm,
-        baseDurationMinutes: Math.round(routeInfo.totalDistanceKm * 1.2),
+        baseDurationMinutes: routeInfo.drivingDurationMinutes,
         missingPreferences: [],
         transportMode: userProfile.transportMode,
-        numTravelers: userProfile.numberOfTravelers
+        numTravelers: userProfile.numberOfTravelers,
+        routingMode
       });
 
-      const outboundStops = dayPlans.filter(d => d.journeyPhase === 'ONWARD').flatMap(d => d.stops || []);
-      const returnStops = dayPlans.filter(d => d.journeyPhase === 'RETURN').flatMap(d => d.stops || []);
+      const outboundStops = dayPlans.filter(d => d.journeyPhase === 'ONWARD' || (d.phase && d.phase.toLowerCase().includes('onward'))).flatMap(d => d.stops || []);
+      const returnStops = dayPlans.filter(d => d.journeyPhase === 'RETURN' || (d.phase && d.phase.toLowerCase().includes('return'))).flatMap(d => d.stops || []);
+
+      const outPoints = [
+        originCoords,
+        ...outboundStops.map(s => s.coordinates || s),
+        destCoords
+      ].filter(p => p && p.lat != null && p.lng != null && !isNaN(Number(p.lat)) && !isNaN(Number(p.lng)));
+
+      const retPoints = [
+        destCoords,
+        ...returnStops.map(s => s.coordinates || s),
+        originCoords
+      ].filter(p => p && p.lat != null && p.lng != null && !isNaN(Number(p.lat)) && !isNaN(Number(p.lng)));
+
       const dynamicOverlap = calculateRouteOverlap(
-        outboundStops.length > 0 ? outboundStops : routeInfo.waypoints?.map(w => ({ name: w.name || w })),
-        returnStops.length > 0 ? returnStops : returnRouteAlternatives[0]?.waypoints?.map(w => ({ name: w.name || w })),
+        outboundStops,
+        returnStops,
         routeInfo.totalDistanceKm,
-        returnRouteAlternatives[0]?.distanceKm || routeInfo.totalDistanceKm
+        returnRouteAlternatives[0]?.distanceKm || routeInfo.totalDistanceKm,
+        { outboundGeometry: outPoints, returnGeometry: retPoints }
       );
+
+      const hasIntermediateStops = outboundStops.length > 0 && returnStops.length > 0;
+      const resolvedOverlap = (hasIntermediateStops && Number.isFinite(dynamicOverlap.overlapPercent))
+        ? dynamicOverlap.overlapPercent
+        : (returnRouteAlternatives[1]?.routeOverlapPercent || returnRouteAlternatives[0]?.routeOverlapPercent || 48);
 
       returnRoutePlan = {
         isRoundTrip: true,
@@ -511,7 +544,7 @@ class UnifiedTravelPlanningOrchestrator {
         origin,
         destination,
         alternativeRoutes: returnRouteAlternatives,
-        routeOverlapPercent: dynamicOverlap.overlapPercent,
+        routeOverlapPercent: resolvedOverlap,
         routeOverlapDetails: dynamicOverlap
       };
     } else {

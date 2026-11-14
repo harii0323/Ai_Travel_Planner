@@ -188,21 +188,24 @@ function runBeamSearchOptimization({
   maxStops = 5
 }) {
   const startTime = Date.now();
-  const startMinutes = tripContext.startMinutes || 420; // 07:00 AM
-  const totalBudget = Number(tripContext.budget || userProfile.budget || 25000);
+  const startMinutes = tripContext.startMinutes !== undefined ? tripContext.startMinutes : (tripContext.departureMinutes !== undefined ? tripContext.departureMinutes : 480);
+  const rawBudget = tripContext.budget !== undefined ? tripContext.budget : (userProfile.budget !== undefined ? userProfile.budget : null);
+  const totalBudget = (rawBudget !== null && !isNaN(Number(rawBudget)) && Number(rawBudget) > 0) ? Number(rawBudget) : null;
   const weatherCondition = tripContext.weatherCondition || 'Clear';
 
+  const originCoords = tripContext.originCoord || userProfile.originCoordinates || null;
   const originNode = {
     name: tripContext.origin || userProfile.origin || 'Origin',
-    coordinates: tripContext.originCoord || { lat: 17.3850, lng: 78.4867 }
+    coordinates: originCoords
   };
 
+  const totalTripDays = Math.max(1, tripContext.tripDurationDays || userProfile.totalDays || 2);
   const rootState = {
     currentNode: originNode,
     currentDay: 1,
     currentTime: startMinutes,
-    remainingTime: Math.min(720, (tripContext.tripDurationDays || userProfile.totalDays || 3) * 360),
-    remainingBudget: totalBudget,
+    remainingTime: totalTripDays * 600,
+    remainingBudget: totalBudget !== null ? totalBudget : Infinity,
     initialBudget: totalBudget,
     visitedPOIs: new Set(),
     visitedCategories: {},
@@ -264,23 +267,34 @@ function runBeamSearchOptimization({
           ? { travelMinutes: stepTransitMinutes, delayMinutes: 0 }
           : calculateTimeDependentTravelTime(stepRoadKm, state.currentTime);
         const effectiveTransitMinutes = Math.round(transit.travelMinutes * weatherCheck.transitMultiplier);
-        const expectedArrival = state.currentTime + effectiveTransitMinutes;
+        let currentDay = state.currentDay;
+        let expectedArrival = state.currentTime + effectiveTransitMinutes;
 
-        // 2. Time-window opening/closing feasibility check
+        // 2. Multi-day day boundary check
         const openMin = cand.openMinutes !== undefined ? cand.openMinutes : 360;
         const closeMin = cand.closeMinutes !== undefined ? cand.closeMinutes : 1140;
 
-        if (expectedArrival + 15 > closeMin) continue; // Arrives after closing
+        if (expectedArrival + 15 > closeMin || expectedArrival > 1170) {
+          // If we have remaining days in the trip, advance to next day morning (08:00 AM = 480 mins)
+          if (currentDay < totalTripDays) {
+            currentDay++;
+            expectedArrival = 480 + Math.min(120, effectiveTransitMinutes % 180);
+          } else {
+            continue; // Final day cannot advance: arrives after closing
+          }
+        }
+
+        if (expectedArrival + 15 > closeMin) continue;
 
         const duration = cand.durationMinutes || 60;
         const departureFromStop = Math.max(expectedArrival, openMin) + duration;
-        const timeConsumed = (departureFromStop - state.currentTime);
+        const timeConsumed = (departureFromStop - (currentDay === state.currentDay ? state.currentTime : 480));
 
         if (state.remainingTime < timeConsumed) continue; // Exceeds time budget
 
         // 3. Financial budget feasibility
         const stopCost = Math.round(stepRoadKm * 6.5) + (cand.entryFee || 25);
-        if (state.remainingBudget < stopCost) continue;
+        if (totalBudget !== null && state.remainingBudget < stopCost) continue;
 
         totalStatesEvaluated++;
 
@@ -314,7 +328,7 @@ function runBeamSearchOptimization({
 
         const newState = {
           currentNode: cand,
-          currentDay: state.currentDay,
+          currentDay,
           currentTime: departureFromStop,
           remainingTime: state.remainingTime - timeConsumed,
           remainingBudget: state.remainingBudget - stopCost,

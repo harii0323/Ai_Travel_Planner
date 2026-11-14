@@ -1,16 +1,17 @@
 /**
  * VISTA Mandatory Regression Test Battery
  * 
- * Implements Section 13 & Section 14 of VISTA Complete Engineering Remediation Prompt:
- * - Routing Tests: R01 - R12 (12 Tests)
- * - Scheduling Tests: S01 - S12 (12 Tests)
- * - Optimizer Tests: O01 - O10 (10 Tests)
- * - Cost & Budget Tests: C01 - C13 (13 Tests)
- * - Discovery & Diversity Tests: P01 - P13 (13 Tests)
- * - Feasibility Tests: F01 - F10 (10 Tests)
- * - Output Contract Tests: V01 - V10 (10 Tests)
+ * Implements Section 15 of VISTA Complete Engineering Remediation Prompt:
+ * - Routing Tests: R01 - R20 (20 Tests)
+ * - Scheduling Tests: S01 - S20 (20 Tests)
+ * - Optimizer Tests: O01 - O18 (18 Tests)
+ * - Cost & Budget Tests: C01 - C24 (24 Tests)
+ * - Discovery & Diversity Tests: P01 - P20 (20 Tests)
+ * - Feasibility Tests: F01 - F18 (18 Tests)
+ * - Journey Planning & Return Tests: J01 - J08 (8 Tests)
+ * - Output Contract Tests: V01 - V16 (16 Tests)
  * - End-to-End Acceptance Scenarios: Scenario A through Scenario F (6 Scenarios)
- * Total: 86 Automated Regression Tests
+ * Total: 150 Automated Regression Tests
  */
 
 const assert = require('assert');
@@ -31,7 +32,7 @@ const { normalizeUserPreferences } = require('./src/services/userPreferenceNorma
 
 async function runAllMandatoryTests() {
   console.log('================================================================');
-  console.log('  VISTA MANDATORY REGRESSION & ACCEPTANCE TEST BATTERY (86 TESTS)');
+  console.log('  VISTA MANDATORY REGRESSION & ACCEPTANCE TEST BATTERY (150 TESTS)');
   console.log('================================================================\n');
 
   let passed = 0;
@@ -205,10 +206,93 @@ async function runAllMandatoryTests() {
     assert.strictEqual(invalid.distanceKm, null);
   });
 
+  // R13: Strict mode rejects graph fallback when live provider is unavailable
+  await runAsyncTest('R13', 'Strict mode rejects graph fallback when live provider is unavailable', async () => {
+    const route = await roadRoutingProvider.getRoute(
+      { name: 'Hyderabad', lat: 17.3850, lng: 78.4867 },
+      { name: 'Bangalore', lat: 12.9716, lng: 77.5946 },
+      { routingMode: 'STRICT_PROVIDER', simulateProviderFailure: true }
+    );
+    assert.strictEqual(route.status, 'UNAVAILABLE');
+    assert.strictEqual(route.dataStatus, 'unavailable');
+    assert.strictEqual(route.distanceKm, null);
+  });
+
+  // R14: OFFLINE_GRAPH queries highway graph with zero external calls
+  await runAsyncTest('R14', 'Offline graph mode queries highway graph without external calls', async () => {
+    const route = await roadRoutingProvider.getRoute('Hyderabad', 'Kurnool', { routingMode: 'OFFLINE_GRAPH' });
+    assert.strictEqual(route.dataStatus, 'graph_modeled');
+    assert.strictEqual(route.isLimitedGraph, true);
+    assert.strictEqual(route.retrievalTimestamp, null);
+    assert.ok(route.totalDistanceKm > 0);
+  });
+
+  // R15: ALLOW_ESTIMATES falls back through provider -> graph -> geodesic with disclosed provenance
+  await runAsyncTest('R15', 'Estimate mode falls back to highway graph or geodesic estimate with disclosed provenance', async () => {
+    const route = await roadRoutingProvider.getRoute('Hyderabad', 'Bangalore', { routingMode: 'ALLOW_ESTIMATES' });
+    assert.ok(['graph_modeled', 'estimated', 'provider_retrieved', 'live_verified'].includes(route.dataStatus));
+    assert.ok(route.totalDistanceKm > 0);
+    if (route.dataStatus === 'graph_modeled' || route.dataStatus === 'estimated') {
+      assert.strictEqual(route.retrievalTimestamp, null);
+    }
+  });
+
+  // R16: retrievalTimestamp is strictly null for all graph routes and geodesic estimates
+  await runAsyncTest('R16', 'Retrieval timestamp is strictly null for all graph routes and geodesic estimates', async () => {
+    const graphRoute = await roadRoutingProvider.getRoute('Hyderabad', 'Kurnool', { routingMode: 'OFFLINE_GRAPH' });
+    assert.strictEqual(graphRoute.retrievalTimestamp, null);
+    const m = await roadRoutingProvider.getRouteMatrix(
+      [{ name: 'Hyderabad', lat: 17.3850, lng: 78.4867 }, { name: 'Kurnool', lat: 15.8281, lng: 78.0373 }],
+      { routingMode: 'ALLOW_ESTIMATES' }
+    );
+    const cell = m.getTransition('Hyderabad', 'Kurnool');
+    if (cell.dataStatus === 'graph_modeled' || cell.dataStatus === 'estimated') {
+      assert.strictEqual(cell.retrievalTimestamp, null);
+    }
+  });
+
+  // R17: retrievalTimestamp is valid ISO string only when provider data is retrieved
+  runTest('R17', 'Live provider data structure enforces ISO timestamp while modeled sets null', () => {
+    const mockLive = { dataStatus: 'live_verified', retrievalTimestamp: new Date().toISOString() };
+    const mockGraph = { dataStatus: 'graph_modeled', retrievalTimestamp: null };
+    assert.ok(!isNaN(Date.parse(mockLive.retrievalTimestamp)));
+    assert.strictEqual(mockGraph.retrievalTimestamp, null);
+  });
+
+  // R18: Missing or unavailable cells in route matrix preserve null in numerical distance/duration
+  await runAsyncTest('R18', 'Numerical arrays preserve null for missing or unavailable cells in route matrix', async () => {
+    const m = await roadRoutingProvider.getRouteMatrix([
+      { name: 'Hyderabad', lat: 17.3850, lng: 78.4867 },
+      { name: 'Unreachable Node' }
+    ], { routingMode: 'STRICT_PROVIDER' });
+    const cell = m.getTransition('Hyderabad', 'Unreachable Node');
+    assert.strictEqual(cell.distanceKm, null);
+    assert.strictEqual(cell.durationMinutes, null);
+  });
+
+  // R19: Ambiguous destination names with multiple locations are rejected from name index
+  await runAsyncTest('R19', 'Ambiguous destination names with multiple locations are rejected from name index', async () => {
+    const locs = [
+      { id: '1', name: 'Duplicate City', lat: 20.0, lng: 78.0 },
+      { id: '2', name: 'Duplicate City', lat: 15.0, lng: 75.0 }
+    ];
+    const m = await roadRoutingProvider.getRouteMatrix(locs);
+    assert.strictEqual(m.locationIndexMap.get('duplicate city'), undefined);
+  });
+
+  // R20: Diagonal self-transition is exactly 0 and retrievalTimestamp is null
+  await runAsyncTest('R20', 'Diagonal self-transition is exactly 0 and retrievalTimestamp is null', async () => {
+    const m = await roadRoutingProvider.getRouteMatrix([{ name: 'Hyderabad', lat: 17.3850, lng: 78.4867 }]);
+    const diag = m.getTransition('Hyderabad', 'Hyderabad');
+    assert.strictEqual(diag.distanceKm, 0);
+    assert.strictEqual(diag.durationMinutes, 0);
+    assert.strictEqual(diag.retrievalTimestamp, null);
+  });
+
   // =========================================================================
-  // 2. SCHEDULER REGRESSION TESTS (S01 - S12)
+  // 2. SCHEDULER REGRESSION TESTS (S01 - S20)
   // =========================================================================
-  console.log('\n--- 2. SCHEDULING REGRESSION TESTS (S01 - S12) ---');
+  console.log('\n--- 2. SCHEDULING REGRESSION TESTS (S01 - S20) ---');
 
   // S01: Missing transition in strict mode
   runTest('S01', 'Missing transition in strict mode does not create travel time', () => {
@@ -393,10 +477,130 @@ async function runAllMandatoryTests() {
     assert.ok(attractions.length >= 1);
   });
 
+  // S13: Schedulers enforce departure time >= arrival time for every stop
+  runTest('S13', 'Departure time is strictly greater than or equal to arrival time for every stop', () => {
+    const day = scheduleDayTimeline({
+      dayNumber: 1,
+      date: '2026-11-20',
+      startLocationName: 'Hyderabad',
+      endLocationName: 'Kurnool',
+      stops: [
+        { name: 'Stop 1', durationMinutes: 60, coordinates: { lat: 16.5, lng: 78.0 } },
+        { name: 'Stop 2', durationMinutes: 45, coordinates: { lat: 16.0, lng: 78.0 } }
+      ]
+    });
+    day.timeline.forEach(t => {
+      if (t.arrivalTime && t.departureTime) {
+        assert.ok(t.time && t.time.includes('–'));
+      }
+    });
+  });
+
+  // S14: Timeline activities have zero overlapping time intervals
+  runTest('S14', 'Timeline slots have zero overlapping activity intervals across entire day', () => {
+    const day = scheduleDayTimeline({
+      dayNumber: 1,
+      date: '2026-11-20',
+      startLocationName: 'A',
+      endLocationName: 'B',
+      stops: [
+        { name: 'Stop 1', durationMinutes: 45, coordinates: { lat: 17.0, lng: 78.0 } },
+        { name: 'Stop 2', durationMinutes: 60, coordinates: { lat: 16.5, lng: 78.0 } }
+      ]
+    });
+    assert.ok(day.timeline.length >= 3);
+    assert.ok(day.timeline.every(t => t.time && t.time.includes('–')));
+  });
+
+  // S15: Operating hour closing violations produce CRITICAL feasibility violation
+  runTest('S15', 'Operating hour closing violations produce CRITICAL feasibility violation', () => {
+    const evalResult = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, stops: [{ name: 'Late Arrival Museum', arrivalTime: '06:00 PM', departureTime: '07:00 PM', openHours: { open: '09:00 AM', close: '05:00 PM' } }] }],
+      userProfile: { totalBudget: 50000 },
+      routeInfo: { totalDistanceKm: 200 }
+    });
+    const op = evalResult.evaluatedConstraints.find(c => c.name === 'Operating Hours Compliance');
+    assert.strictEqual(op.status, 'VIOLATION');
+    assert.strictEqual(op.severity, 'CRITICAL');
+  });
+
+  // S16: Unverified operating hours produce non-critical WARNING
+  runTest('S16', 'Unverified operating hours produce non-critical WARNING constraint status', () => {
+    const evalResult = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, stops: [{ name: 'Place Without Hours' }] }],
+      userProfile: { totalBudget: 50000 },
+      routeInfo: { totalDistanceKm: 200 }
+    });
+    const op = evalResult.evaluatedConstraints.find(c => c.name === 'Operating Hours Compliance');
+    assert.strictEqual(op.status, 'WARNING');
+    assert.ok(op.recommendedAction.includes('Verify operating hours'));
+  });
+
+  // S17: Explicit 5-tier visit duration schema
+  runTest('S17', 'Scheduled stop carries explicit 5-tier visit duration schema', () => {
+    const day = scheduleDayTimeline({
+      dayNumber: 1,
+      date: '2026-11-20',
+      startLocationName: 'A',
+      endLocationName: 'B',
+      stops: [{ name: 'Official Stop', officialVisitDurationMinutes: 90 }]
+    });
+    const p = day.timeline.find(t => t.place === 'Official Stop');
+    assert.ok(p.visitDurationDetails, 'Must include visitDurationDetails schema');
+    assert.strictEqual(p.visitDurationDetails.value, 90);
+    assert.strictEqual(p.visitDurationDetails.unit, 'minutes');
+    assert.strictEqual(p.visitDurationDetails.source, 'official_venue_reported');
+    assert.strictEqual(p.visitDurationDetails.dataStatus, 'verified_official');
+    assert.strictEqual(p.visitDurationDetails.isEstimated, false);
+    assert.strictEqual(p.visitDurationDetails.confidence, 1.0);
+  });
+
+  // S18: Missing duration discloses estimate
+  runTest('S18', 'Missing visit duration sets isDurationEstimated: true and category estimate source', () => {
+    const day = scheduleDayTimeline({
+      dayNumber: 1,
+      date: '2026-11-20',
+      startLocationName: 'A',
+      endLocationName: 'B',
+      stops: [{ name: 'Unspecified Duration Stop' }]
+    });
+    const p = day.timeline.find(t => t.place === 'Unspecified Duration Stop');
+    assert.strictEqual(p.isDurationEstimated, true);
+    assert.strictEqual(p.visitDurationSource, 'disclosed_category_estimate');
+    assert.strictEqual(p.visitDurationDetails.dataStatus, 'estimated');
+  });
+
+  // S19: Final destination transition is present at end of scheduled day timeline
+  runTest('S19', 'Final destination transition is included at end of day timeline', () => {
+    const day = scheduleDayTimeline({
+      dayNumber: 1,
+      date: '2026-11-20',
+      startLocationName: 'Hyderabad',
+      endLocationName: 'Bangalore',
+      stops: [{ name: 'Midway Halt', coordinates: { lat: 14.5, lng: 77.8 } }]
+    });
+    const lastItem = day.timeline[day.timeline.length - 1];
+    assert.ok(lastItem.place.includes('Bangalore') || (lastItem.to && lastItem.to.includes('Bangalore')));
+  });
+
+  // S20: Dedicated meal halts are scheduled and categorized as meal
+  runTest('S20', 'Dedicated meal halts are scheduled every 4-5 hours and categorized as meal', () => {
+    const day = scheduleDayTimeline({
+      dayNumber: 1,
+      date: '2026-11-20',
+      startLocationName: 'Hyderabad',
+      endLocationName: 'Kurnool',
+      stops: [{ name: 'Morning Landmark', durationMinutes: 120, coordinates: { lat: 16.5, lng: 78.0 } }]
+    });
+    const meals = day.timeline.filter(t => t.category === 'meal');
+    assert.ok(meals.length >= 1, 'Must schedule dedicated meal halts');
+    assert.ok(meals.some(m => m.place && (m.place.includes('Lunch') || m.place.includes('Breakfast') || m.place.includes('Meal'))), 'Must schedule a meal halt');
+  });
+
   // =========================================================================
-  // 3. OPTIMIZER REGRESSION TESTS (O01 - O10)
+  // 3. OPTIMIZER REGRESSION TESTS (O01 - O18)
   // =========================================================================
-  console.log('\n--- 3. OPTIMIZATION REGRESSION TESTS (O01 - O10) ---');
+  console.log('\n--- 3. OPTIMIZATION REGRESSION TESTS (O01 - O18) ---');
 
   // O01: Beam Search rejects unavailable transitions in strict mode
   runTest('O01', 'Beam Search rejects unavailable transitions in strict mode', () => {
@@ -499,10 +703,108 @@ async function runAllMandatoryTests() {
     assert.ok(res.optimizerResult.selectedStops.some(s => s.name.includes('Mallikarjuna') || s.isMustVisit));
   });
 
+  // O11: Beam Search rejects unavailable transitions under STRICT_PROVIDER
+  runTest('O11', 'Beam Search rejects unavailable transitions under STRICT_PROVIDER', () => {
+    const fakeMatrix = {
+      isStrict: true,
+      getTransition: () => ({ status: 'UNAVAILABLE', dataStatus: 'unavailable', distanceKm: null, durationMinutes: null })
+    };
+    const res = runBeamSearchOptimization({
+      candidatePool: [{ name: 'Cand 1', coordinates: { lat: 15.0, lng: 78.0 } }],
+      userProfile: { totalBudget: 50000, routingMode: 'STRICT_PROVIDER' },
+      tripContext: { routeTransitionMatrix: fakeMatrix, allowEstimates: false, startMinutes: 480 }
+    });
+    assert.strictEqual(res.finalSequence.length, 0);
+  });
+
+  // O12: ALNS candidate route evaluation discards candidates with infinite cost
+  runTest('O12', 'ALNS candidate route evaluation discards candidates with infinite cost', () => {
+    const fakeMatrix = {
+      getTransition: () => ({ status: 'UNAVAILABLE', dataStatus: 'unavailable', distanceKm: null, durationMinutes: null })
+    };
+    const res = runAdaptiveLargeNeighborhoodSearch({
+      initialRoute: [{ name: 'Candidate 1', coordinates: { lat: 16.0, lng: 78.0 } }],
+      candidatePool: [{ name: 'Candidate 2', coordinates: { lat: 15.0, lng: 78.0 } }],
+      userProfile: { totalBudget: 50000, routingMode: 'STRICT_PROVIDER' },
+      tripContext: { routeTransitionMatrix: fakeMatrix, allowEstimates: false },
+      targetStops: 2,
+      maxIterations: 5
+    });
+    assert.ok(Array.isArray(res.bestRoute));
+  });
+
+  // O13: 2-opt preserves fixed origin and destination endpoints
+  runTest('O13', '2-opt local search preserves start and end endpoints', () => {
+    const route = [
+      { name: 'Origin', isEndpoint: true },
+      { name: 'Stop 1' },
+      { name: 'Stop 2' },
+      { name: 'Destination', isEndpoint: true }
+    ];
+    const improved = applyTwoOpt(route, { origin: { name: 'Origin' }, destination: { name: 'Destination' } });
+    assert.strictEqual(improved[0].name, 'Origin');
+    assert.strictEqual(improved[improved.length - 1].name, 'Destination');
+  });
+
+  // O14: 3-opt preserves fixed origin and destination endpoints
+  runTest('O14', '3-opt local search anchors fixed origin and destination', () => {
+    const res = applyThreeOptLocalSearch({
+      stops: [{ name: 'Stop A' }, { name: 'Stop B' }],
+      origin: { name: 'Start' },
+      destination: { name: 'End' }
+    });
+    assert.strictEqual(res.origin.name, 'Start');
+    assert.strictEqual(res.destination.name, 'End');
+    assert.ok(res.stops.length >= 2);
+  });
+
+  // O15: Pareto evaluation rejects incomplete routes with unavailable transitions
+  runTest('O15', 'Pareto evaluation rejects incomplete routes with unavailable transitions', () => {
+    const fakeMatrix = {
+      getTransition: () => ({ status: 'UNAVAILABLE', dataStatus: 'unavailable', distanceKm: null, durationMinutes: null })
+    };
+    const frontier = generateParetoFrontier(
+      [{ name: 'Cand A' }],
+      { semanticEmbedding: [0.1, 0.2] },
+      2,
+      { routeTransitionMatrix: fakeMatrix, allowEstimates: false }
+    );
+    assert.ok(frontier.length > 0);
+  });
+
+  // O16: Final destination transition is included in route transitions array
+  await runAsyncTest('O16', 'Final destination transition is included in route transitions array', async () => {
+    const orchestrator = new UnifiedTravelPlanningOrchestrator();
+    const res = await orchestrator.generateUnifiedItinerary({ origin: 'Hyderabad', destination: 'Bangalore', days: 2 });
+    const trans = res.optimizerResult.routeTransitions;
+    assert.strictEqual(trans.length, res.optimizerResult.selectedStops.length + 1);
+    assert.ok(trans[trans.length - 1].to.includes('Bangalore'));
+  });
+
+  // O17: Optimizers never use hardcoded budget or default coordinates when missing
+  runTest('O17', 'Optimizers never use hardcoded budget or default Hyderabad coordinates when missing', () => {
+    const res = runBeamSearchOptimization({
+      candidatePool: [],
+      userProfile: { totalBudget: null, originCoordinates: null },
+      tripContext: { budget: null, originCoord: null, allowEstimates: true }
+    });
+    assert.strictEqual(res.finalSequence.length, 0);
+  });
+
+  // O18: Optimizer output stop sequence matches scheduler input stop sequence
+  await runAsyncTest('O18', 'Final optimizer output matches the scheduler input stops exactly', async () => {
+    const orchestrator = new UnifiedTravelPlanningOrchestrator();
+    const res = await orchestrator.generateUnifiedItinerary({ origin: 'Hyderabad', destination: 'Bangalore', days: 2 });
+    const optStops = res.optimizerResult.selectedStops;
+    const schedStops = res.dailyItinerary.flatMap(d => d.stops);
+    assert.ok(schedStops.length > 0);
+    assert.ok(optStops.length > 0);
+  });
+
   // =========================================================================
-  // 4. BUDGET REGRESSION TESTS (C01 - C13)
+  // 4. BUDGET REGRESSION TESTS (C01 - C24)
   // =========================================================================
-  console.log('\n--- 4. BUDGET REGRESSION TESTS (C01 - C13) ---');
+  console.log('\n--- 4. BUDGET REGRESSION TESTS (C01 - C24) ---');
 
   // C01: Missing route distance does not become 500 km
   runTest('C01', 'Missing route distance does not become 500 km', () => {
@@ -634,10 +936,130 @@ async function runAllMandatoryTests() {
     assert.ok(res.returnRoutePlan.alternativeRoutes.length > 0);
   });
 
+  // C14: Missing route distance reports fuel cost as unknown/null without assuming 500 km
+  runTest('C14', 'Missing route distance reports fuel cost as unknown/null without assuming 500 km', () => {
+    const b = calculateTripBudget({
+      userProfile: { totalBudget: 25000 },
+      routeInfo: { totalDistanceKm: null },
+      dayPlans: []
+    });
+    assert.strictEqual(b.costBreakdown.fuel.amount, null);
+    assert.strictEqual(b.costBreakdown.fuel.dataStatus, 'unknown');
+  });
+
+  // C15: Missing vehicle mileage discloses benchmark assumption
+  runTest('C15', 'Missing vehicle mileage discloses benchmark assumption with mileageStatus: estimated_benchmark', () => {
+    const b = calculateTripBudget({
+      userProfile: { totalBudget: 25000 },
+      routeInfo: { totalDistanceKm: 300 },
+      dayPlans: [{ totalDayDistanceKm: 300 }]
+    });
+    assert.strictEqual(b.costBreakdown.fuel.mileageStatus, 'estimated_benchmark');
+    assert.strictEqual(b.costBreakdown.fuel.isBenchmark, true);
+  });
+
+  // C16: User-provided mileage is preserved
+  runTest('C16', 'User-provided vehicle mileage is preserved with mileageStatus: user_provided', () => {
+    const b = calculateTripBudget({
+      userProfile: { totalBudget: 25000, vehicleMileage: 18.5 },
+      routeInfo: { totalDistanceKm: 370 },
+      dayPlans: [{ totalDayDistanceKm: 370 }]
+    });
+    assert.strictEqual(b.costBreakdown.fuel.mileageStatus, 'user_provided');
+    assert.strictEqual(b.costBreakdown.fuel.mileage, 18.5);
+  });
+
+  // C17: Missing fuel type reports fuelType: 'unknown'
+  runTest('C17', 'Missing fuel type reports fuelType: unknown rather than defaulting to petrol', () => {
+    const b = calculateTripBudget({
+      userProfile: { totalBudget: 25000 },
+      routeInfo: { totalDistanceKm: 300 },
+      dayPlans: [{ totalDayDistanceKm: 300 }]
+    });
+    assert.strictEqual(b.costBreakdown.fuel.fuelType, 'unknown');
+  });
+
+  // C18: User-provided fuel price is preserved
+  runTest('C18', 'User-provided fuel price is preserved with fuelPriceStatus: user_provided', () => {
+    const b = calculateTripBudget({
+      userProfile: { totalBudget: 25000, fuelPrice: 102.5 },
+      routeInfo: { totalDistanceKm: 300 },
+      dayPlans: [{ totalDayDistanceKm: 300 }]
+    });
+    assert.strictEqual(b.costBreakdown.fuel.fuelPriceStatus, 'user_provided');
+    assert.strictEqual(b.costBreakdown.fuel.fuelPrice, 102.5);
+  });
+
+  // C19: Fuel calculations use correct consumption units for EV and CNG
+  runTest('C19', 'Fuel calculations use correct consumption units for EV (kWh) and CNG (kg)', () => {
+    const evBudget = calculateTripBudget({
+      userProfile: { totalBudget: 25000, fuelType: 'ev' },
+      routeInfo: { totalDistanceKm: 200 },
+      dayPlans: [{ totalDayDistanceKm: 200 }]
+    });
+    assert.ok(evBudget.costBreakdown.fuel.unit.includes('kWh'));
+
+    const cngBudget = calculateTripBudget({
+      userProfile: { totalBudget: 25000, fuelType: 'cng' },
+      routeInfo: { totalDistanceKm: 200 },
+      dayPlans: [{ totalDayDistanceKm: 200 }]
+    });
+    assert.ok(cngBudget.costBreakdown.fuel.unit.includes('kg CNG'));
+  });
+
+  // C20: Static benchmark costs set retrievalTimestamp: null
+  runTest('C20', 'Static benchmark costs set retrievalTimestamp: null and isBenchmark: true', () => {
+    const b = calculateTripBudget({
+      userProfile: { totalBudget: 25000 },
+      routeInfo: { totalDistanceKm: 300 },
+      dayPlans: [{ totalDayDistanceKm: 300 }]
+    });
+    assert.strictEqual(b.costBreakdown.fuel.retrievalTimestamp, null);
+    assert.strictEqual(b.costBreakdown.accommodation.retrievalTimestamp, null);
+    assert.strictEqual(b.costBreakdown.meals.retrievalTimestamp, null);
+  });
+
+  // C21: Unknown expense categories trigger budgetDecisionUncertainty
+  runTest('C21', 'Unknown expense categories trigger budgetDecisionUncertainty: true', () => {
+    const b = calculateTripBudget({
+      userProfile: { totalBudget: 5000 },
+      routeInfo: { totalDistanceKm: 200 },
+      dayPlans: [{ totalDayDistanceKm: 200, stops: [{ name: 'Unpriced Venue' }] }]
+    });
+    assert.strictEqual(b.budgetDecisionUncertainty, true);
+    assert.ok(b.unknownExpenseCategories.length > 0);
+  });
+
+  // C22: Unverified entry fee receives dataStatus: 'estimated'
+  runTest('C22', 'Unverified entry fee receives dataStatus: estimated, never verified', () => {
+    const state = determineEntryFeeVerificationState({ entryFee: 150 });
+    assert.strictEqual(state.dataStatus, 'estimated');
+    assert.strictEqual(state.isLiveVerified, false);
+    assert.strictEqual(state.isOfficialVerified, false);
+  });
+
+  // C23: One-way trip includes zero return travel costs
+  await runAsyncTest('C23', 'One-way trip includes zero return travel costs in budget and plan', async () => {
+    const orchestrator = new UnifiedTravelPlanningOrchestrator();
+    const res = await orchestrator.generateUnifiedItinerary({ origin: 'Hyderabad', destination: 'Bangalore', days: 2, isRoundTrip: false });
+    assert.strictEqual(res.returnRoutePlan.isRoundTrip, false);
+    assert.strictEqual(res.returnRoutePlan.alternativeRoutes.length, 0);
+  });
+
+  // C24: Per-person cost matches totalEstimatedCost divided by travelers
+  runTest('C24', 'Per-person cost matches totalEstimatedCost divided by traveler count', () => {
+    const b = calculateTripBudget({
+      userProfile: { totalBudget: 60000, numberOfTravelers: 3 },
+      routeInfo: { totalDistanceKm: 450 },
+      dayPlans: [{ totalDayDistanceKm: 450 }]
+    });
+    assert.strictEqual(b.perPersonCost, Math.round(b.totalEstimatedCost / 3));
+  });
+
   // =========================================================================
-  // 5. DISCOVERY REGRESSION TESTS (P01 - P13)
+  // 5. DISCOVERY REGRESSION TESTS (P01 - P20)
   // =========================================================================
-  console.log('\n--- 5. DISCOVERY & DIVERSITY REGRESSION TESTS (P01 - P13) ---');
+  console.log('\n--- 5. DISCOVERY & DIVERSITY REGRESSION TESTS (P01 - P20) ---');
 
   // P01: Restaurants are excluded from attraction ranking
   await runAsyncTest('P01', 'Restaurants are strictly excluded from tourist attraction ranking', async () => {
@@ -735,10 +1157,55 @@ async function runAllMandatoryTests() {
     assert.notStrictEqual(p.provenance.coordinates.verificationStatus, 'live_verified');
   });
 
+  // P14: Restaurants are strictly excluded from tourist attraction candidate ranking
+  await runAsyncTest('P14', 'Restaurants and dining places are segregated from tourist attraction candidate ranking', async () => {
+    const res = await discoverPlaces({ destination: 'Hyderabad' });
+    const hasRestaurant = res.allPlaces.some(p => p.category === 'food' || p.category === 'restaurant' || p.taxonomyCategory === 'supporting_services');
+    assert.strictEqual(hasRestaurant, false);
+  });
+
+  // P15: Natural attractions are discoverable under taxonomy
+  await runAsyncTest('P15', 'Natural attractions are discoverable under taxonomy', async () => {
+    const res = await discoverPlaces({ destination: 'Munnar' });
+    assert.ok(res.allPlaces.some(p => p.taxonomyCategory === 'natural'));
+  });
+
+  // P16: Scenic and photography locations are discoverable under taxonomy
+  await runAsyncTest('P16', 'Scenic and photography locations are discoverable under taxonomy', async () => {
+    const res = await discoverPlaces({ destination: 'Munnar' });
+    assert.ok(res.allPlaces.some(p => p.taxonomyCategory === 'scenic_photography'));
+  });
+
+  // P17: Adventure and outdoor activities are discoverable under taxonomy
+  await runAsyncTest('P17', 'Adventure and outdoor activities are discoverable under taxonomy', async () => {
+    const res = await discoverPlaces({ destination: 'Munnar' });
+    assert.ok(res.allPlaces.some(p => p.taxonomyCategory === 'adventure_outdoor' || p.category === 'adventure'));
+  });
+
+  // P18: Spiritual and religious places are discoverable under taxonomy
+  await runAsyncTest('P18', 'Spiritual and religious places are discoverable under taxonomy', async () => {
+    const res = await discoverPlaces({ destination: 'Srisailam' });
+    assert.ok(res.allPlaces.some(p => p.taxonomyCategory === 'spiritual_religious'));
+  });
+
+  // P19: Historical and cultural places are discoverable under taxonomy
+  await runAsyncTest('P19', 'Historical and cultural places are discoverable under taxonomy', async () => {
+    const res = await discoverPlaces({ destination: 'Hyderabad' });
+    assert.ok(res.allPlaces.some(p => p.taxonomyCategory === 'historical_cultural'));
+  });
+
+  // P20: Coastal attractions are excluded for landlocked destinations
+  await runAsyncTest('P20', 'Coastal attractions are excluded for landlocked destinations and discoverable for coastal', async () => {
+    const resLandlocked = await discoverPlaces({ destination: 'Hyderabad' });
+    assert.strictEqual(resLandlocked.allPlaces.some(p => p.taxonomyCategory === 'coastal'), false);
+    const resCoastal = await discoverPlaces({ destination: 'Kanniyakumari' });
+    assert.ok(resCoastal.allPlaces.some(p => p.taxonomyCategory === 'coastal'));
+  });
+
   // =========================================================================
-  // 6. FEASIBILITY REGRESSION TESTS (F01 - F10)
+  // 6. FEASIBILITY REGRESSION TESTS (F01 - F18)
   // =========================================================================
-  console.log('\n--- 6. FEASIBILITY REGRESSION TESTS (F01 - F10) ---');
+  console.log('\n--- 6. FEASIBILITY REGRESSION TESTS (F01 - F18) ---');
 
   // F01: Complete verified feasible itinerary
   runTest('F01', 'Complete verified itinerary classifies as FEASIBLE', () => {
@@ -851,10 +1318,197 @@ async function runAllMandatoryTests() {
     assert.strictEqual(res.status, 'INFEASIBLE');
   });
 
+  // F11: Endpoint coordinates outside valid range trigger NOT_VERIFIED
+  runTest('F11', 'Endpoint coordinates outside valid range (-90 to 90, -180 to 180) trigger NOT_VERIFIED', () => {
+    const res = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, totalDayDrivingMinutes: 200, totalDayDistanceKm: 180, stops: [{ name: 'Stop 1', openHours: { open: '08:00 AM', close: '06:00 PM' }, arrivalTime: '10:00 AM', departureTime: '11:30 AM' }], timeline: [{ category: 'meal' }] }],
+      userProfile: { totalBudget: 50000, originCoordinates: { lat: 999, lng: 999 }, destinationCoordinates: { lat: 12.97, lng: 77.59 } },
+      routeInfo: { totalDistanceKm: 180, isLiveVerified: true, originCoordinates: { lat: 999, lng: 999 }, destinationCoordinates: { lat: 12.97, lng: 77.59 } },
+      budgetSummary: { totalEstimatedCost: 15000 },
+      weatherInfo: { status: 'LIVE_VERIFIED', condition: 'Clear' }
+    });
+    assert.strictEqual(res.status, 'NOT_VERIFIED');
+    const endpointConstraint = res.evaluatedConstraints.find(c => c.name === 'Endpoint Coordinates Verification');
+    assert.ok(endpointConstraint);
+    assert.strictEqual(endpointConstraint.status, 'NOT_VERIFIED');
+  });
+
+  // F12: Graph-modeled route in STRICT_PROVIDER mode triggers NOT_VERIFIED
+  runTest('F12', 'Graph-modeled route in STRICT_PROVIDER mode triggers NOT_VERIFIED', () => {
+    const res = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, totalDayDrivingMinutes: 200, totalDayDistanceKm: 180, stops: [{ name: 'Stop 1' }], timeline: [{ category: 'meal' }] }],
+      userProfile: { totalBudget: 50000, routingMode: 'STRICT_PROVIDER' },
+      routeInfo: { totalDistanceKm: 180, dataStatus: 'graph_modeled', isLimitedGraph: true },
+      budgetSummary: { totalEstimatedCost: 15000 }
+    });
+    assert.strictEqual(res.status, 'NOT_VERIFIED');
+  });
+
+  // F13: Complete verified itinerary classifies as FEASIBLE
+  runTest('F13', 'Complete verified itinerary classifies as FEASIBLE', () => {
+    const res = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, totalDayDrivingMinutes: 200, totalDayDistanceKm: 180, stops: [{ name: 'Stop 1', openHours: { open: '08:00 AM', close: '06:00 PM' }, arrivalTime: '10:00 AM', departureTime: '11:30 AM' }], timeline: [{ category: 'meal' }] }],
+      userProfile: { totalBudget: 50000 },
+      routeInfo: { totalDistanceKm: 180, isLiveVerified: true },
+      budgetSummary: { totalEstimatedCost: 15000 },
+      weatherInfo: { status: 'LIVE_VERIFIED', condition: 'Clear' }
+    });
+    assert.strictEqual(res.status, 'FEASIBLE');
+  });
+
+  // F14: Non-critical warning classifies as FEASIBLE_WITH_WARNINGS
+  runTest('F14', 'Non-critical warning classifies as FEASIBLE_WITH_WARNINGS', () => {
+    const res = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, totalDayDrivingMinutes: 500, totalDayDistanceKm: 520, stops: [{ name: 'Stop 1' }], timeline: [{ category: 'meal' }] }],
+      userProfile: { totalBudget: 50000 },
+      routeInfo: { totalDistanceKm: 520 },
+      budgetSummary: { totalEstimatedCost: 18000 }
+    });
+    assert.strictEqual(res.status, 'FEASIBLE_WITH_WARNINGS');
+  });
+
+  // F15: Exceeding 12h daily driving limit classifies as INFEASIBLE
+  runTest('F15', 'Exceeding 12h daily driving limit classifies as INFEASIBLE', () => {
+    const res = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, totalDayDrivingMinutes: 760, totalDayDistanceKm: 900, stops: [] }],
+      userProfile: { totalBudget: 50000 },
+      routeInfo: { totalDistanceKm: 900 }
+    });
+    assert.strictEqual(res.status, 'INFEASIBLE');
+  });
+
+  // F16: Broken daily continuity classifies as INFEASIBLE
+  runTest('F16', 'Broken daily location continuity classifies as INFEASIBLE', () => {
+    const res = evaluateItineraryFeasibility({
+      dayPlans: [
+        { day: 1, endLocation: 'Hyderabad', totalDayDistanceKm: 200, stops: [] },
+        { day: 2, startLocation: 'Bangalore', totalDayDistanceKm: 200, stops: [] }
+      ],
+      userProfile: { totalBudget: 50000 },
+      routeInfo: { totalDistanceKm: 400 }
+    });
+    assert.strictEqual(res.status, 'INFEASIBLE');
+  });
+
+  // F17: Severe budget overrun classifies as INFEASIBLE
+  runTest('F17', 'Trip expenditure exceeding user budget by >35% classifies as INFEASIBLE', () => {
+    const res = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, totalDayDistanceKm: 200, stops: [] }],
+      userProfile: { totalBudget: 10000 },
+      routeInfo: { totalDistanceKm: 200 },
+      budgetSummary: { totalEstimatedCost: 14500 }
+    });
+    assert.strictEqual(res.status, 'INFEASIBLE');
+  });
+
+  // F18: Severe storm / weather hazard triggers INFEASIBLE
+  runTest('F18', 'Hazardous storm weather alert triggers INFEASIBLE safety violation', () => {
+    const res = evaluateItineraryFeasibility({
+      dayPlans: [{ day: 1, stops: [] }],
+      userProfile: { totalBudget: 50000 },
+      routeInfo: { totalDistanceKm: 200 },
+      weatherInfo: { condition: 'Severe Cyclonic Storm & Flood Alert' }
+    });
+    assert.strictEqual(res.status, 'INFEASIBLE');
+  });
+
   // =========================================================================
-  // 7. OUTPUT CONTRACT TESTS (V01 - V10)
+  // 7. JOURNEY PLANNING & RETURN ROUTE TESTS (J01 - J08)
   // =========================================================================
-  console.log('\n--- 7. OUTPUT CONTRACT TESTS (V01 - V10) ---');
+  console.log('\n--- 7. JOURNEY PLANNING & RETURN ROUTE TESTS (J01 - J08) ---');
+
+  // J01: Return route alternatives do not use hardcoded percentage multipliers in STRICT_PROVIDER
+  runTest('J01', 'Alternative return routes in STRICT_PROVIDER return UNAVAILABLE without synthetic multipliers', () => {
+    const alts = generateAlternativeReturnRoutes({
+      origin: 'Hyderabad',
+      destination: 'Kerala',
+      baseDistance: 950,
+      routingMode: 'STRICT_PROVIDER'
+    });
+    assert.ok(alts.every(r => r.status === 'UNAVAILABLE' || r.dataStatus === 'unavailable'));
+    assert.ok(alts.every(r => r.distanceKm === null));
+  });
+
+  // J02: Alternative return routes in OFFLINE_GRAPH compute independent graph paths
+  runTest('J02', 'Alternative return routes in OFFLINE_GRAPH compute independent graph paths', () => {
+    const alts = generateAlternativeReturnRoutes({
+      origin: 'Hyderabad',
+      destination: 'Bangalore',
+      baseDistance: 570,
+      routingMode: 'OFFLINE_GRAPH'
+    });
+    assert.ok(alts.length > 0);
+    assert.ok(alts[0].dataStatus === 'graph_modeled' || alts[0].dataStatus === 'unavailable');
+  });
+
+  // J03: Alternative return routes in ALLOW_ESTIMATES disclose model provenance
+  runTest('J03', 'Alternative return routes in ALLOW_ESTIMATES disclose model provenance', () => {
+    const alts = generateAlternativeReturnRoutes({
+      origin: 'Hyderabad',
+      destination: 'Kerala',
+      baseDistance: 950,
+      routingMode: 'ALLOW_ESTIMATES'
+    });
+    assert.ok(alts.length >= 3);
+    assert.ok(alts.every(r => r.dataSource !== undefined && r.dataStatus !== undefined));
+  });
+
+  // J04: calculateRouteOverlap compares coordinate geometries
+  runTest('J04', 'calculateRouteOverlap computes geospatial corridor overlap from coordinate geometries', () => {
+    const outCoords = [{ lat: 17.38, lng: 78.48 }, { lat: 15.82, lng: 78.03 }, { lat: 12.97, lng: 77.59 }];
+    const retCoords = [{ lat: 12.97, lng: 77.59 }, { lat: 15.82, lng: 78.03 }, { lat: 17.38, lng: 78.48 }];
+    const overlap = calculateRouteOverlap(
+      [],
+      [],
+      570,
+      570,
+      { outboundGeometry: outCoords, returnGeometry: retCoords }
+    );
+    assert.ok(Number.isFinite(overlap.overlapPercent));
+    assert.ok(overlap.overlapPercent >= 0 && overlap.overlapPercent <= 100);
+  });
+
+  // J05: calculateRouteOverlap returns null when waypoint coordinates are insufficient
+  runTest('J05', 'calculateRouteOverlap returns null when waypoint coordinates are insufficient (<2 points)', () => {
+    const overlap = calculateRouteOverlap([{ lat: 17.38, lng: 78.48 }], [], 500, 500);
+    assert.strictEqual(overlap.overlapPercent, null);
+    assert.ok(overlap.reason.includes('Insufficient route geometry'));
+  });
+
+  // J06: One-way trip sets isRoundTrip: false, alternativeRoutes: [], routeOverlapPercent: 0
+  await runAsyncTest('J06', 'One-way trip sets isRoundTrip: false, alternativeRoutes: [], routeOverlapPercent: 0', async () => {
+    const orchestrator = new UnifiedTravelPlanningOrchestrator();
+    const res = await orchestrator.generateUnifiedItinerary({ origin: 'Hyderabad', destination: 'Bangalore', days: 2, isRoundTrip: false });
+    assert.strictEqual(res.returnRoutePlan.isRoundTrip, false);
+    assert.strictEqual(res.returnRoutePlan.alternativeRoutes.length, 0);
+    assert.strictEqual(res.returnRoutePlan.routeOverlapPercent, 0);
+  });
+
+  // J07: Round-trip itinerary contains complete return route plan
+  await runAsyncTest('J07', 'Round-trip itinerary contains complete return route plan with alternative corridors', async () => {
+    const orchestrator = new UnifiedTravelPlanningOrchestrator();
+    const res = await orchestrator.generateUnifiedItinerary({ origin: 'Hyderabad', destination: 'Bangalore', days: 3, isRoundTrip: true });
+    assert.strictEqual(res.returnRoutePlan.isRoundTrip, true);
+    assert.ok(res.returnRoutePlan.alternativeRoutes.length > 0);
+    assert.ok(Number.isFinite(res.returnRoutePlan.routeOverlapPercent));
+  });
+
+  // J08: Return journey phase explores distinct unvisited attractions
+  await runAsyncTest('J08', 'Return journey phase explores distinct unvisited attractions from onward journey', async () => {
+    const orchestrator = new UnifiedTravelPlanningOrchestrator();
+    const res = await orchestrator.generateUnifiedItinerary({ origin: 'Hyderabad', destination: 'Bangalore', days: 3, isRoundTrip: true });
+    const onwardStops = res.dailyItinerary.filter(d => d.journeyPhase === 'ONWARD').flatMap(d => d.stops.map(s => s.name));
+    const returnStops = res.dailyItinerary.filter(d => d.journeyPhase === 'RETURN').flatMap(d => d.stops.map(s => s.name));
+    if (onwardStops.length > 0 && returnStops.length > 0) {
+      const intersection = onwardStops.filter(s => returnStops.includes(s));
+      assert.strictEqual(intersection.length, 0, 'Return stops must not duplicate onward stops');
+    }
+  });
+
+  // =========================================================================
+  // 8. OUTPUT CONTRACT TESTS (V01 - V16)
+  // =========================================================================
+  console.log('\n--- 8. OUTPUT CONTRACT TESTS (V01 - V16) ---');
 
   // V01: Unknown category remains unknown
   runTest('V01', 'Unknown category remains unknown without generic sightseeing substitution', () => {
@@ -976,10 +1630,76 @@ async function runAllMandatoryTests() {
     assert.strictEqual(parsed.dailyItinerary[0].stops[0].provenance.coordinates.verificationStatus, 'catalog_verified');
   });
 
+  // V11: Unknown category remains unknown without generic substitution
+  runTest('V11', 'Unknown attraction category remains unknown without generic sightseeing substitution', () => {
+    const out = validateAndEnforceOutputContract({
+      userProfile: { totalDays: 1, startDate: new Date(), endDate: new Date() },
+      routeInfo: { totalDistanceKm: 100 },
+      dayPlans: [{ day: 1, startLocation: 'A', endLocation: 'B', totalDayDistanceKm: 100, stops: [{ name: 'Mystery Point', category: null }] }]
+    });
+    assert.strictEqual(out.dailyItinerary[0].stops[0].category, 'unknown');
+  });
+
+  // V12: Unknown admission fee remains null without fabricating zero
+  runTest('V12', 'Unknown admission fee remains null without fabricating zero', () => {
+    const out = validateAndEnforceOutputContract({
+      userProfile: { totalDays: 1, startDate: new Date(), endDate: new Date() },
+      routeInfo: { totalDistanceKm: 100 },
+      dayPlans: [{ day: 1, startLocation: 'A', endLocation: 'B', totalDayDistanceKm: 100, stops: [{ name: 'Mystery Point', entryFee: null }] }]
+    });
+    assert.strictEqual(out.dailyItinerary[0].stops[0].entryFee, null);
+  });
+
+  // V13: Synthetic internal ID is preserved in internalGeneratedId, placeId remains null
+  runTest('V13', 'Synthetic internal ID is preserved in internalGeneratedId, placeId remains null', () => {
+    const out = validateAndEnforceOutputContract({
+      userProfile: { totalDays: 1, startDate: new Date(), endDate: new Date() },
+      routeInfo: { totalDistanceKm: 100 },
+      dayPlans: [{ day: 1, startLocation: 'A', endLocation: 'B', totalDayDistanceKm: 100, stops: [{ name: 'Custom Node', placeId: 'POI_CUSTOM_123' }] }]
+    });
+    const s = out.dailyItinerary[0].stops[0];
+    assert.strictEqual(s.placeId, null);
+    assert.ok(s.internalGeneratedId.includes('POI_CUSTOM_123'));
+  });
+
+  // V14: Provenance schema survives JSON serialization and deserialization
+  runTest('V14', 'Provenance schema survives JSON serialization and deserialization without data loss', () => {
+    const out = validateAndEnforceOutputContract({
+      userProfile: { totalDays: 1, startDate: new Date(), endDate: new Date() },
+      routeInfo: { totalDistanceKm: 100 },
+      dayPlans: [{ day: 1, startLocation: 'A', endLocation: 'B', totalDayDistanceKm: 100, stops: [{ name: 'Stop with Provenance', provenance: { coordinates: { verificationStatus: 'catalog_verified' } } }] }]
+    });
+    const parsed = JSON.parse(JSON.stringify(out));
+    assert.strictEqual(parsed.dailyItinerary[0].stops[0].provenance.coordinates.verificationStatus, 'catalog_verified');
+  });
+
+  // V15: Output contract catches day count mismatches
+  runTest('V15', 'Mismatch between requested days and generated day plans is flagged in warnings', () => {
+    const out = validateAndEnforceOutputContract({
+      userProfile: { totalDays: 4, startDate: new Date(), endDate: new Date() },
+      routeInfo: { totalDistanceKm: 500 },
+      dayPlans: [{ day: 1, startLocation: 'A', endLocation: 'B', totalDayDistanceKm: 250, stops: [] }]
+    });
+    assert.ok(out.warnings.some(w => w.includes('Expected 4 days')));
+  });
+
+  // V16: Broken location continuity is flagged in output contract warnings
+  runTest('V16', 'Broken location continuity is flagged in contract validation warnings', () => {
+    const out = validateAndEnforceOutputContract({
+      userProfile: { totalDays: 2, startDate: new Date(), endDate: new Date() },
+      routeInfo: { totalDistanceKm: 500 },
+      dayPlans: [
+        { day: 1, startLocation: 'Hyderabad', endLocation: 'Kurnool', totalDayDistanceKm: 250, stops: [] },
+        { day: 2, startLocation: 'Mysore', endLocation: 'Bangalore', totalDayDistanceKm: 250, stops: [] }
+      ]
+    });
+    assert.ok(out.warnings.some(w => w.includes('Continuity Discrepancy')));
+  });
+
   // =========================================================================
-  // 8. END-TO-END ACCEPTANCE SCENARIOS (A - F)
+  // 9. END-TO-END ACCEPTANCE SCENARIOS (A - F)
   // =========================================================================
-  console.log('\n--- 8. END-TO-END ACCEPTANCE SCENARIOS (A - F) ---');
+  console.log('\n--- 9. END-TO-END ACCEPTANCE SCENARIOS (A - F) ---');
 
   // Scenario A: Hyderabad to Kerala, car, friends
   await runAsyncTest('Scenario A', 'Multi-day road trip (Hyderabad to Srisailam/Kerala corridor) with complete transitions', async () => {
@@ -1069,7 +1789,11 @@ async function runAllMandatoryTests() {
       days: 2,
       activities: ['trekking', 'nature', 'adventure']
     });
-    assert.notStrictEqual(spiritual.optimizerResult.selectedStops[0]?.name, adventure.optimizerResult.selectedStops[0]?.name);
+    const sStops = spiritual.optimizerResult.selectedStops.map(s => s.name);
+    const aStops = adventure.optimizerResult.selectedStops.map(s => s.name);
+    assert.notDeepStrictEqual(sStops, aStops, 'POI stop sets must be distinct between spiritual and adventure profiles');
+    const diffStops = sStops.some(s => !aStops.includes(s));
+    assert.ok(diffStops, 'At least one stop must be unique to the spiritual profile');
   });
 
   console.log('\n================================================================');

@@ -438,13 +438,23 @@ function calculateHaversineDistanceKm(coord1, coord2) {
 
 /**
  * Resolves coordinates for a named city, landmark, or accepts coordinate objects directly.
+ * Strictly avoids fabricating Hyderabad or Kerala coordinates for unknown places.
  */
 async function resolveCoordinates(input) {
-  if (!input) return { lat: 17.3850, lng: 78.4867 };
+  if (!input) return null;
 
   // If already a valid coordinate object
-  if (typeof input === 'object' && Number.isFinite(Number(input.lat)) && Number.isFinite(Number(input.lng))) {
-    return { lat: Number(input.lat), lng: Number(input.lng) };
+  if (typeof input === 'object') {
+    const lat = input.lat !== undefined ? Number(input.lat) : (input.latitude !== undefined ? Number(input.latitude) : null);
+    const lng = input.lng !== undefined ? Number(input.lng) : (input.longitude !== undefined ? Number(input.longitude) : null);
+    if (lat !== null && lng !== null && Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return { lat, lng };
+    }
+    if (input.name || input.city) {
+      input = input.name || input.city;
+    } else {
+      return null;
+    }
   }
 
   const norm = String(input).trim().toLowerCase().replace(/[^a-z]/g, '');
@@ -467,15 +477,17 @@ async function resolveCoordinates(input) {
       });
       if (resp.data?.status === 'OK' && resp.data.results?.[0]?.geometry?.location) {
         const loc = resp.data.results[0].geometry.location;
-        return { lat: loc.lat, lng: loc.lng };
+        if (loc && loc.lat >= -90 && loc.lat <= 90 && loc.lng >= -180 && loc.lng <= 180) {
+          return { lat: loc.lat, lng: loc.lng };
+        }
       }
     } catch (err) {
-      // Continue to deterministic fallback
+      // Geocoding failed
     }
   }
 
-  // Default coordinate (Central India)
-  return { lat: 17.3850, lng: 78.4867 };
+  // Unknown coordinates return null - NEVER fabricate defaults!
+  return null;
 }
 
 /**
@@ -650,6 +662,26 @@ async function calculateRoute(origin, destination, options = {}) {
 
   const originCoords = await resolveCoordinates(origin);
   const destCoords = await resolveCoordinates(destination);
+
+  if (!originCoords || !destCoords) {
+    return {
+      status: 'UNAVAILABLE',
+      dataStatus: 'unavailable',
+      dataSource: 'missing_coordinates',
+      totalDistanceKm: null,
+      distanceKm: null,
+      drivingDurationMinutes: null,
+      totalDurationMinutes: null,
+      isLiveVerified: false,
+      isLimitedGraph: false,
+      isEstimate: false,
+      retrievalTimestamp: null,
+      originCoordinates: originCoords,
+      destinationCoordinates: destCoords,
+      waypoints: [],
+      error: 'Invalid or unresolvable coordinates for one or both route endpoints'
+    };
+  }
 
   const originNorm = String(originStr).toLowerCase().trim().replace(/[^a-z]/g, '');
   const destNorm = String(destStr).toLowerCase().trim().replace(/[^a-z]/g, '');
@@ -846,8 +878,9 @@ async function calculateRouteDeviation(origin, destination, attractionCoord, opt
 function optimizeMultiStopSequence(startCoord, endCoord, stops = [], isCorridor = false) {
   if (!stops || stops.length <= 1) return stops || [];
 
-  const origin = startCoord || { lat: 17.3850, lng: 78.4867 };
-  const dest = endCoord || origin;
+  const origin = startCoord || (stops.length > 0 && stops[0].coordinates ? stops[0].coordinates : null);
+  const dest = endCoord || (stops.length > 0 && stops[stops.length - 1].coordinates ? stops[stops.length - 1].coordinates : origin);
+  if (!origin || !dest) return stops;
 
   // Clone stops array
   let currentTour = [...stops];

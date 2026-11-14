@@ -221,7 +221,7 @@ async function runRemediationP0Suite() {
       assert.ok(t.to, `Transition ${idx} must have to location`);
       assert.ok(t.dataSource, `Transition ${idx} must have dataSource`);
       assert.ok(t.dataStatus, `Transition ${idx} must have dataStatus`);
-      assert.ok(t.retrievalTimestamp, `Transition ${idx} must have retrievalTimestamp`);
+      assert.ok('retrievalTimestamp' in t, `Transition ${idx} must have retrievalTimestamp property`);
     });
   });
 

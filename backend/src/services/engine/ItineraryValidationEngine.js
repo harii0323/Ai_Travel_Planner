@@ -65,7 +65,7 @@ function validateAndEnforceOutputContract({
       const rawFee = (s.entryFee !== undefined && s.entryFee !== null) ? Number(s.entryFee) : null;
       return {
         placeId: hasRealPlaceId ? s.placeId : null,
-        internalGeneratedId: s.internalGeneratedId || s.id || `INTERNAL_${s.name ? s.name.replace(/[^a-z0-9]/gi, '_') : 'POI'}`,
+        internalGeneratedId: s.internalGeneratedId || s.id || (!hasRealPlaceId && s.placeId ? s.placeId : null) || `INTERNAL_${s.name ? s.name.replace(/[^a-z0-9]/gi, '_') : 'POI'}`,
         sourcePlaceId: s.sourcePlaceId || (s.placeId && String(s.placeId).startsWith('POI_') ? s.placeId : null),
         placeName: s.placeName || s.name,
         name: s.placeName || s.name,

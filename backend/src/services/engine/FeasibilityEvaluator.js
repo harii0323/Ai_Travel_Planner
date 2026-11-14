@@ -84,26 +84,49 @@ function evaluateItineraryFeasibility({
   }
 
   // 1. EVALUATE DAILY DRIVING LIMITS
+  let missingDrivingDataDay = null;
   let excessiveDrivingDay = null;
   let fatigueWarningDay = null;
+
   dayPlans.forEach(day => {
-    const driveMins = Number(day.totalDayDrivingMinutes || 0);
-    const driveKm = Number(day.totalDayDistanceKm || 0);
-    if (driveMins > DAILY_LIMITS.maxDrivingMinutes || driveKm > DAILY_LIMITS.maxDrivingDistanceKm) {
-      excessiveDrivingDay = `Day ${day.dayNumber || day.day} (${Math.round(driveKm)} km, ${Math.floor(driveMins / 60)}h ${driveMins % 60}m)`;
-    } else if (driveMins > DAILY_LIMITS.warningDrivingMinutes) {
-      fatigueWarningDay = `Day ${day.dayNumber || day.day} (${Math.floor(driveMins / 60)}h ${driveMins % 60}m)`;
+    if (day.totalDayDrivingMinutes === null || day.totalDayDrivingMinutes === undefined) {
+      missingDrivingDataDay = `Day ${day.dayNumber || day.day} has unknown driving minutes`;
+    } else if (day.totalDayDistanceKm === null || day.totalDayDistanceKm === undefined) {
+      missingDrivingDataDay = `Day ${day.dayNumber || day.day} has unknown driving distance`;
+    } else {
+      const driveMins = Number(day.totalDayDrivingMinutes);
+      const driveKm = Number(day.totalDayDistanceKm);
+      if (driveMins > DAILY_LIMITS.maxDrivingMinutes || driveKm > DAILY_LIMITS.maxDrivingDistanceKm) {
+        excessiveDrivingDay = `Day ${day.dayNumber || day.day} (${Math.round(driveKm)} km, ${Math.floor(driveMins / 60)}h ${driveMins % 60}m)`;
+      } else if (driveMins > DAILY_LIMITS.warningDrivingMinutes) {
+        fatigueWarningDay = `Day ${day.dayNumber || day.day} (${Math.floor(driveMins / 60)}h ${driveMins % 60}m)`;
+      }
     }
   });
+
+  if (missingDrivingDataDay) {
+    recordConstraint({
+      name: 'Daily Driving Verification',
+      passed: false,
+      status: 'NOT_VERIFIED',
+      severity: 'CRITICAL',
+      evidence: missingDrivingDataDay,
+      source: 'road_matrix_and_daily_scheduler',
+      explanation: `${missingDrivingDataDay}; daily driving feasibility cannot be verified.`,
+      recommendedAction: 'Verify road transitions and matrix connectivity for scheduled days',
+      isHard: true
+    });
+  }
+
   recordConstraint({
     name: 'Daily Driving Time Cap',
-    passed: !excessiveDrivingDay,
-    status: excessiveDrivingDay ? 'VIOLATION' : 'PASSED',
-    severity: excessiveDrivingDay ? 'CRITICAL' : 'INFO',
-    evidence: excessiveDrivingDay ? `Exceeded cap: ${excessiveDrivingDay}` : 'All days <= 12 hours driving',
+    passed: !excessiveDrivingDay && !missingDrivingDataDay,
+    status: excessiveDrivingDay ? 'VIOLATION' : (missingDrivingDataDay ? 'NOT_VERIFIED' : 'PASSED'),
+    severity: excessiveDrivingDay ? 'CRITICAL' : (missingDrivingDataDay ? 'CRITICAL' : 'INFO'),
+    evidence: excessiveDrivingDay ? `Exceeded cap: ${excessiveDrivingDay}` : (missingDrivingDataDay ? missingDrivingDataDay : 'All days <= 12 hours driving'),
     source: 'road_matrix_and_daily_scheduler',
-    explanation: excessiveDrivingDay ? `Exceeds 12-hour/850km safety limit on ${excessiveDrivingDay}` : 'All days within safe driving limits',
-    recommendedAction: excessiveDrivingDay ? 'Split long driving day with intermediate overnight halt' : 'None required',
+    explanation: excessiveDrivingDay ? `Exceeds 12-hour/850km safety limit on ${excessiveDrivingDay}` : (missingDrivingDataDay ? 'Driving duration unknown' : 'All days within safe driving limits'),
+    recommendedAction: excessiveDrivingDay ? 'Split long driving day with intermediate overnight halt' : (missingDrivingDataDay ? 'Verify route transitions' : 'None required'),
     isHard: true
   });
   if (fatigueWarningDay) {
@@ -254,9 +277,14 @@ function evaluateItineraryFeasibility({
   let weatherFeasible = true;
   let weatherDetails = 'Weather conditions verified favorable';
   const weatherCondStr = weatherInfo?.condition || weatherInfo?.conditions || '';
-  const isSafetyCriticalWeather = Boolean(userProfile?.requireVerifiedOnly || weatherInfo?.isCritical);
+  const hasSafetyCriticalActivities = dayPlans.some(d => (d.stops || []).some(s => {
+    const cat = String(s.category || s.taxonomyCategory || '').toLowerCase();
+    return cat.includes('trek') || cat.includes('waterfall') || cat.includes('adventure') || cat.includes('viewpoint') || cat.includes('beach');
+  }));
+  const isSafetyCriticalWeather = Boolean(userProfile?.requireVerifiedOnly || weatherInfo?.isCritical || hasSafetyCriticalActivities);
+
   if (!weatherInfo || weatherInfo.status === 'UNAVAILABLE' || weatherInfo.status === 'UNKNOWN' || weatherCondStr === 'Unavailable' || weatherCondStr === 'Unknown') {
-    weatherFeasible = true;
+    weatherFeasible = !isSafetyCriticalWeather;
     weatherDetails = 'Weather data unavailable for travel dates; outdoor feasibility cannot be verified';
     recordConstraint({
       name: 'Weather Safety Clearance',
@@ -265,7 +293,7 @@ function evaluateItineraryFeasibility({
       severity: isSafetyCriticalWeather ? 'CRITICAL' : 'WARNING',
       evidence: 'Weather data unavailable',
       source: 'open_weather_api',
-      explanation: weatherDetails,
+      explanation: isSafetyCriticalWeather ? 'Weather data unavailable for safety-critical outdoor activities' : weatherDetails,
       recommendedAction: 'Check regional meteorological forecasts before commencing outdoor activities',
       isHard: isSafetyCriticalWeather
     });
@@ -388,6 +416,74 @@ function evaluateItineraryFeasibility({
     recommendedAction: rushedVisits.length > 0 ? 'Increase time allocation or remove low-priority stops' : 'None required',
     isHard: false
   });
+
+  // 11. EVALUATE ENDPOINT COORDINATES
+  const origCoord = routeInfo.originCoordinates || userProfile.originCoordinates;
+  const destCoord = routeInfo.destinationCoordinates || userProfile.destinationCoordinates;
+  if (origCoord || destCoord) {
+    const isOrigValid = !origCoord || (
+      origCoord.lat !== null && origCoord.lng !== null &&
+      Number.isFinite(Number(origCoord.lat)) && Number(origCoord.lat) >= -90 && Number(origCoord.lat) <= 90 &&
+      Number.isFinite(Number(origCoord.lng)) && Number(origCoord.lng) >= -180 && Number(origCoord.lng) <= 180
+    );
+    const isDestValid = !destCoord || (
+      destCoord.lat !== null && destCoord.lng !== null &&
+      Number.isFinite(Number(destCoord.lat)) && Number(destCoord.lat) >= -90 && Number(destCoord.lat) <= 90 &&
+      Number.isFinite(Number(destCoord.lng)) && Number(destCoord.lng) >= -180 && Number(destCoord.lng) <= 180
+    );
+    const hasValidEndpoints = isOrigValid && isDestValid;
+    recordConstraint({
+      name: 'Endpoint Coordinates Verification',
+      passed: hasValidEndpoints,
+      status: hasValidEndpoints ? 'PASSED' : 'NOT_VERIFIED',
+      severity: hasValidEndpoints ? 'INFO' : 'CRITICAL',
+      evidence: hasValidEndpoints ? 'Both origin and destination coordinates verified in range' : 'Origin or destination coordinates out of range (-90..90, -180..180)',
+      source: 'road_routing_provider',
+      explanation: hasValidEndpoints ? 'Endpoints have valid GPS coordinates' : 'Route endpoints have invalid GPS coordinate ranges',
+      recommendedAction: hasValidEndpoints ? 'None required' : 'Provide valid endpoint coordinates',
+      isHard: true
+    });
+  }
+
+  // 12. EVALUATE STRICT ROUTING PROVIDER INTEGRITY
+  const routingMode = userProfile.routingMode || userProfile.routingPolicy;
+  if (routingMode === 'STRICT_PROVIDER') {
+    const isGraph = routeInfo.dataStatus === 'graph_modeled' || routeInfo.isLimitedGraph;
+    const isEst = routeInfo.dataStatus === 'estimated' || routeInfo.isEstimate;
+    if (isGraph || isEst) {
+      recordConstraint({
+        name: 'Strict Routing Provider Verification',
+        passed: false,
+        status: 'NOT_VERIFIED',
+        severity: 'CRITICAL',
+        evidence: isGraph ? 'Route is graph-modeled in STRICT_PROVIDER mode' : 'Route is estimated in STRICT_PROVIDER mode',
+        source: 'road_routing_provider',
+        explanation: isGraph
+          ? 'Highway graph routes cannot pass authoritative verification under STRICT_PROVIDER policy'
+          : 'Geodesic estimates cannot pass authoritative verification under STRICT_PROVIDER policy',
+        recommendedAction: 'Supply authoritative routing provider credentials or select OFFLINE_GRAPH / ALLOW_ESTIMATES mode',
+        isHard: true
+      });
+    }
+  }
+
+  // 13. EVALUATE FINAL DESTINATION TRANSITION INTEGRITY
+  const hasMissingFinalTrans = routeInfo.missingFinalTransition === true ||
+    (routeInfo.routeTransitions && routeInfo.routeTransitions.length > 0 &&
+     routeInfo.routeTransitions[routeInfo.routeTransitions.length - 1]?.dataStatus === 'unavailable');
+  if (hasMissingFinalTrans) {
+    recordConstraint({
+      name: 'Final Destination Transition',
+      passed: false,
+      status: 'NOT_VERIFIED',
+      severity: 'CRITICAL',
+      evidence: 'Final arrival destination transition is unavailable',
+      source: 'route_matrix',
+      explanation: 'Route transition to final destination endpoint could not be verified',
+      recommendedAction: 'Verify road network connectivity to destination endpoint',
+      isHard: true
+    });
+  }
 
   // CALCULATE OBJECTIVE SCORE & FINAL FEASIBILITY STATUS
   let verifiedCount = 0;

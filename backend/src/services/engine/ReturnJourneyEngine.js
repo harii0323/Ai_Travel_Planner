@@ -15,6 +15,7 @@
 const { scorePlace } = require('./PlaceScoringEngine');
 const { calculateHaversineDistanceKm } = require('./RouteDiscoveryEngine');
 const { VERIFIED_PLACES_DATABASE } = require('./PlacesDiscoveryEngine');
+const { roadRoutingProvider } = require('../RoadRoutingProvider');
 
 /**
  * Discovers candidate return corridor attractions that have NOT been visited previously.
@@ -161,14 +162,25 @@ function determineReturnHubs(returnDays, returnWaypoints, destination, origin) {
  */
 function planReturnJourney(params = {}) {
   const returnDays = params.returnDays !== undefined ? params.returnDays : 1;
-  if (returnDays <= 0 || params.userProfile?.isRoundTrip === false) {
+  if (returnDays <= 0 || params.userProfile?.isRoundTrip === false || params.isRoundTrip === false) {
     return [];
   }
 
   const startLocation = params.startLocation || params.destination || params.userProfile?.destinationCity || 'Destination';
-  const startCoord = params.startCoord || params.returnRouteInfo?.destinationCoordinates || { lat: 10.0889, lng: 77.0595 };
+  const rawStartCoord = params.startCoord || params.returnRouteInfo?.destinationCoordinates || (startLocation ? roadRoutingProvider.normalizeLocation(startLocation) : null);
+  const startCoord = (rawStartCoord && Number.isFinite(Number(rawStartCoord.lat)) && Number.isFinite(Number(rawStartCoord.lng)))
+    ? { lat: Number(rawStartCoord.lat), lng: Number(rawStartCoord.lng) }
+    : null;
+
   const origin = params.origin || params.userProfile?.origin || 'Origin';
-  const originCoord = params.originCoord || params.returnRouteInfo?.originCoordinates || { lat: 17.3850, lng: 78.4867 };
+  const rawOrigCoord = params.originCoord || params.returnRouteInfo?.originCoordinates || (origin ? roadRoutingProvider.normalizeLocation(origin) : null);
+  const originCoord = (rawOrigCoord && Number.isFinite(Number(rawOrigCoord.lat)) && Number.isFinite(Number(rawOrigCoord.lng)))
+    ? { lat: Number(rawOrigCoord.lat), lng: Number(rawOrigCoord.lng) }
+    : null;
+
+  if (!startCoord || !originCoord) {
+    return [];
+  }
   const returnWaypoints = params.returnWaypoints && params.returnWaypoints.length > 0
     ? params.returnWaypoints
     : (params.returnRouteInfo?.waypoints ? [...params.returnRouteInfo.waypoints].reverse() : []);

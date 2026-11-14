@@ -162,10 +162,11 @@ function repairBestFeasibleInsertion(currentRoute, candidatePool, targetCount, o
   return current;
 }
 
-function repairPreferenceAware(currentRoute, candidatePool, targetCount, userProfile) {
+function repairPreferenceAware(currentRoute, candidatePool, targetCount, userProfile, options = {}) {
   const current = [...currentRoute];
   const currentKeys = new Set(current.map(p => p.placeKey || p.name));
   const userDimensions = userProfile.dimensions || {};
+  const isStrict = options?.routingMode === 'STRICT_PROVIDER' || options?.strictProvider;
 
   // Find top priority unfulfilled preference dimension
   const presentCats = new Set(current.map(p => String(p.category || '').toLowerCase()));
@@ -184,7 +185,8 @@ function repairPreferenceAware(currentRoute, candidatePool, targetCount, userPro
 
       const candCat = String(cand.category || '').toLowerCase();
       let prefBonus = targetDims.includes(candCat) ? 2.5 : 0.5;
-      const score = (cand.semanticScore || 0.6) * 1.5 + prefBonus - (cand.detourKm || 5) * 0.05;
+      const detourPenalty = cand.detourKm != null ? cand.detourKm * 0.05 : (isStrict ? 0 : 0.25);
+      const score = (cand.semanticScore || 0.6) * 1.5 + prefBonus - detourPenalty;
 
       if (score > bestScore) {
         bestScore = score;
@@ -214,9 +216,12 @@ function repairDiversityAware(currentRoute, candidatePool, targetCount, userEmbe
 function repairBudgetAware(currentRoute, candidatePool, targetCount, options = {}) {
   const current = [...currentRoute];
   const currentKeys = new Set(current.map(p => p.placeKey || p.name));
+  const isStrict = options?.routingMode === 'STRICT_PROVIDER' || options?.strictProvider;
+  const getDetourCost = (c) => (c.entryFee || 0) + (c.detourKm != null ? c.detourKm * 6 : (isStrict ? 0 : 30));
+
   const sortedByCost = [...candidatePool]
     .filter(c => !currentKeys.has(c.placeKey || c.name))
-    .sort((a, b) => ((a.entryFee || 0) + (a.detourKm || 5) * 6) - ((b.entryFee || 0) + (b.detourKm || 5) * 6));
+    .sort((a, b) => getDetourCost(a) - getDetourCost(b));
 
   for (const cand of sortedByCost) {
     if (current.length >= targetCount) break;
